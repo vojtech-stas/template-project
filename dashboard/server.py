@@ -509,6 +509,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
 # Main
 # ---------------------------------------------------------------------------
 
+def _should_open_browser(env):
+    """Pure decision: should main() attempt to open a browser on startup?
+
+    Opt-in via DASH_OPEN_BROWSER (any non-empty value enables it) — no
+    automated spawner leaks a browser tab by omission (PRD #1432).
+    """
+    return bool(env.get("DASH_OPEN_BROWSER"))
+
+
 def main():
     port = int(os.environ.get("DASH_PORT", "8765"))
     server = ThreadingHTTPServer(("localhost", port), DashboardHandler)
@@ -516,7 +525,7 @@ def main():
     print(f"Dashboard running at http://localhost:{port}", flush=True)
     print(f"Repo root: {REPO_ROOT}", flush=True)
     print("Press Ctrl+C to stop.", flush=True)
-    if not os.environ.get("DASH_NO_BROWSER"):
+    if _should_open_browser(os.environ):
         try:
             webbrowser.open(f"http://localhost:{port}")
         except Exception as e:

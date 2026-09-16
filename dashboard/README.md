@@ -52,7 +52,7 @@ Reduced to five routes by ADR-0080 D1 (fifteen UI-only routes deleted alongside 
 | Variable | Default | Description |
 |---|---|---|
 | `DASH_PORT` | `8765` | Port the server listens on |
-| `DASH_NO_BROWSER` | _(unset)_ | Set to any non-empty value to suppress auto-opening the browser on startup (useful in CI, headless, or automated contexts) |
+| `DASH_OPEN_BROWSER` | _(unset)_ | Opt-in: set to any non-empty value to auto-open the browser on startup. Unset or empty (the default) never opens one — safe for CI, headless, or automated spawners |
 | `DASH_REPO_SLUG` | _(derived)_ | Override the runtime-derived GitHub repo slug (`owner/name`). Normally derived automatically via `gh repo view` → `git remote get-url origin` parse. Set this only when both derivation paths fail (e.g. detached HEAD, no `origin` remote). Must be in `owner/name` form. Single github.com origin assumed (multi-remote / GHE out of scope — see PRD #753 §3). |
 
 Example with custom port:

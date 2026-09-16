@@ -335,13 +335,13 @@ Before writing or executing any Playwright script, perform the server-identity h
 1. `curl -s http://localhost:8765/api/meta | python3 -m json.tool` — capture `sha` and `stale`.
 2. Obtain the merged HEAD sha: `git -C <repo_root> rev-parse HEAD`.
 3. Assert `sha == merged HEAD sha`. If they differ (server is stale — serving pre-merge code):
-   - **Option A (restart):** kill the server (`pkill -f "python.*server.py"` or equivalent), restart (`DASH_NO_BROWSER=1 python dashboard/server.py &`, wait for it to serve), then re-check `/api/meta`. If `stale` is now false and `sha` matches, proceed.
+   - **Option A (restart):** kill the server (`pkill -f "python.*server.py"` or equivalent), restart (`python dashboard/server.py &`, wait for it to serve), then re-check `/api/meta`. If `stale` is now false and `sha` matches, proceed.
    - **Option B (refuse):** if restart is not safe in context (e.g. another process owns the port), return `RESULT: BLOCKED`, `REASON: dashboard server is stale (sha mismatch) — restart required before browser-route verification`.
 4. Assert the page does NOT contain the `SERVER STALE` banner text after navigating: `page.get_by_text("SERVER STALE").count() == 0`. A visible stale banner means verification evidence is derived from old code and MUST NOT be reported as PASS.
 
 This handshake is **required** — skipping it risks a false PASS against a server running pre-merge code (the #685 / 2026-06-11 incident class, ADR-0058 D4).
 
-**Step 1 — Write and execute the Playwright script.** Write a Python script to `/tmp/qa-pv-$$.py` via Bash heredoc. The script uses `sync_playwright()` → `chromium.launch(channel="chrome", headless=True)`. Per ADR-0033 D1, assume the dashboard has been started (port 8765 is serving). If the server is not running, start it: `DASH_NO_BROWSER=1 python dashboard/server.py &` and verify it serves before running the script.
+**Step 1 — Write and execute the Playwright script.** Write a Python script to `/tmp/qa-pv-$$.py` via Bash heredoc. The script uses `sync_playwright()` → `chromium.launch(channel="chrome", headless=True)`. Per ADR-0033 D1, assume the dashboard has been started (port 8765 is serving). If the server is not running, start it: `python dashboard/server.py &` and verify it serves before running the script.
 
 **Step 2 — Perform the declared interaction.** The Python script parses the "Production check:" line and executes the steps it declares using `page.click()`, `page.fill()`, and `page.goto()`. Scope the interaction exactly to what the line declares — no exploratory clicks.
 
