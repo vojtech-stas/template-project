@@ -319,7 +319,7 @@ class Evidence:
 
     def result(self, ref, sid, artifact):
         item = self.item(ref, sid)
-        require(item["type"] == "agentMessage" and item.get("phase") == "final",
+        require(item["type"] == "agentMessage" and item.get("phase") == "final_answer",
                 "missing independent native final result")
         text = self.artifact(artifact).decode("utf-8")
         require(item["text"] == text, "result differs from native host output")

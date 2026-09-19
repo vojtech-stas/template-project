@@ -154,7 +154,8 @@ PR head, distinct from the tested merge SHA). review_head references the
 reviewer's native git rev-parse HEAD command; a changed live PR head refuses.
 It references receipt,
 verdict, review (artifacts) and qa_result/review_result (native final-message
-items). The independent native final text must exactly equal the artifact bytes.
+items, type=agentMessage and phase=final_answer in the observed read_thread schema).
+The independent native final text must exactly equal the artifact bytes.
 Review must APPROVE; the complete canonical QA trailer must be SUCCESS/PASS,
 contain all required fields and have no unresolved assertion. PROOF_SOURCE uses
 the QA receipt; ENV identifies the tested SHA and UTC environment start.

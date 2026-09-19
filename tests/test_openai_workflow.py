@@ -295,7 +295,7 @@ class ProofFixture(unittest.TestCase):
                                 "output": {"text": output, "truncated": False}})
 
     def final(self, role, text):
-        return self.item(role, {"type": "agentMessage", "phase": "final", "text": text})
+        return self.item(role, {"type": "agentMessage", "phase": "final_answer", "text": text})
 
     def save_observations(self):
         self.obs["host_records"] = [self.artifact(role + "-host.json", json.dumps(
