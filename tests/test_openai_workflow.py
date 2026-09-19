@@ -395,6 +395,15 @@ class TestProofAndIsolation(ProofFixture):
         self.bundle["reviewed_sha"] = "0" * 40
         self.assert_refuses_without_downstream()
 
+    def test_dirty_verified_checkout_refuses_even_if_controller_observed_it(self):
+        self.actual["status"] = "M tracked.py"
+        self.e.item(self.e.data["git"]["status"], self.ids["controller"])["output"]["text"] = (
+            self.actual["status"] + "\n")
+        with patch.object(workflow, "snapshot", return_value=self.actual):
+            with self.assertRaisesRegex(workflow.Refusal, "dirty"):
+                workflow.validate_proof(self.e, self.bundle)
+        self.assert_refuses_without_downstream()
+
     def test_completed_controller_command_in_active_turn_is_observable(self):
         host = self.e.records[self.ids["controller"]]["turns"][0]
         host.update(status="inProgress", completedAt=None)
