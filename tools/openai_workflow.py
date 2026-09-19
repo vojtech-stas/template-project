@@ -380,7 +380,7 @@ def trailer(text):
 
 def validate_proof(e, bundle):
     """Validate all local evidence before making even a read-only GitHub query."""
-    e.isolation()
+    require(not e.isolation()["status"], "dirty verified checkout cannot prove the tested SHA")
     qa = bundle["qa_id"]
     e.worker(qa, "qa-tester")
     reviewer = bundle["reviewer_id"]

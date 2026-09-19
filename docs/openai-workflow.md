@@ -190,7 +190,8 @@ directories; those fixtures are never live provenance or production logs.
 
 Validation occurs before delegation: identity, independence, actual bytes, complete
 verdict, timestamp/window, current revision, all required route classes, actual
-merged PR/base/files/issue binding and repository must agree. Invalid evidence
+merged PR/base/files/issue binding and repository must agree. The verified
+checkout must be clean: matching HEAD alone cannot certify uncommitted edits. Invalid evidence
 exits nonzero with ZERO downstream PASS/close calls. Valid calls pass argv and
 the real controller alias to unchanged guarded verbs and propagate their exit.
 A slice result omits the parent PRD from the PASS recording so it cannot become
