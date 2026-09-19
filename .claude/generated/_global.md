@@ -27,7 +27,7 @@ Atomic rules for the `commits` scope, generated from non-superseded ADR frontmat
 
 #### Source: ADR-0001 (`decisions/0001-foundational-design.md`)
 - **COM-001:** Every commit message follows `<type>(<optional scope>): <subject>` (Conventional Commits); subject is lowercase; subject line is capped at ≤72 chars; types: feat/fix/docs/chore/refactor/test/perf/style/build/ci (ADR-0001 D12, source=CLAUDE.md #5).
-- **COM-002:** Every agent-authored commit MUST carry a `Co-Authored-By: Claude …` trailer; `Closes #<slice-issue>` belongs in the PR body, NOT the commit subject; the git log is the changelog — no separate CHANGELOG file (ADR-0001 D12, source=CLAUDE.md #5/#6).
+- **COM-002:** Every agent-authored commit MUST carry a `Co-Authored-By: Claude …` trailer; OpenAI-authored commits instead name the actual OpenAI agent (ADR-0086 D2); `Closes #<slice-issue>` belongs in the PR body, NOT the commit subject; the git log is the changelog — no separate CHANGELOG file (ADR-0001 D12, source=CLAUDE.md #5/#6).
 
 ### Critics rules
 Atomic rules for the `critics` scope, generated from non-superseded ADR frontmatter by `tools/gen_rules.py`.
@@ -117,6 +117,9 @@ Atomic rules for the `pipeline` scope, generated from non-superseded ADR frontma
 - **PIP-027:** Drain parallelism lifts the slice model to queue level: file-overlap lanes, independent lanes parallel in isolated worktrees, at most 3 items concurrently in flight (enforced by DRAIN-LEDGER), unknown overlap serializes, merges serialize through the PR gate per ADR-0062 D2 (ADR-0085 D3).
 - **PIP-028:** Every drain run appends to `.claude/logs/drain/<run-id>.jsonl` at the git-common-dir root with the closed kind set {run_start, triaged, item_start, item_done, escalated, fix_queued, fixed_in_run, parked, resumed, run_end} and lane assignment as a field on `triaged`; trace-v3's enum is untouched; a park writes a `parked` record naming remaining items in resume order, including every still-unlanded `fix_queued`; the DRAIN-LEDGER health row enforces schema, kinds, recorded-escalation completeness, triage-precedence, the concurrency bound, and fix-queued parity — evaluated from the ledger alone, never from live GitHub state (ADR-0085 D4/D6).
 - **PIP-029:** Trivial-lane discoveries land inside the drain run as their own `hotfix/*` PRs recorded `fixed_in_run`; a drain run may not reach its terminal record with a `fix_queued` item that lacks a `fixed_in_run`, a `captured_ref`, or (on a park) a place in the remaining-items list; I3's definition, rule #13 root-cause captures, and the ADR-0067 regression rider are unchanged (ADR-0085 D5).
+
+#### Source: ADR-0086 (`decisions/0086-openai-workflow-adapter.md`)
+- **PIP-030:** OpenAI runs use the shared canonical workflow through the OpenAI adapter, preserving gates and truthful platform evidence; adapter drift or missing required capability prevents a completion claim (ADR-0086 D1-D6).
 
 ### Regression rules
 Atomic rules for the `regression` scope, generated from non-superseded ADR frontmatter by `tools/gen_rules.py`.

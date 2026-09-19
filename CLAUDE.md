@@ -2,6 +2,13 @@
 
 This file is auto-loaded by Claude Code on every session in this repo. It contains the rules of the road for AI agents working here, plus a map of where things live. Read it first; refer back to it when unsure.
 
+OpenAI hosts enter through [AGENTS.md](AGENTS.md) and explicitly load the generated
+sources and matching area rules using [the OpenAI contract](docs/openai-workflow.md).
+The canonical procedures remain here and in `.claude/`; only their host-specific
+invocation and evidence mapping changes under ADR-0086 D1-D6. No Claude hook event
+or Claude-only tool/model is implied. D6 currently exposes the ship router only;
+native hooks and complete discovery remain unverified/pending later slices.
+
 ---
 
 ## 1. Cross-cutting constraints (apply to every action you take)
@@ -44,6 +51,11 @@ _(Rule #14 RETIRED per [ADR-0032](decisions/0032-workflow-only-architecture.md) 
 
 **Commits and branches:** follow Conventional Commits (rule #5 above). Branch names: `<type>/<N>-<kebab-summary>` for slices; `hotfix/<short-summary>` for trivial lane (I3).
 
+OpenAI branches add `codex/<type>/<N>-<kebab-summary>` with the same closed type
+set and issue requirement. `tools/workflow_branch.py` supplies kind/issue/validity;
+fix classification OR a root-cause label retains blind tests and R-PROVE. Native
+OpenAI commits use truthful `Co-Authored-By: Codex <noreply@openai.com>`, not Claude.
+
 **Issue titles:** Posted PRDs follow the canonical `PRD: <one-line feature summary>` form. Backlog titles are descriptive only — a short noun phrase, no codename prefixes. Session codenames (PRD-A, PRD-B, …) are conversation shortcuts only and never appear in tracked titles. On promotion `backlog` → `prd`, the title is rewritten into `PRD:` form. Per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D5.
 
 ---
@@ -79,6 +91,15 @@ These are load-bearing conventions that supplement the cross-cutting rules. Per 
 - **I6 — Drift detection: three layers.** (1) Per-PR mechanical — `tools/ci-checks.sh` on every PR. (2) Per-PRD judgment — `codebase-critic` fires once at the PRD's closing slice, before that slice's reviewer pass, over the cumulative diff. (3) Whole-repo background — `codebase-critic` in `WHOLE_REPO: true` mode, dispatched non-blocking at `/ship` start once per session; findings become `captured` issues. Rubric for both modes: [`.claude/agents/codebase-critic.md`](.claude/agents/codebase-critic.md). Isolation drift surfaces via the guard's non-zero exits (I4a) + the Health isolation group.
 
 ### Prescribed linear flow (slicer mandatory)
+
+**OpenAI I4a mapping:** where the host lacks a native isolation result, the
+controller independently observes top/common/registered membership/branch/start
+SHA and clean status before writes and again after completion. The worker also
+asserts isolation before writes; shared-root or ambiguous evidence refuses work.
+See ADR-0086 D2/D6 and `tools/openai_workflow.py isolation --before`. Retain the
+existing post-dispatch guards; never invent a `worktreePath` return field.
+OpenAI artifact links/attachments replace unavailable `SendUserFile`, not the
+underlying proof duty. Only the controller dispatches independent review and QA.
 
 The canonical delivery flow for every feature is:
 

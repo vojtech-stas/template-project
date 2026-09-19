@@ -54,6 +54,10 @@ import threading
 import time
 from pathlib import Path
 
+if str(Path(__file__).resolve().parent.parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from tools.workflow_branch import classify as classify_branch
+
 # ---------------------------------------------------------------------------
 # gh_cache — shared TTL+timeout wrapper for gh CLI calls (slice #995/PRD #993).
 # Import is lazy-safe: if gh_cache is missing (old install), fall back to raw
@@ -2853,6 +2857,10 @@ def _classify_route(changed_files: list[str]) -> set[str]:
     import fnmatch
     classes: set[str] = set()
     for f in changed_files:
+        # Mirror qa-tester's instruction/router row; parity is tested.
+        if f == "AGENTS.md" or f.startswith(".agents/"):
+            classes.update(("command-run", "static"))
+            continue
         for pattern, cls in _ROUTE_TABLE:
             if fnmatch.fnmatch(f, pattern) or fnmatch.fnmatch(f.split("/")[-1], pattern):
                 classes.add(cls)
@@ -3136,7 +3144,7 @@ def check_proof_presence() -> dict:
     for pr in prs_all:
         ref = pr.get("headRefName", "")
         labels = [lb.get("name", "") for lb in (pr.get("labels") or [])]
-        if "trivial" in labels or ref.startswith("hotfix/"):
+        if "trivial" in labels or classify_branch(ref).kind == "hotfix":
             continue
         if pr.get("number", 0) > _PROOF_PRESENCE_BOOTSTRAP_PR:
             non_trivial.append(pr)
@@ -4477,7 +4485,7 @@ def check_test_ordering() -> dict:
             "api_available": False,
         }
 
-    fix_prs = [p for p in prs if (p.get("headRefName") or "").startswith("fix/")]
+    fix_prs = [p for p in prs if classify_branch(p.get("headRefName")).kind == "fix"]
 
     grandfathered_count = 0
     ordered = 0
@@ -6075,7 +6083,7 @@ def check_proof_integrity() -> dict:
     for pr in all_prs:
         ref = pr.get("headRefName", "")
         labels = [lb.get("name", "") for lb in (pr.get("labels") or [])]
-        if "trivial" in labels or ref.startswith("hotfix/"):
+        if "trivial" in labels or classify_branch(ref).kind == "hotfix":
             continue
         if pr.get("number", 0) <= _PROOF_INTEGRITY_BOOTSTRAP_PR:
             continue

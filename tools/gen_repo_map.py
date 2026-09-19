@@ -130,6 +130,9 @@ def _build_repo_map() -> str:
     _TOOLS = [
         ("gen_rules.py",   "tools/gen_rules.py",   "Generate global+area rules from ADR frontmatter"),
         ("gen_repo_map.py","tools/gen_repo_map.py", "Generate this repo-map file from filesystem"),
+        ("gen_openai_skills.py", "tools/gen_openai_skills.py", "Check the D6 ship router inventory"),
+        ("openai_workflow.py", "tools/openai_workflow.py", "OpenAI resolver, preflight, isolation and proof-gated delegation"),
+        ("workflow_branch.py", "tools/workflow_branch.py", "Shared conventional/Codex branch classifier"),
         ("ci-checks.sh",   "tools/ci-checks.sh",    "Deterministic CI gate (all project checks)"),
         ("worktree-guard.sh","tools/worktree-guard.sh","Worktree isolation guard; ff-restore + prune"),
         ("promote.sh",     "tools/promote.sh",      "Promote develop→main via RELEASE-READY gate"),
@@ -153,6 +156,7 @@ def _build_repo_map() -> str:
         ("docs/decision-log/", "Dated per-problem records of operator decisions with ticked outcomes (append-only)"),
         (".claude/agents/",  "Subagent prompt files (critics + generators)"),
         (".claude/skills/",  "User-invocable skill prompt files"),
+        (".agents/skills/",  "Generated OpenAI routers; ship-only D6 inventory"),
         (".claude/rules/",   "Generated AREA-scope rules (path-scoped, auto-loaded)"),
         (".claude/generated/", "Generated GLOBAL rules + repo-map (CLAUDE.md @import-only)"),
         (".claude/hooks/",   "Claude Code hook scripts"),

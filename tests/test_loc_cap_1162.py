@@ -170,11 +170,13 @@ class TestGenRulesBaseline(unittest.TestCase):
         # ADR-0081's PIP-025 moved it 85 -> 86, slice #1238; ADR-0083's
         # VER-009/VER-010 moved it 86 -> 88, slice #1310; ADR-0085's
         # PIP-026..PIP-029 moved it 88 -> 92, slice #1329; ADR-0084's
-        # VER-011/VER-012 moved it 92 -> 94, slice #1402). This test's job
+        # VER-011/VER-012 moved it 92 -> 94, slice #1402; ADR-0086's
+        # PIP-030 moved it 94 -> 95, slice #1440). This test's job
         # is unchanged: confirm slice #1162's own PIP-020/021 rule_ids are
         # still represented in the live baseline, not that the literal number
         # stays frozen at 82.
-        self.assertIn("RULE_IDS_BASELINE: int = 94", self.text)
+        self.assertIn("RULE_IDS_BASELINE: int = 95", self.text)
+        self.assertIn('"PIP-030"', self.text)
 
     def test_new_rule_statements_present(self):
         self.assertIn('"PIP-020"', self.text)

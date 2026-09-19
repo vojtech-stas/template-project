@@ -150,8 +150,9 @@ SCOPE_PATHS: dict[str, str] = {
 # `superseded_by: []` (immutable), so nothing leaves the active set: the
 # delta is +2.
 # Breakdown: CAP(8) + COM(2) + CRI(5) + DOC(6) + GLO(4) + HOK(9) +
-#            ISO(6) + OUT(5) + PIP(29) + REG(3) + SLI(5) + VER(12) = 94
-RULE_IDS_BASELINE: int = 94
+#            ISO(6) + OUT(5) + PIP(30) + REG(3) + SLI(5) + VER(12) = 95
+# ADR-0086 adds PIP-030; partial supersessions remove no historical ADR.
+RULE_IDS_BASELINE: int = 95
 
 # ---------------------------------------------------------------------------
 # Frontmatter parser (stdlib, no PyYAML)
@@ -282,6 +283,11 @@ def _is_superseded(adr: dict) -> bool:
 # These statements are derived from the core decisions in each ADR.
 # Format: rule_id → one-line statement.
 _RULE_STATEMENTS: dict[str, str] = {
+    "PIP-030": (
+        "OpenAI runs use the shared canonical workflow through the OpenAI adapter, "
+        "preserving gates and truthful platform evidence; adapter drift or missing "
+        "required capability prevents a completion claim (ADR-0086 D1-D6)."
+    ),
     # ADR-0006: forward-work backlog queue
     "CAP-001": (
         "Agents write `captured`-labeled issues for every deferred or "
@@ -724,6 +730,7 @@ _RULE_STATEMENTS: dict[str, str] = {
     ),
     "COM-002": (
         "Every agent-authored commit MUST carry a `Co-Authored-By: Claude …` trailer; "
+        "OpenAI-authored commits instead name the actual OpenAI agent (ADR-0086 D2); "
         "`Closes #<slice-issue>` belongs in the PR body, NOT the commit subject; "
         "the git log is the changelog — no separate CHANGELOG file "
         "(ADR-0001 D12, source=CLAUDE.md #5/#6)."
@@ -768,12 +775,15 @@ _RULE_STATEMENTS: dict[str, str] = {
     "ISO-001": (
         "Every git-mutating subagent dispatch — implementer or reviewer, regardless of batch "
         "size — MUST pass `isolation: 'worktree'`; there is no batch-size-1 carve-out "
-        "(ADR-0036 D1, source=CLAUDE.md I4a)."
+        "(ADR-0036 D1, source=CLAUDE.md I4a). OpenAI uses controller-verified absolute "
+        "top/common directory, registration, branch and starting revision before mutation "
+        "and after completion, plus worker Step 0 (ADR-0086 D2)."
     ),
     "ISO-002": (
         "Reviewer dispatch is isolated via the same `isolation: 'worktree'` mechanism as the "
         "implementer; the same state-pollution risk applies to any subagent that performs git "
-        "branch/merge operations (ADR-0036 D2)."
+        "branch/merge operations (ADR-0036 D2). OpenAI reviewers use the same independent "
+        "Git assertions as OpenAI implementers (ADR-0086 D2)."
     ),
     "ISO-003": (
         "Dispatched subagents MUST NOT mutate the orchestrator's session worktree or the root "
@@ -783,7 +793,10 @@ _RULE_STATEMENTS: dict[str, str] = {
     # ADR-0058: isolation as asserted interface — D1 (missing worktreePath) + D2 (step-0 assert) + D3 (guard semantics)
     "ISO-004": (
         "A dispatch result missing `worktreePath` is a dispatch failure — the orchestrator "
-        "MUST re-dispatch rather than proceed with a shared-tree agent (ADR-0058 D1)."
+        "MUST re-dispatch rather than proceed with a shared-tree agent (ADR-0058 D1). "
+        "On OpenAI hosts lacking that field, controller-observed host identity and "
+        "independent Git assertions substitute; ambiguous or missing evidence refuses "
+        "mutation, and a worker-written field is insufficient (ADR-0086 D2)."
     ),
     "ISO-005": (
         "Every dispatched agent MUST assert isolation in Step 0: verify "
