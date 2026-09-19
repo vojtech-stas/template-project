@@ -395,6 +395,12 @@ class TestProofAndIsolation(ProofFixture):
         self.bundle["reviewed_sha"] = "0" * 40
         self.assert_refuses_without_downstream()
 
+    def test_observed_native_final_answer_phase_is_accepted(self):
+        for key, role in (("review_result", "reviewer"), ("qa_result", "qa-tester")):
+            self.e.item(self.bundle[key], self.ids[role])["phase"] = "final_answer"
+        self.assertEqual(workflow.validate_proof(self.e, self.bundle),
+                         {"browser", "command-run", "static"})
+
     def test_dirty_verified_checkout_refuses_even_if_controller_observed_it(self):
         self.actual["status"] = "M tracked.py"
         self.e.item(self.e.data["git"]["status"], self.ids["controller"])["output"]["text"] = (
