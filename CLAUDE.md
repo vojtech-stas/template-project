@@ -42,7 +42,7 @@ _(Rule #14 RETIRED per [ADR-0032](decisions/0032-workflow-only-architecture.md) 
 
 ## 2. Naming
 
-**Commits and branches:** follow Conventional Commits (rule #5 above). Branch names: `<type>/<N>-<kebab-summary>` for slices; `hotfix/<short-summary>` for trivial lane (I3).
+**Commits and branches:** follow Conventional Commits (rule #5 above). Branch names: `<type>/<N>-<kebab-summary>` for slices; `hotfix/<issue#>-<kebab-summary>` for trivial lane (I3) — same `<type>/<N>-<kebab-slug>` shape, since `hotfix` is just another `<type>`.
 
 **Issue titles:** Posted PRDs follow the canonical `PRD: <one-line feature summary>` form. Backlog titles are descriptive only — a short noun phrase, no codename prefixes. Session codenames (PRD-A, PRD-B, …) are conversation shortcuts only and never appear in tracked titles. On promotion `backlog` → `prd`, the title is rewritten into `PRD:` form. Per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D5.
 
@@ -71,7 +71,7 @@ These are load-bearing conventions that supplement the cross-cutting rules. Per 
 
 - **I1 — Skills know the hierarchy.** `/to-prd` and `/to-issues` produce/consume the 3-tier hierarchy and the `prd`/`slice` labels (delivered by PRD #3 slices 2 and 3).
 - **I2 — Slice-grabbing protocol.** The first agent to run `gh issue edit <slice> --add-assignee @me` owns the slice. The reviewer enforces "one assignee per open slice" — if a second agent grabs an already-assigned slice, reviewer BLOCKs the resulting PR.
-- **I3 — Trivial lane.** PRs ≤10 LoC of runtime-artifact diff with no behavior change MAY skip PRD/slice ceremony. Branch: `hotfix/<short-summary>`. Add the `trivial` label to the PR; the reviewer fast-paths it.
+- **I3 — Trivial lane.** PRs ≤10 LoC of runtime-artifact diff with no behavior change MAY skip PRD/slice *ceremony* — but the branch still hangs off a tracked issue, typically one filed with the `captured` label specifically so the branch has a number, since `.githooks/pre-commit` requires one for every branch type. Branch: `hotfix/<issue#>-<short-summary>`. Add the `trivial` label to the PR; the reviewer fast-paths it.
 - **I4 — Slice size cap & staleness.** Slice PRs cap at **≤600 LoC of runtime-artifact diff** (raised from 300 per [ADR-0077](decisions/0077-ceremony-overhead-reduction.md) D1, operator-directed 2026-08-03). The canonical definition of "runtime artifact" lives in [`.claude/agents/reviewer.md`](.claude/agents/reviewer.md) (rule R-LOC) — do not restate it here. A slice issue open >7 days is marked stale by the reviewer.
 - **I4a — Subagent dispatch isolation.** Every `implementer` and `reviewer` dispatch MUST pass `isolation: "worktree"` (ADR-0036). A dispatch result missing `worktreePath` is a dispatch failure — re-dispatch (ADR-0058 D1). After each dispatch run `bash tools/worktree-guard.sh branch-restore <expected>`; after a merge run `root-sync` then `prune` (ADR-0058 D3). The guard is ff-only and loud: diverged branches and unrepaired violations exit non-zero.
 
@@ -150,7 +150,7 @@ Auto-loaded project vocabulary. Soft cap ~35 entries per [ADR-0012](decisions/00
 - **slice** — INVEST-shaped vertical sub-issue under a PRD (labeled `slice`), delivered in one PR capped at ≤600 runtime LoC; middle tier of the PRD→Slice→PR hierarchy.
 - **SPIDR** — Mike Cohn's 5 slice-split fallbacks (**S**pike, **P**ath, **I**nterface, **D**ata, **R**ules); S (spike/research), I (interface split), and R (rules split) are dominant in this project.
 - **subagent** — specialist Claude agent invoked via the `Agent` tool with its own system prompt, restricted tool set, and isolated context window; runs as a sub-process of the main agent.
-- **trivial lane** — fast-path workflow (I3) for PRs ≤10 LoC with no behavior change; uses `hotfix/<short-summary>` branch + `trivial` label; skips PRD/slice ceremony and gets a fast-path reviewer check.
+- **trivial lane** — fast-path workflow (I3) for PRs ≤10 LoC with no behavior change; uses `hotfix/<issue#>-<short-summary>` branch + `trivial` label; skips PRD/slice ceremony and gets a fast-path reviewer check.
 - **walking-skeleton** — practice of shipping the smallest end-to-end version of the whole pipeline first, then iterating on the weakest stage; slice 1 of every multi-slice PRD must be a walking-skeleton per SC-WALKING-SKELETON.
 
 - **YAGNI** — "You Aren't Gonna Need It"; rule #1 — never add code or content outside the current slice's scope; the reviewer's first job is to enforce this on every PR.
