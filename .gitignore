@@ -72,3 +72,8 @@ logs/
 # Disposable SQLite trace read-model (refoldable from trace-v3.jsonl;
 # never a second source of truth — slice #1080, ADR-0075 D2).
 .claude/state/
+
+# Per-dispatch isolated worktree checkouts (ADR-0036) — .git/info/exclude
+# alone doesn't survive a fresh clone, so subagent worktrees show up as
+# untracked dirs on every other clone without this.
+.claude/worktrees/
