@@ -10,7 +10,7 @@
 #   2. Create the 8 repo-level labels (skip if they already exist).
 #   3. Install local git hooks (`git config core.hooksPath .githooks`).
 #   4. Detect the GitHub Project v2 board (manual hint if missing).
-#   5. Apply branch protection R1+R2 on `main` (warn-and-proceed if no admin).
+#   5. Apply branch protection R1+R2 on `develop` (warn-and-proceed if no admin).
 #   6. python3 presence check (warn-only; required by event logger).
 #   7. jq install — idempotent winget/brew/apt (ADR-0030 D1).
 #   8. Playwright Python library install (pip install playwright; ADR-0050 D1).
@@ -253,9 +253,9 @@ else
     note "⚠ project board: skipped (gh not ready)"
 fi
 
-# ---- step 5: branch protection R1 + R2 on main ----------------------------
+# ---- step 5: branch protection R1 + R2 on develop --------------------------
 
-step 5 "branch protection R1+R2+R4 on main"
+step 5 "branch protection R1+R2+R4 on develop"
 
 # R1 = require PR (required_pull_request_reviews block present, count=0).
 # R2 = no force-push, no deletion (allow_force_pushes=false, allow_deletions=false).
@@ -268,7 +268,7 @@ step 5 "branch protection R1+R2+R4 on main"
 # the summary line tells them what happened.
 #
 # R4 (required status checks) — enable is OWNER-RUN after this PRD's slices
-# merge AND the CI workflow has produced a named check run on main.
+# merge AND the CI workflow has produced a named check run on develop.
 # Do NOT enable mid-PRD: it would block this PRD's own merges.
 # The context "ci" matches the GitHub Actions job name in
 # .github/workflows/ci.yml (ADR-0042 D2).
@@ -290,11 +290,11 @@ if [[ "$GH_OK" -eq 1 && -n "$ORIGIN_SLUG" ]]; then
     # Git Bash, yielding "invalid API endpoint" (ADR-0030 hardening class).
     # gh treats the slash-less form identically on every platform.
     BP_ERR=$(printf '%s' "$BP_BODY" \
-        | gh api -X PUT "repos/${ORIGIN_SLUG}/branches/main/protection" --input - 2>&1 >/dev/null)
+        | gh api -X PUT "repos/${ORIGIN_SLUG}/branches/develop/protection" --input - 2>&1 >/dev/null)
     BP_RC=$?
     if [[ "$BP_RC" -eq 0 ]]; then
-        log "branch protection applied to 'main' (R1+R2)."
-        note "✓ branch protection: R1+R2 applied to main"
+        log "branch protection applied to 'develop' (R1+R2)."
+        note "✓ branch protection: R1+R2 applied to develop"
     elif printf '%s' "$BP_ERR" | grep -qi "upgrade to github pro"; then
         warn "branch protection unavailable: private repos need GitHub Pro (or make the repo public); skipping."
         note "⚠ branch protection: skipped (plan does not cover private-repo protection)"
