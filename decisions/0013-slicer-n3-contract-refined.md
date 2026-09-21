@@ -3,7 +3,8 @@ id: ADR-0013
 status: accepted
 supersedes:
   - ADR-0003
-superseded_by: []
+superseded_by:
+  - "ADR-0044"
 scope: slicing
 rule_ids:
   - SLI-004

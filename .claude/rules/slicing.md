@@ -8,7 +8,3 @@ Atomic rules for the `slicing` scope, generated from non-superseded ADR frontmat
 - **SLI-001:** Slice 1 of every multi-slice PRD MUST be a walking-skeleton — it cuts through every pipeline layer end-to-end (hamburger method), even if crudely; building one layer completely before another is explicitly rejected (ADR-0005 D2, source=CLAUDE.md #2).
 - **SLI-002:** When a slice approaches the LoC cap, the slicer uses SPIDR split-fallback hints (Spike / Path / Interface / Data / Rules); S, I, and R are the dominant splits for this agent-workflow domain (ADR-0005 D2).
 - **SLI-003:** For each candidate decomposition, the slicer MUST identify cascade-docs — files that should update to reflect the new feature even when not strictly required by acceptance criteria — and add a slice or merge coverage for each; the slicer-critic enforces this check (ADR-0005 D3, source=CLAUDE.md #16).
-
-## Source: ADR-0013 (`decisions/0013-slicer-n3-contract-refined.md`)
-- **SLI-004:** When all N candidate decompositions would produce bit-identical post-merge end-state (same files, same LoC, same content — modulo commit ordering), the slicer declares N=1 with explicit rationale instead of fabricating cosmetic variation; N=3 remains the default for genuinely-open-shape PRDs (ADR-0013 D1).
-- **SLI-005:** The slicer-critic accepts N=1 with explicit rationale as a legal input; it verifies the rationale answers: which PRD section locks the shape, which variation axis was rejected, and whether N=3 would have produced genuinely-different alternatives (ADR-0013 D2/D3).
