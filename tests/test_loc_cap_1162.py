@@ -170,11 +170,14 @@ class TestGenRulesBaseline(unittest.TestCase):
         # ADR-0081's PIP-025 moved it 85 -> 86, slice #1238; ADR-0083's
         # VER-009/VER-010 moved it 86 -> 88, slice #1310; ADR-0085's
         # PIP-026..PIP-029 moved it 88 -> 92, slice #1329; ADR-0084's
-        # VER-011/VER-012 moved it 92 -> 94, slice #1402). This test's job
-        # is unchanged: confirm slice #1162's own PIP-020/021 rule_ids are
-        # still represented in the live baseline, not that the literal number
-        # stays frozen at 82.
-        self.assertIn("RULE_IDS_BASELINE: int = 94", self.text)
+        # VER-011/VER-012 moved it 92 -> 94, slice #1402; issue #1402's
+        # RULE_IDS_BASELINE was then corrected 94 -> 92 by issue #1464 —
+        # ADR-0013's stale `superseded_by: []` frontmatter was populated with
+        # `["ADR-0044"]`, which retires ADR-0013's SLI-004/SLI-005 from the
+        # active rule set). This test's job is unchanged: confirm slice
+        # #1162's own PIP-020/021 rule_ids are still represented in the live
+        # baseline, not that the literal number stays frozen at 82.
+        self.assertIn("RULE_IDS_BASELINE: int = 92", self.text)
 
     def test_new_rule_statements_present(self):
         self.assertIn('"PIP-020"', self.text)
