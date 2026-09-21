@@ -149,9 +149,17 @@ SCOPE_PATHS: dict[str, str] = {
 # supersession of ADR-0057 D2 above — ADR-0049 is not edited and keeps
 # `superseded_by: []` (immutable), so nothing leaves the active set: the
 # delta is +2.
+# Issue #1464 (fix, no new ADR): ADR-0013's frontmatter `superseded_by: []`
+# was stale — decisions/README.md and ADR-0044 both already document
+# ADR-0013 D1-D4 as superseded by ADR-0044 (D5/D6 unaffected), but the
+# frontmatter never caught up, so `_is_superseded()` (whole-ADR) kept
+# rendering ADR-0013's rules. Populating `superseded_by: ["ADR-0044"]`
+# correctly drops ADR-0013's SLI-004 and SLI-005 (the retired N=1-vs-N=3
+# degenerate-decomposition machinery ADR-0044 D2 replaced) — no other ADR's
+# rule_ids are affected: the delta is -2.
 # Breakdown: CAP(8) + COM(2) + CRI(5) + DOC(6) + GLO(4) + HOK(9) +
-#            ISO(6) + OUT(5) + PIP(29) + REG(3) + SLI(5) + VER(12) = 94
-RULE_IDS_BASELINE: int = 94
+#            ISO(6) + OUT(5) + PIP(29) + REG(3) + SLI(3) + VER(12) = 92
+RULE_IDS_BASELINE: int = 92
 
 # ---------------------------------------------------------------------------
 # Frontmatter parser (stdlib, no PyYAML)
