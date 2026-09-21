@@ -264,7 +264,7 @@ gh pr view <PR> --json commits --jq '.commits[].messageBody' | grep -i 'co-autho
 
 **R-META-OVERRIDE escape hatch:** A contributor may add `R-META-OVERRIDE: <one-line rationale>` to the PR body. Record as `[OVERRIDE]` (not PASS/FAIL) in rubric; include a `### R-META override notice` section quoting the rationale verbatim. Does NOT change verdict for any OTHER rule.
 
-**Rationale:** New ADRs are the highest-signal canonical decision artifacts; unsupervised additions risk bypassing the prd-critic / adr-critic gate. The narrow scope (new ADRs only) is intentional — broader provenance is enforced at policy layer (CLAUDE.md rule #10) and by R-CLOSES; R-META adds ADR-specific provenance on top. Does NOT fire on: existing ADR edits; additions in `.claude/agents/`, `.claude/skills/`, `CLAUDE.md`, `README.md`; `decisions/README.md` or `decisions/branch-protection-config.json`.
+**Rationale:** New ADRs are the highest-signal canonical decision artifacts; unsupervised additions risk bypassing the prd-critic / adr-critic gate. The narrow scope (new ADRs only) is intentional — broader provenance is enforced at policy layer (CLAUDE.md rule #10) and by R-CLOSES; R-META adds ADR-specific provenance on top. Does NOT fire on: existing ADR edits; additions in `.claude/agents/`, `.claude/skills/`, `CLAUDE.md`, `README.md`; `decisions/README.md`.
 
 **ADR-citation verification:** for any slice that cites `ADR-NNNN D<n>`, verify the citation resolves against the **authored ADR file's `### D<n>` heading** (not the PRD-sketch numbering); a sketch-numbering citation that doesn't match the authored file is a finding under rule #18 (PRD #574/#581 incident).
 
