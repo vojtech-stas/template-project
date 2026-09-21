@@ -30,5 +30,3 @@
 # ---------------------------------------------------------------------------
 # Active quarantine entries (add below this line):
 # ---------------------------------------------------------------------------
-tests/test_pre_tool_bash_single_spawn_1198.py::Test3aAllowPathTiming::test_allow_path_median_under_ci_safe_margin  # captured #1254  [quarantined: 2026-08-22]
-tests/test_session_start_concurrent_1199.py::TestConcurrencyTiming::test_five_delayed_queries_run_concurrently  # captured #1254  [quarantined: 2026-08-22]
