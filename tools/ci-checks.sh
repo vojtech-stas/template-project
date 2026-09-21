@@ -1657,6 +1657,31 @@ fi
 fi  # end python3 availability check
 
 # ---------------------------------------------------------------------------
+# CHECK 28: QUARANTINE-SLA — tests/quarantine.txt entries within the 30-day
+# SLA (ADR-0067 D4; PRD #1462 / slice #1463)
+#
+#   Delegates to the health.py registry (ADR-0064 D3 single-source model),
+#   mirroring CHECK 9's WARN-allowed/FAIL-blocks pattern: health.py's own
+#   `--check` CLI exits 0 on PASS/WARN and 1 on FAIL, so a WARN-worthy
+#   register (entries present but none breaching) still passes this check;
+#   only a FAIL (>30-day breach) trips it.
+# ---------------------------------------------------------------------------
+echo "--- CHECK 28: QUARANTINE-SLA — quarantine register 30-day SLA ---"
+if ! command -v python3 > /dev/null 2>&1; then
+    echo "SKIP: CHECK 28 — python3 not available (soft-degrade)"
+elif [ ! -f "dashboard/health.py" ]; then
+    echo "SKIP: CHECK 28 — dashboard/health.py not found (soft-degrade)"
+else
+    CHECK28_OUTPUT=$(python3 dashboard/health.py --check QUARANTINE-SLA 2>&1)
+    CHECK28_EXIT=$?
+    if [ "$CHECK28_EXIT" -eq 0 ]; then
+        pass "CHECK 28 — $CHECK28_OUTPUT"
+    else
+        fail "CHECK 28 — $CHECK28_OUTPUT"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""

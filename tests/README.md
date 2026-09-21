@@ -4,24 +4,35 @@ This directory holds the project-claude regression test suite, seeded per ADR-00
 
 ## Runner choice
 
-**stdlib `unittest`** is the primary runner — no external dependencies required.
-**pytest** is optional; it is preferred when installed but is not a requirement
-(per PRD #813 §4: "no new external dependencies — pytest only if already available").
+**pytest** is the authoritative runner in CI: `.github/workflows/ci.yml`
+installs it ahead of CHECK 12, so CHECK 12 always takes CHECK 12's
+pytest branch, not the stdlib-`unittest` fallback (PRD #1462 §2 #1/#2,
+superseding old PRD #813 §4's "unittest is primary"). `tests/conftest.py`'s
+quarantine-enforcement hook only runs under pytest, so pytest is also
+required for quarantine entries (`tests/quarantine.txt`) to be honored.
+stdlib `unittest` discovery remains a no-dependency fallback for local runs
+where pytest isn't installed — CHECK 12 still uses it in that case, but
+without quarantine enforcement.
 
 Run the suite:
 ```bash
-# From the repo root (stdlib — works everywhere):
-python -m unittest discover -s tests -p "test_*.py"
-
-# Optional (when pytest is installed):
+# Preferred (matches CI):
 pytest tests/ -v
+
+# Fallback (no external dependencies, no quarantine enforcement):
+python -m unittest discover -s tests -p "test_*.py"
 ```
 
 ## CI integration
 
 `tools/ci-checks.sh` runs the suite automatically as CHECK 12 when `tests/`
-exists. A failure in any test fails the CI check. The collected count is
-reported in the pass line.
+exists. Under pytest, a quarantined test (an active entry in
+`tests/quarantine.txt`) still runs and its outcome stays visible in the
+captured output, but its failure does not fail CHECK 12 — "run-and-log,
+never gate" per ADR-0067 D4. Any other test failure still fails the check.
+The collected count is reported in the pass line. `tools/ci-checks.sh` also
+runs CHECK 28 (QUARANTINE-SLA), which fails the build if any active
+quarantine entry has passed its 30-day fix-or-delete SLA.
 
 ## Founding test
 

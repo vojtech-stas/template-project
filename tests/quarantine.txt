@@ -30,3 +30,4 @@
 # ---------------------------------------------------------------------------
 # Active quarantine entries (add below this line):
 # ---------------------------------------------------------------------------
+tests/test_gh_cache_993.py::TestApiStatusDegradeNotBlock::test_status_returns_within_budget_when_gh_slow  # captured #1276  [quarantined: 2026-09-21]
