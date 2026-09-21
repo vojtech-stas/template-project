@@ -25,6 +25,15 @@ jobs:
         with:
           python-version: "3.x"
 
+      - name: Install pytest
+        # actions/setup-python@v5 does not bundle pytest. Without this step
+        # CHECK 12 (tools/ci-checks.sh) silently falls back to the stdlib
+        # unittest discovery branch on every CI run, so 47+ pytest-only
+        # collected tests never execute and can never gate a merge
+        # (PRD #1462 §1 / slice #1463 criterion 1). Pinned to the version
+        # verified locally (9.0.3).
+        run: pip install pytest==9.0.3
+
       - name: Run CI checks
         # GH_TOKEN authenticates the gh CLI for CHECK 19 (slicer-provenance
         # guard) — without it, gh is unauthenticated in Actions and CHECK 19
