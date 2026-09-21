@@ -32,7 +32,7 @@
 # See:
 #   - decisions/0008-workflow-autolog-bootstrap-and-naming.md (D6)
 #   - .githooks/install.sh, .githooks/pre-commit, .githooks/commit-msg
-#   - decisions/branch-protection-config.json (reference shape)
+#   - tools/branch-protection-config.example.json (reference shape)
 
 set -uo pipefail
 
