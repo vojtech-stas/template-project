@@ -159,7 +159,6 @@ def _build_repo_map() -> str:
         ("dashboard/",       "Local web visualizer (architecture + health)"),
         ("tools/",           "CLI scripts for CI, generation, and promotion"),
         ("tests/",           "Regression test suite (pytest)"),
-        ("docs/prds/",       "Future repo-local PRD storage"),
     ]
     for dir_path, dir_desc in _DIRS:
         lines.append(f"| [`{dir_path}`]({dir_path}) | {dir_desc} |\n")
