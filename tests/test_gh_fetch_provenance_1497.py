@@ -32,7 +32,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 REPO_ROOT = Path(__file__).parent.parent
 _DASHBOARD_DIR = str(REPO_ROOT / "dashboard")
@@ -181,6 +181,32 @@ def test_seam_fallback_labels_missing_gh_as_computing():
     assert r == (1, "", "computing"), r
 
 
+def test_seam_fallback_labels_successful_run_as_live():
+    """F2(a): import-fallback branch, success leg (health.py:122-125). gh_cache
+    import unavailable but the direct subprocess call succeeds (rc=0, no
+    exception) → _health_gh_fetch(with_source=True) returns (0, stdout, 'live')."""
+    health = _reimport_health()
+    health._GH_CACHE_AVAILABLE = False
+    completed = MagicMock(returncode=0, stdout="[]")
+    with patch.object(health.subprocess, "run", return_value=completed):
+        r = health._health_gh_fetch(["issue", "list"], with_source=True)
+    assert r == (0, "[]", "live"), r
+
+
+def test_seam_fallback_labels_failed_run_without_exception_as_computing():
+    """F2(a): import-fallback branch, failed-without-exception leg
+    (health.py:122-125). gh_cache import unavailable and the direct
+    subprocess call returns a non-zero exit WITHOUT raising →
+    _health_gh_fetch(with_source=True) returns (1, '', 'computing'), the
+    same shape as the exception path."""
+    health = _reimport_health()
+    health._GH_CACHE_AVAILABLE = False
+    completed = MagicMock(returncode=1, stdout="")
+    with patch.object(health.subprocess, "run", return_value=completed):
+        r = health._health_gh_fetch(["issue", "list"], with_source=True)
+    assert r == (1, "", "computing"), r
+
+
 # ===========================================================================
 # RELEASE-READY condition (e) fails closed (ADR-0087 D3, D4)
 # ===========================================================================
@@ -233,6 +259,46 @@ def test_release_ready_e_confirmed_empty_still_passes():
     assert r["first_failing_condition"] == "", r
 
 
+def test_release_ready_e_empty_payload_confirmed_source_holds():
+    """F1 regression (round-1 reviewer repro): a CONFIRMED source (rc=0,
+    source=live) with an EMPTY payload on both legs must NOT be read as a
+    confirmed empty list. ADR-0087 D3: confirmed means a confirmed source
+    AND a payload that parses as a JSON list; an empty string does not
+    parse as one. Pre-fix, `_json.loads(_leg_out) if _leg_out.strip() else
+    []` turned this into a confirmed zero and opened the gate."""
+    r = _release_ready_with_seam(_stub_fixed(0, "", "live"))
+    assert r["result"] == "WARN", r
+    assert r["first_failing_condition"] == "e", r
+    assert "unconfirmed" in r["detail"], r["detail"]
+    assert "source=live" in r["detail"], r["detail"]
+
+
+def test_release_ready_e_empty_payload_holds_even_if_other_leg_confirmed():
+    """F1 sweep: the empty-payload defect must be caught leg-by-leg — a
+    confirmed-but-empty issues leg must hold the gate even when the PRs
+    leg is confirmed with a real (parseable) empty list, and vice versa."""
+
+    def _issues_empty(a, ttl=0, timeout=0, with_source=False):
+        if a[:2] == ["issue", "list"]:
+            return (0, "", "live") if with_source else (0, "")
+        return (0, "[]", "live") if with_source else (0, "[]")
+
+    r = _release_ready_with_seam(_issues_empty)
+    assert r["result"] == "WARN", r
+    assert r["first_failing_condition"] == "e", r
+    assert "issues unconfirmed" in r["detail"], r["detail"]
+
+    def _prs_empty(a, ttl=0, timeout=0, with_source=False):
+        if a[:2] == ["pr", "list"]:
+            return (0, "", "live") if with_source else (0, "")
+        return (0, "[]", "live") if with_source else (0, "[]")
+
+    r = _release_ready_with_seam(_prs_empty)
+    assert r["result"] == "WARN", r
+    assert r["first_failing_condition"] == "e", r
+    assert "PRs unconfirmed" in r["detail"], r["detail"]
+
+
 def test_release_ready_e_counts_issues_and_prs():
     """Criterion 19: one open needs-human PR and zero open needs-human
     issues holds the gate — condition (e) must count both queries' sum."""
@@ -260,12 +326,16 @@ def test_release_ready_e_fail_closed_stale():
     r = _release_ready_with_seam(_stub_fixed(1, "", "stale"))
     assert r["result"] == "WARN", r
     assert r["first_failing_condition"] == "e", r
+    assert "unconfirmed" in r["detail"], r["detail"]
+    assert "source=stale" in r["detail"], r["detail"]
 
 
 def test_release_ready_e_fail_closed_computing():
     r = _release_ready_with_seam(_stub_fixed(1, "", "computing"))
     assert r["result"] == "WARN", r
     assert r["first_failing_condition"] == "e", r
+    assert "unconfirmed" in r["detail"], r["detail"]
+    assert "source=computing" in r["detail"], r["detail"]
 
 
 def test_release_ready_e_fail_closed_unverified():
@@ -274,6 +344,8 @@ def test_release_ready_e_fail_closed_unverified():
     r = _release_ready_with_seam(_stub_fixed(1, "", "unverified"))
     assert r["result"] == "WARN", r
     assert r["first_failing_condition"] == "e", r
+    assert "unconfirmed" in r["detail"], r["detail"]
+    assert "source=unverified" in r["detail"], r["detail"]
 
 
 def test_release_ready_e_fail_closed_unparsable():
@@ -283,6 +355,8 @@ def test_release_ready_e_fail_closed_unparsable():
     r = _release_ready_with_seam(_stub_fixed(0, "not-a-json-array", "live"))
     assert r["result"] == "WARN", r
     assert r["first_failing_condition"] == "e", r
+    assert "unconfirmed" in r["detail"], r["detail"]
+    assert "source=live" in r["detail"], r["detail"]
 
 
 def test_release_ready_e_fail_closed_exception():
