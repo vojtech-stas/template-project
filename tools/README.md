@@ -78,16 +78,19 @@ exclusively. This slice ships the bounded `N`-lane form only.
 
 **`packet --sha <sha> <n>…`** (its builder is invoked internally by
 `tools/pipe/dispatch --lane`) — builds a lane's dispatch brief: the sha, then
-per bug its `path:line` refs, a ±20-line excerpt at that sha, and its `Check:`
-line or `CHECK: MISSING`. Reads only issue bodies and comments whose
+per bug its `path:line` or `path:start-end` refs, a ±20-line excerpt at that
+sha, and its check (resolved exactly as `verify` resolves it) or
+`CHECK: MISSING`. Reads only issue bodies and comments whose
 `author_association` is `OWNER`, `MEMBER` or `COLLABORATOR`. Every gh, git and
 check subprocess decodes as UTF-8, and the packet is written to stdout as UTF-8
 bytes, whatever the host locale; `dispatch --lane` delivers the packet before
 it records its `dispatch` span, so a failed write leaves no span.
 
-**`verify <n>…`** — runs each bug's resolved `Check:` command (the issue's
-own line, or its closing lane PR's `Check #<n>:` line) and prints
-`PASS|FAIL|MISSING #<n>`; exits 0 iff every line is PASS.
+**`verify <n>…`** — runs each bug's resolved check (the issue's own `Check:`
+line, or else the `Check #<n>:` line of its most recently merged `lane` PR
+that closes it on a whole `Closes #<n>` line), with one layer of surrounding
+backticks stripped, and prints `PASS|FAIL|MISSING #<n>`; exits 0 iff every
+line is PASS.
 
 Both branch roles resolve per-invocation via
 [`tools/pipeline_config.py`](pipeline_config.py) — never hardcoded, per

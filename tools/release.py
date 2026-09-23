@@ -21,18 +21,22 @@ Four subcommands:
 
   packet --sha <sha> <n>...
     Prints the lane packet for the given bug numbers at `<sha>`: the sha,
-    then each bug's `path:line` refs with a ±20-line excerpt read from
-    that exact git blob, and its `Check:` line or `CHECK: MISSING`. Reads
-    refs and checks from trusted authors only (issue body always counts;
-    a comment counts only when its `author_association` is `OWNER`,
-    `MEMBER` or `COLLABORATOR`). `build_packet()` is the library entry
-    point `tools/pipe/dispatch --lane` imports directly.
+    then each bug's `path:line` / `path:start-end` refs with a ±20-line
+    excerpt read from that exact git blob, and its `Check:` line or
+    `CHECK: MISSING`. Reads refs and checks from trusted authors only
+    (issue body always counts; a comment counts only when its
+    `author_association` is `OWNER`, `MEMBER` or `COLLABORATOR`), and
+    resolves the check with the same resolver `verify` runs.
+    `build_packet()` is the library entry point `tools/pipe/dispatch
+    --lane` imports directly.
 
   verify <n>...
-    Runs each bug's `Check:` command (the issue's own line, or its
-    closing lane PR's `Check #<n>:` line) and prints exactly one
-    `PASS|FAIL|MISSING #<n>` line per issue; exits 0 iff every line is
-    PASS. `--reopen` is deferred to slice 2 (SPIDR fallback, A10).
+    Runs each bug's check (the issue's own `Check:` line, or else the
+    `Check #<n>:` line of its most recently merged `lane` PR that closes
+    it on a whole `Closes #<n>` line), with one layer of surrounding
+    backticks stripped, and prints exactly one `PASS|FAIL|MISSING #<n>`
+    line per issue; exits 0 iff every line is PASS. `--reopen` is
+    deferred to slice 2 (SPIDR fallback, A10).
 
 Stdlib only. No literal integration/release branch names (C1) — every
 branch reference resolves through `tools/pipeline_config.py`.
@@ -50,9 +54,16 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 
 TRUSTED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 
-_REF_RE = re.compile(r"`([\w./\\-]+):(\d+)`")
-_CHECK_LINE_RE = re.compile(r"^Check:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
-_PR_CHECK_LINE_RE_TMPL = r"^Check\s*#{n}:\s*(.+)$"
+# A backtick-quoted `path:line` or `path:start-end` ref.
+_REF_RE = re.compile(r"`([\w./\\-]+):(\d+)(?:-(\d+))?`")
+# Check lines are case-sensitive, so the packet's own `CHECK: MISSING`
+# line is never read as a command. `[ \t]*` (never `\s*`) keeps an empty
+# check line from reading the next line as its command.
+_CHECK_LINE_RE = re.compile(r"^Check:[ \t]*(.+)$", re.MULTILINE)
+_PR_CHECK_LINE_RE_TMPL = r"^Check #{n}:[ \t]*(.+)$"
+# A lane PR closes a bug only on a whole `Closes #<n>` line: the anchored
+# form tools/pipe/pr-merge closes on merge. Prose `closes #<n>` never counts.
+_CLOSES_LINE_RE_TMPL = r"^Closes #{n}\s*$"
 
 
 def _gh():
@@ -213,17 +224,42 @@ def _extract_refs(text):
 
 
 def _extract_path_line_refs(text):
-    """[(path, line), ...] cited as backtick-quoted `path:line` refs."""
+    """[(path, start, end), ...] cited as backtick-quoted `path:line`
+    (end == start) or `path:start-end` refs."""
     if not text:
         return []
-    return [(m.group(1), int(m.group(2))) for m in _REF_RE.finditer(text)]
+    refs = []
+    for m in _REF_RE.finditer(text):
+        a = int(m.group(2))
+        b = int(m.group(3)) if m.group(3) else a
+        refs.append((m.group(1), min(a, b), max(a, b)))
+    return refs
+
+
+def _unwrap_check(raw):
+    """Strip whitespace, then one layer of surrounding markdown backticks:
+    `cmd` or ``cmd`` becomes cmd. A value whose delimiter run recurs inside
+    (`a` and `b`) is two code spans, not one, so it stays verbatim."""
+    value = raw.strip()
+    m = re.fullmatch(r"(`+)(.*)\1", value, re.DOTALL)
+    if m and m.group(1) not in m.group(2):
+        value = m.group(2).strip()
+    return value
+
+
+def _first_check(pattern, text):
+    for m in pattern.finditer(text or ""):
+        value = _unwrap_check(m.group(1))
+        if value:
+            return value
+    return None
 
 
 def _find_check(texts):
     for t in texts:
-        m = _CHECK_LINE_RE.search(t or "")
-        if m:
-            return m.group(1).strip()
+        check = _first_check(_CHECK_LINE_RE, t)
+        if check:
+            return check
     return None
 
 
@@ -512,9 +548,10 @@ def _cmd_lanes(args):
 # packet (library function + thin CLI wrapper)
 # ---------------------------------------------------------------------------
 
-def _read_blob_excerpt(sha, path, line, window=20, repo_root=None):
-    """`git show <sha>:<path>`, then the ±window-line excerpt around `line`
-    (1-based). Reads the exact git blob at `sha` — never the working tree —
+def _read_blob_excerpt(sha, path, line, window=20, repo_root=None, end_line=None):
+    """`git show <sha>:<path>`, then the excerpt from `window` lines before
+    `line` to `window` lines after `end_line` (default `line`; 1-based).
+    Reads the exact git blob at `sha` — never the working tree —
     so the excerpt reflects that sha even if the tree has since moved on.
     Decoded as UTF-8, never the host locale, so the excerpt is the text at
     that sha (criterion 21) and the Edit tool's before-text match holds."""
@@ -525,8 +562,9 @@ def _read_blob_excerpt(sha, path, line, window=20, repo_root=None):
     if res.returncode != 0:
         return None
     lines = res.stdout.splitlines()
+    last = line if end_line is None else max(line, end_line)
     start = max(0, line - 1 - window)
-    end = min(len(lines), line - 1 + window + 1)
+    end = min(len(lines), last - 1 + window + 1)
     return "\n".join(lines[start:end])
 
 
@@ -534,7 +572,9 @@ def build_packet(owner, repo, issue_numbers, sha, repo_root=None):
     """Library entry point `tools/pipe/dispatch --lane` imports directly.
     Reads refs and checks from trusted authors only (issue body always
     counts; comments only when trusted — criterion 23), excerpts ±20 lines
-    from the exact `sha` blob, and falls back to `CHECK: MISSING`."""
+    from the exact `sha` blob, and resolves each check through
+    `_resolve_check`, the same resolver `verify` runs, falling back to
+    `CHECK: MISSING`."""
     parts = [f"SHA: {sha}"]
     for num in issue_numbers:
         issue = _fetch_issue_json(owner, repo, num)
@@ -545,13 +585,13 @@ def build_packet(owner, repo, issue_numbers, sha, repo_root=None):
         parts.append(f"\n#### Bug #{num}")
         if not refs:
             parts.append("(no cited path:line refs)")
-        for path, line in refs:
-            excerpt = _read_blob_excerpt(sha, path, line, repo_root=repo_root)
-            parts.append(f"{path}:{line}")
+        for path, start, end in refs:
+            excerpt = _read_blob_excerpt(sha, path, start, repo_root=repo_root, end_line=end)
+            parts.append(f"{path}:{start}" if end == start else f"{path}:{start}-{end}")
             parts.append("```")
             parts.append(excerpt if excerpt is not None else "(excerpt unavailable)")
             parts.append("```")
-        check = _find_check(texts)
+        check = _resolve_check(owner, repo, num, issue=issue, texts=texts)
         parts.append(f"Check: {check}" if check else "CHECK: MISSING")
     return "\n".join(parts) + "\n"
 
@@ -571,13 +611,17 @@ def _cmd_packet(args):
 # ---------------------------------------------------------------------------
 
 def _find_lane_pr_for_issue(owner, repo, num):
-    """The merged lane PR whose body contains `Closes #<num>`, found by
-    full-text search — never the (deferred, criterion 27) closing comment,
-    which keeps the SPIDR fallback available (constraint 6). Goes through
-    `_run_gh`, so the PR bodies decode as UTF-8 like every other gh read."""
+    """The MOST RECENTLY MERGED (`mergedAt`) `lane`-labeled PR with a whole
+    `Closes #<num>` line in its body. A bug closed, reopened and closed
+    again by a second lane PR therefore reads the newer PR's check, never
+    the first search hit. Found by search, never the (deferred, criterion
+    27) closing comment, which keeps the SPIDR fallback available
+    (constraint 6). Labels are filtered here, never via `--label` (C4).
+    Goes through `_run_gh`, so the PR bodies decode as UTF-8."""
     res = _run_gh(
-        ["search", "prs", f"repo:{owner}/{repo}", "is:merged",
-         f"Closes #{num} in:body", "--json", "number,body", "--limit", "20"],
+        ["pr", "list", "--repo", f"{owner}/{repo}", "--state", "merged",
+         "--search", f"Closes #{num} in:body",
+         "--json", "number,body,mergedAt,labels", "--limit", "100"],
     )
     if res.returncode != 0:
         return None
@@ -585,27 +629,35 @@ def _find_lane_pr_for_issue(owner, repo, num):
         data = json.loads(res.stdout)
     except json.JSONDecodeError:
         return None
-    pat = re.compile(rf"closes\s*#{num}\b", re.IGNORECASE)
-    for pr in data:
-        if pat.search(pr.get("body") or ""):
-            return pr
-    return None
+    closes = re.compile(_CLOSES_LINE_RE_TMPL.format(n=num), re.MULTILINE)
+    lane_prs = [
+        pr for pr in (data if isinstance(data, list) else [])
+        if isinstance(pr, dict)
+        and "lane" in _issue_labels(pr)
+        and closes.search(pr.get("body") or "")
+    ]
+    if not lane_prs:
+        return None
+    return max(lane_prs, key=lambda pr: pr.get("mergedAt") or "")
 
 
-def _resolve_check(owner, repo, num, issue=None):
-    """The issue's own `Check:` line when one exists; otherwise the
-    `Check #<n>:` line of its closing lane PR's body (criterion 33)."""
-    if issue is None:
-        issue = _fetch_issue_json(owner, repo, num)
-    texts = _trusted_texts(owner, repo, issue) if issue else []
+def _resolve_check(owner, repo, num, issue=None, texts=None):
+    """The ONE check resolver `verify` and the packet share: the issue's
+    own trusted `Check:` line when one exists; otherwise the `Check #<n>:`
+    line of its most recently merged lane PR (criterion 33). One layer of
+    surrounding backticks is stripped. `texts` (the issue's trusted texts)
+    skips the re-fetch when the caller already holds them."""
+    if texts is None:
+        if issue is None:
+            issue = _fetch_issue_json(owner, repo, num)
+        texts = _trusted_texts(owner, repo, issue) if issue else []
     check = _find_check(texts)
     if check:
         return check
     pr = _find_lane_pr_for_issue(owner, repo, num)
     if pr:
-        m = re.search(_PR_CHECK_LINE_RE_TMPL.format(n=num), pr.get("body") or "", re.MULTILINE)
-        if m:
-            return m.group(1).strip()
+        pat = re.compile(_PR_CHECK_LINE_RE_TMPL.format(n=num), re.MULTILINE)
+        return _first_check(pat, pr.get("body") or "")
     return None
 
 
