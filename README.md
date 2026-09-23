@@ -358,7 +358,7 @@ Claude Code session hooks configured in `.claude/settings.json` (scripts in `.cl
 
 ### Architecture Decision Records
 
-[`decisions/`](decisions/) holds 86 ADR(s). See [`decisions/README.md`](decisions/README.md) for the full index.
+[`decisions/`](decisions/) holds 87 ADR(s). See [`decisions/README.md`](decisions/README.md) for the full index.
 
 ## Subagent-quality maintenance
 
@@ -378,7 +378,7 @@ To add a term, edit that section directly in a normal reviewer-gated PR, followi
 
 Walking-skeleton phase. The pipeline is being built incrementally **on the project itself** — dogfooding from day one. The autonomous loop now ships PRDs end-to-end with all five stages live: `/grill-me` → `to-prd`+critics → `to-issues`+slicer-critic → `implementer`+`reviewer` (per slice, DAG-batched) → `/qa-plan` at acceptance. All operational content lives in skills + subagents + CLAUDE.md + ADRs per [ADR-0032](decisions/0032-workflow-only-architecture.md).
 
-> **Auto-generated component counts** (as of last generator run): 6 skill(s), 6 critic(s) + 3 generator(s), 7 hook(s), 86 ADR(s).
+> **Auto-generated component counts** (as of last generator run): 6 skill(s), 6 critic(s) + 3 generator(s), 7 hook(s), 87 ADR(s).
 
 ## License
 
