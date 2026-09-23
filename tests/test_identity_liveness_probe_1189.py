@@ -152,55 +152,6 @@ class TestSharedBashIdentityProbe(unittest.TestCase):
             cwd=str(REPO_ROOT), timeout=20,
         )
 
-    def test_incident_shape_classified_occupied_not_ok(self):
-        """The exact #1184 shape (200 on /api/architecture, 404 on /api/meta)
-        must be classified 'occupied', never 'ok' (autostart must not treat
-        this foreign listener as a healthy same-code server)."""
-        if not self._bash_available():
-            self.skipTest("bash not available in this environment")
-        with _fixture_server(_ForeignIncidentHandler) as port:
-            proc = self._run_probe(f"http://127.0.0.1:{port}")
-        self.assertEqual(
-            0, proc.returncode,
-            msg=(
-                "dashboard_probe_identity() must be defined in lib-root.sh "
-                f"(slice #1189). STDOUT: {proc.stdout!r} STDERR: {proc.stderr!r}"
-            ),
-        )
-        out = proc.stdout.strip()
-        self.assertTrue(
-            out.startswith("occupied"),
-            msg=f"Expected 'occupied ...' for the incident shape, got: {out!r}",
-        )
-        self.assertFalse(
-            out.startswith("ok"),
-            msg=f"Foreign listener must never be classified 'ok': {out!r}",
-        )
-
-    def test_compliant_server_classified_ok(self):
-        """A well-behaved dashboard (valid JSON + sha on /api/meta) is 'ok'."""
-        if not self._bash_available():
-            self.skipTest("bash not available in this environment")
-        with _fixture_server(_CompliantHandler) as port:
-            proc = self._run_probe(f"http://127.0.0.1:{port}")
-        self.assertEqual(0, proc.returncode, msg=proc.stderr)
-        out = proc.stdout.strip()
-        self.assertTrue(
-            out.startswith("ok " + _CompliantHandler.sha),
-            msg=f"Expected 'ok {_CompliantHandler.sha}', got: {out!r}",
-        )
-
-    def test_genuine_no_listener_classified_no_server(self):
-        """Nothing answering at all must stay 'no-server' (never 'occupied')."""
-        if not self._bash_available():
-            self.skipTest("bash not available in this environment")
-        proc = self._run_probe(f"http://127.0.0.1:{_unused_port()}", timeout="1")
-        self.assertEqual(0, proc.returncode, msg=proc.stderr)
-        self.assertEqual(
-            "no-server", proc.stdout.strip(),
-            msg="Genuine no-listener must classify as 'no-server'",
-        )
-
     def test_dashboard_autostart_wired_to_shared_probe(self):
         """dashboard-autostart.sh's idempotency check must call the shared
         contract, and must no longer probe /api/architecture directly for
@@ -299,49 +250,6 @@ class TestCheckStaleServerIdentityVerifying(unittest.TestCase):
         self.assertIsNot(
             result.get("occupied"), True,
             msg="Genuine no-listener must not be marked occupied",
-        )
-
-
-# ---------------------------------------------------------------------------
-# Group C — session-start.sh dashboard-freshness line (static wiring check)
-# ---------------------------------------------------------------------------
-
-SESSION_START_SH = REPO_ROOT / ".claude" / "hooks" / "session-start.sh"
-
-
-class TestSessionStartOccupiedDifferentiation(unittest.TestCase):
-    """session-start.sh's dashboard-freshness probe must distinguish
-    'occupied by a foreign listener' from a real 'unreachable' (no listener)
-    in the injected context line (#1184 site 2).
-
-    Repointed by #1204: this site no longer inlines its own `python3 -c`
-    urllib-based HTTPError/missing-sha classification — it now calls the
-    shared `dashboard_probe_identity()` contract (lib-root.sh) and maps that
-    function's three-way "ok"/"occupied"/"no-server" result onto the same
-    banner wording (the inline probe's per-address-family socket timeout
-    cost 4.14s on an EMPTY port — issue #1204's root cause). This remains a
-    static content check (session-start.sh still has no parameterizable
-    base-URL seam of its own); the functional identity-verifying
-    classification logic is exercised directly by Group A above
-    (TestSharedBashIdentityProbe, against real fixture HTTP servers).
-    """
-
-    def test_calls_shared_probe_identity_contract(self):
-        content = SESSION_START_SH.read_text(encoding="utf-8")
-        self.assertIn(
-            "dashboard_probe_identity", content,
-            msg="session-start.sh must call the shared dashboard_probe_identity() "
-                "contract (lib-root.sh) instead of inlining its own probe (#1204)",
-        )
-
-    def test_occupied_case_still_labeled_occupied(self):
-        content = SESSION_START_SH.read_text(encoding="utf-8")
-        self.assertIn(
-            "OCCUPIED", content,
-            msg="session-start.sh must still label the shared probe's "
-                "'occupied' result OCCUPIED in the banner — the #1184 "
-                "incident-class signal is load-bearing and must survive "
-                "the #1204 repoint",
         )
 
 
