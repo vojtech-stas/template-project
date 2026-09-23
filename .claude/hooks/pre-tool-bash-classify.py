@@ -104,7 +104,18 @@ def _strip_env_prefix(tokens):
 
 
 def classify(cmd):
-    """Unchanged decision-flag logic from the pre-consolidation script."""
+    """Unchanged decision-flag logic from the pre-consolidation script.
+
+    S2-14: resolves (and thereby validates) the release role unconditionally
+    on every call, regardless of the command's own shape -- a malformed
+    `.claude/pipeline.conf` must raise (PipelineConfigError, uncaught) for
+    ANY payload, not only a push-shaped one, so pre-tool-bash.sh's existing
+    classifier-failed path (ERROR beacon, fail-open) fires per PRD #1500 §2
+    criterion 14's own verification recipe (a generic payload command).
+    No subprocess is spawned by this resolve (S2-a: in-process importlib
+    load only).
+    """
+    _load_pipeline_config().release_branch()
     deny_gh_merge = deny_push_main = deny_promote_invocation = warn_wip = False
     warn_issue_create_label = False
     for tokens in _clauses(cmd):

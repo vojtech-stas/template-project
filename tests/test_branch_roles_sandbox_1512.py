@@ -221,10 +221,12 @@ class TestCriterion14MalformedConfErrorBeacon(unittest.TestCase):
             os.unlink(tmp_path)
 
     def test_malformed_conf_yields_exactly_one_error_beacon_fail_open(self):
-        # A `git push` clause is required to exercise the release-role
-        # resolution path (_refspec_release_re()) where the malformed conf
-        # actually raises.
-        result = self._run_hook("git push origin somewhere")
+        # PRD #1500 §2 criterion 14's own verification recipe uses a
+        # generic, non-push command ('git status') -- classify() resolves
+        # (and thereby validates) the release role unconditionally on every
+        # call, not only for a push-shaped command, so this generic command
+        # must raise on the malformed conf too.
+        result = self._run_hook("git status")
         self.assertEqual(
             result.returncode, 0,
             msg=f"hook must fail OPEN (exit 0) on a resolver failure.\nstdout={result.stdout!r}\nstderr={result.stderr!r}",
@@ -245,6 +247,20 @@ class TestCriterion14MalformedConfErrorBeacon(unittest.TestCase):
         # HOK-008 / CI CHECK 27: only {attempt, ok, ERROR} statuses allowed.
         for l in lines:
             self.assertIn(l.get("status"), ("attempt", "ok", "ERROR"), msg=f"unexpected status: {l!r}")
+
+    def test_malformed_conf_also_errors_on_a_push_command(self):
+        """Regression guard: a push-shaped command must still hit the same
+        classifier-failed path (it did even before the eager-resolve fix,
+        via _refspec_release_re() -- this proves the fix did not narrow that
+        existing coverage)."""
+        result = self._run_hook("git push origin somewhere")
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(result.stdout.strip(), "")
+        beacon_path = os.path.join(self.beacon_dir, "hook-fires.jsonl")
+        with open(beacon_path, "r", encoding="utf-8") as f:
+            lines = [json.loads(l) for l in f if l.strip()]
+        error_lines = [l for l in lines if l.get("status") == "ERROR"]
+        self.assertEqual(len(error_lines), 1, msg=f"lines={lines!r}")
 
 
 class TestCriterion15BranchTopologyDescribesTrunk(unittest.TestCase):
