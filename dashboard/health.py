@@ -1758,6 +1758,7 @@ _CHECK_GROUP_MAP: dict = {
     "CAPTURE-SHAPE": "Verification integrity",
     "GREEN-MAIN": "Verification integrity",
     "DRAIN-LEDGER": "Verification integrity",
+    "QUERY-HONESTY": "Verification integrity",
     # Release gates — promotion topology, lag, release-readiness
     "BRANCH-TOPOLOGY": "Release gates",
     "PROMOTION-LAG": "Release gates",
