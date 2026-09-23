@@ -93,11 +93,12 @@ Python API (for dashboard reuse):
     (elapsed >= stale_threshold_seconds) and a `source` label; `recent`
     = at most 20 newest-first terminated chains (dispatch_end /
     pr_merged) with outcome, duration and a `source` label.
-    `stale_threshold_seconds` and `ledger` are echoed so the UI never
-    hardcodes either (row-level provenance, ADR-0078 D1). Strict reader
-    — never infers state the ledger does not hold. The `next` panel
-    (the retired ready-set marker) is retired per ADR-0080 D2 — the
-    board shows only what is recorded, not what is promised.
+    `stale_threshold_seconds` and `ledger` are echoed so the caller never
+    hardcodes either (row-level provenance — a pattern carried over from
+    the retired run-board, ADR-0078 D1 history, superseded by ADR-0088).
+    Strict reader — never infers state the ledger does not hold. The
+    `next` panel (the retired ready-set marker) is retired per ADR-0080
+    D2 — the board shows only what is recorded, not what is promised.
 
 CLI (parity with `tools/trace.py path --pr <n>` — trace.py's linear scan
 remains the fallback/cross-check per the slice's instruction):
@@ -408,12 +409,13 @@ def span_tree(trace_id, log_path=None, db_path_=None):
 
 
 # ---------------------------------------------------------------------------
-# Dashboard-facing "recorded runs" API + background-warm serve
-# (slice #1082, PRD #1075 criterion 9 — the Firing tab's PRIMARY renderer).
-# Mirrors prd_firing.py's serve_prd_firing() house pattern (issue #962):
-# stale-while-revalidate cache + daemon background thread; the HTTP handler
-# in server.py must call serve_trace_runs() only — never the blocking
-# builder directly.
+# "Recorded runs" query + background-warm serve (slice #1082, PRD #1075
+# criterion 9 — formerly the Firing tab's PRIMARY renderer; now a library
+# shim with no HTTP caller after ADR-0088 D1's server deletion, kept for
+# its surviving test consumers). Mirrors prd_firing.py's serve_prd_firing()
+# house pattern (issue #962): stale-while-revalidate cache + daemon
+# background thread; callers must call serve_trace_runs() only — never
+# the blocking builder directly.
 # ---------------------------------------------------------------------------
 _runs_cache: dict = {}
 _runs_cache_lock = threading.Lock()
@@ -525,7 +527,8 @@ def serve_trace_runs(limit=30, log_path=None, db_path_=None):
 
 # ---------------------------------------------------------------------------
 # Run-board query (PRD #1170 walking skeleton, slice #1172): now/recent from
-# the recorded ledger — strictly a reader, per ADR-0078 D1. `now` reuses
+# the recorded ledger — strictly a reader, a pattern carried over from the
+# retired run-board (ADR-0078 D1 history, superseded by ADR-0088). `now` reuses
 # running_dispatches() (also the duplicate-dispatch mutex's read side);
 # `recent` is a new query this slice authors. The `next` query (the retired
 # checkpoint verb's ready-set) is retired per ADR-0080 D2 (slice #1219).
@@ -538,7 +541,8 @@ def serve_trace_runs(limit=30, log_path=None, db_path_=None):
 # median while still catching a genuinely stuck dispatch well before the
 # historical long tail. Echoed in the API response
 # (`stale_threshold_seconds`) and rendered in the UI panel header, per
-# ADR-0078 D1's provenance intent — a threshold that only lives in code is
+# the retired run-board's provenance intent (ADR-0078 D1 history,
+# superseded by ADR-0088) — a threshold that only lives in code is
 # not visible. `_LEDGER_DISPLAY_NAME` is the human-facing relative path
 # named in the honest empty state (§2 criterion 2d); the resolved absolute
 # path is `tools.trace.trace_log_path()`, unchanged here.

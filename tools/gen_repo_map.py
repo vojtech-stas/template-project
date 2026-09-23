@@ -2,7 +2,7 @@
 """
 tools/gen_repo_map.py — generate .claude/generated/_repo-map.md from filesystem.
 
-Reuses the dashboard discover_* engine (same as --generate-readme) to emit
+Reuses the dashboard discover_* engine (same as `dashboard/readme_gen.py`) to emit
 a repo-map table: one row per skill/agent/tool/dir with a link + short
 description.  Delivered as an @import-ed file referenced by CLAUDE.md
 (ADR-0073 D1 — generated-doc currency model).
@@ -156,7 +156,7 @@ def _build_repo_map() -> str:
         (".claude/rules/",   "Generated AREA-scope rules (path-scoped, auto-loaded)"),
         (".claude/generated/", "Generated GLOBAL rules + repo-map (CLAUDE.md @import-only)"),
         (".claude/hooks/",   "Claude Code hook scripts"),
-        ("dashboard/",       "Local web visualizer (architecture + health)"),
+        ("dashboard/",       "CLI-only pipeline tooling: health checks, trace read-model, README generator (ADR-0088)"),
         ("tools/",           "CLI scripts for CI, generation, and promotion"),
         ("tests/",           "Regression test suite (pytest)"),
     ]

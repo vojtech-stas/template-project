@@ -189,13 +189,13 @@ Unacceptable (FAIL) forms:
 
 **Rationale:** The `qa-tester` production-verify gate reads this line verbatim to know what to exercise (ADR-0037 D2 + D4). A missing or non-actionable line either breaks the gate (INVALID_INPUT) or causes it to exercise the wrong thing — catching non-actionability at PRD time costs one revision round; a broken gate post-merge costs a re-ship loop.
 
-**Examples:** `"Production check: N/A"` → FAIL. `"Production check: run grep -c 'PC-PRODUCTION-CHECK' .claude/agents/prd-critic.md; assert ≥1"` → PASS. `"Production check: load http://localhost:8765/live-tab, assert 0 console errors"` → PASS.
+**Examples:** `"Production check: N/A"` → FAIL. `"Production check: run grep -c 'PC-PRODUCTION-CHECK' .claude/agents/prd-critic.md; assert ≥1"` → PASS. `"Production check: fire .claude/hooks/session-start.sh with a synthetic payload, assert exit 0 and a fresh ok beacon in hook-fires.jsonl"` → PASS.
 
 ### PC-LIVE-FEED
 
 A PRD whose feature consumes an upstream pipeline stage must declare a live-feed precondition.
 
-**Mechanic:** Determine whether the PRD's feature reads from or depends on data emitted by an upstream pipeline (e.g., hook-fires log, workflow-events log, dashboard data from server.py, QA-plan output). If yes:
+**Mechanic:** Determine whether the PRD's feature reads from or depends on data emitted by an upstream pipeline (e.g., hook-fires log, workflow-events log, pipeline-trace data from trace-v3.jsonl, QA-plan output). If yes:
 
 1. **Precondition declared:** PRD §2 or §5 must explicitly state that the upstream pipeline emits a real datum within a recent window (e.g., "upstream hook fires are live and < 5 min old in the verification environment") before the feature's production verification is valid.
 2. **Failure mode is FAIL, not PROVISIONAL:** PRD §2's "Production check:" line must declare that a dead or stale upstream feed causes the production check to FAIL outright — not PROVISIONAL. (PROVISIONAL is for tooling unavailability; a dead upstream feed is a feature-level failure, not an environment limitation.)

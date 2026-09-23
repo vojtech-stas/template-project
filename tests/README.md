@@ -34,21 +34,6 @@ The collected count is reported in the pass line. `tools/ci-checks.sh` also
 runs CHECK 28 (QUARANTINE-SLA), which fails the build if any active
 quarantine entry has passed its 30-day fix-or-delete SLA.
 
-## Founding test
-
-`test_events_interleave.py` — regression for the events.py interleave defect
-(issue #730, ADR-0067 D1). This bug shipped twice; the test ensures it cannot
-ship a third time.
-
-**What the bug was:** `serve_runs(?session=<id>)` broke early when it
-encountered a line from a different session, truncating the target session's
-events whenever two concurrent sessions' lines interleaved in the JSONL file.
-
-**Why it shipped twice:** the second author rationalised the break with a
-docstring comment saying "if we see a different session, the target session
-is done" — a false assumption for concurrent sessions. The forensic post-mortem
-lives in `qa-proof/forensics/event-pipeline-autopsy.md`.
-
 ## Quarantine
 
 Flaky or known-broken tests may be quarantined in `tests/quarantine.txt` per
