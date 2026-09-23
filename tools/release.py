@@ -34,9 +34,8 @@ Four subcommands:
     `PASS|FAIL|MISSING #<n>` line per issue; exits 0 iff every line is
     PASS. `--reopen` is deferred to slice 2 (SPIDR fallback, A10).
 
-Stdlib only. No literal `develop`/`main` branch names (C1) — the one
-history-preserving exception is this file's own docstring, exempt from the
-SCAN29 subject set.
+Stdlib only. No literal integration/release branch names (C1) — every
+branch reference resolves through `tools/pipeline_config.py`.
 """
 import argparse
 import json
