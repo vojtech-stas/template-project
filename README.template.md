@@ -148,9 +148,9 @@ Per [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D1, the unit-
 
 - **PRD** — GitHub Issue (label `prd`). One feature per PRD.
 - **Slice** — GitHub sub-issue under the PRD (label `slice`). One INVEST-shaped vertical, fits in one PR.
-- **PR** — one merged change, closes one slice via `Closes #<slice-issue>` in the PR body.
+- **PR** — one merged change, closes one slice via `Closes #<slice-issue>` in the PR body. A release-mode lane PR (ADR-0090 D3/D4) closes `bug` issues instead, never a slice.
 
-No `feature` label, no `slice-N-foo` branch names. Branches use Conventional Commits prefixes — `<type>/<issue-number>-<kebab-summary>`. See [CLAUDE.md](CLAUDE.md) "Hierarchy" and "Operational git workflow" for the full operational logic.
+`bug`/`feature`/`lane` are release-mode class/lane labels (ADR-0090 D1/D3), not hierarchy tiers; no `slice-N-foo` branch names. Branches use Conventional Commits prefixes — `<type>/<issue-number>-<kebab-summary>`. See [CLAUDE.md](CLAUDE.md) "Hierarchy" and "Operational git workflow" for the full operational logic.
 
 ## Adversarial critics
 

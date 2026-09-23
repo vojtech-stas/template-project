@@ -31,7 +31,11 @@ read-model (refoldable from the log, never a second source of truth).
 
 **`drain/<run-id>.jsonl`** — one append-only ledger per `/ship`
 queue-drain run. Answers: what a drain run triaged, escalated, or landed,
-and where a parked run should resume. Query: read the file directly, or
+and where a parked run should resume. A release run (`run_start.mode ==
+"release"`) additionally carries `version`, and its `triaged.lane` is a
+file-lane branch name rather than an integer queue-lane index; concurrency
+is then distinct lanes capped at 15, in place of the plain-mode distinct-item
+cap of 3 (ADR-0090 D3). Query: read the file directly, or
 `python3 dashboard/health.py --check DRAIN-LEDGER` to validate the newest
 one offline.
 

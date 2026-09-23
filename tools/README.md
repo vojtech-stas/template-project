@@ -59,3 +59,33 @@ dispatch-tree prefix). Skips the current worktree and the root repo worktree. A
 worktree with a live-pid lock is never forcibly removed. These guards make it
 impossible to remove the root repo, orchestrator session trees, or non-dispatch trees
 regardless of their branch state.
+
+---
+
+## release.py
+
+Release-mode primitives for `/ship release <version> lanes <N>`
+(per [ADR-0090](../decisions/0090-release-mode.md) D1/D3/D4). Four subcommands:
+
+**`freeze <V> --next <W> --features <list>|none`** — admits every open `bug`
+and the owner's listed `feature`s (with their slices) to milestone `<V>`,
+moves every other open feature to `<W>`; refuses on any unclassified open
+issue, naming it.
+
+**`lanes <V> [--evidence <sweep.json>] [--priority <file>]`** — groups `<V>`'s
+lane-bound bugs into disjoint file-path groups; a bug with no cited path runs
+exclusively. This slice ships the bounded `N`-lane form only.
+
+**`packet <sha> <n>…`** (invoked internally by `tools/pipe/dispatch --lane`)
+— builds a lane's dispatch brief: the sha, then per bug its `path:line` refs,
+a ±20-line excerpt at that sha, and its `Check:` line or `CHECK: MISSING`.
+Reads only issue bodies and comments whose `author_association` is `OWNER`,
+`MEMBER` or `COLLABORATOR`.
+
+**`verify <n>…`** — runs each bug's resolved `Check:` command (the issue's
+own line, or its closing lane PR's `Check #<n>:` line) and prints
+`PASS|FAIL|MISSING #<n>`; exits 0 iff every line is PASS.
+
+Both branch roles resolve per-invocation via
+[`tools/pipeline_config.py`](pipeline_config.py) — never hardcoded, per
+[ADR-0089](../decisions/0089-per-repo-pipeline-identity.md) D1.
