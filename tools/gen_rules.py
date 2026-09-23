@@ -63,7 +63,7 @@ def _resolve_repo_root() -> Path:
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=5, cwd=os.getcwd(),
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, cwd=os.getcwd(),
         )
         if result.returncode == 0:
             root = Path(result.stdout.strip())

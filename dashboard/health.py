@@ -458,7 +458,7 @@ def _telemetry_log_root() -> Path:
             ["git", "rev-parse", "--git-common-dir"],
             cwd=str(_HEALTH_REPO_ROOT),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=5,
         )
         if result.returncode != 0:
@@ -635,7 +635,7 @@ def _fetch_github_ci_conclusion(repo_root, sha=None) -> tuple:
         try:
             sha_r = _sp.run(
                 ["git", "rev-parse", "origin/develop"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
                 cwd=str(repo_root),
             )
             if sha_r.returncode != 0:
@@ -774,7 +774,7 @@ def _tracked_files(root: Path, pathspec: str) -> "list[Path] | None":
     try:
         result = subprocess.run(
             ["git", "-C", str(root), "ls-files", pathspec],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
         )
         if result.returncode != 0:
             # git failed (e.g. not a git repo) — signal fallback with None
@@ -1379,7 +1379,7 @@ def check_meta_tripwire() -> dict:
         result = subprocess.run(
             ["git", "log", "--name-only", "--format=COMMIT:%H",
              f"{last_sha}..HEAD"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
             cwd=str(_HEALTH_REPO_ROOT),
         )
         if result.returncode != 0:
@@ -2520,11 +2520,11 @@ def check_isolation_group() -> dict:
         try:
             ahead = subprocess.run(
                 ["git", "rev-list", "--count", "origin/main..HEAD"],
-                capture_output=True, text=True, timeout=8, cwd=str(d),
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8, cwd=str(d),
             )
             status = subprocess.run(
                 ["git", "status", "--porcelain"],
-                capture_output=True, text=True, timeout=8, cwd=str(d),
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8, cwd=str(d),
             )
             if (ahead.returncode == 0 and ahead.stdout.strip() == "0"
                     and status.returncode == 0 and not status.stdout.strip()):
@@ -3775,7 +3775,7 @@ def check_green_main() -> dict:
     try:
         r = subprocess.run(
             ["git", "rev-list", "--count", f"{sha}..origin/develop"],
-            capture_output=True, text=True, timeout=10, cwd=str(_HEALTH_REPO_ROOT),
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10, cwd=str(_HEALTH_REPO_ROOT),
         )
         if r.returncode == 0:
             lag = int(r.stdout.strip())
@@ -3875,7 +3875,7 @@ def check_record_vs_gh() -> dict:
         try:
             r = subprocess.run(
                 ["git", "show", "-s", "--format=%cI", _RECORD_VS_GH_ANCHOR_SHA],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
                 cwd=str(_HEALTH_REPO_ROOT),
             )
             anchor_ts_str = r.stdout.strip() if r.returncode == 0 else ""
@@ -4043,7 +4043,7 @@ def _resolve_adr_0076_anchor_ts():
         try:
             r = subprocess.run(
                 ["git", "show", "-s", "--format=%cI", _ADR_0076_ANCHOR_SHA],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
                 cwd=str(_HEALTH_REPO_ROOT),
             )
             ts_str = r.stdout.strip() if r.returncode == 0 else ""
@@ -4662,7 +4662,7 @@ def check_tests_collected() -> dict:
             [sys.executable, "-m", "pytest", str(tests_dir),
              "--collect-only", "-q", "--no-header"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=30,
             cwd=str(_HEALTH_REPO_ROOT),
         )
@@ -5555,7 +5555,7 @@ def _git_sha(ref: str) -> str:
     try:
         r = subprocess.run(
             ["git", "rev-parse", ref],
-            capture_output=True, text=True, timeout=8,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8,
             cwd=str(_HEALTH_REPO_ROOT),
         )
         return r.stdout.strip() if r.returncode == 0 else ""
@@ -5568,7 +5568,7 @@ def _git_count(range_spec: str) -> int:
     try:
         r = subprocess.run(
             ["git", "rev-list", "--count", range_spec],
-            capture_output=True, text=True, timeout=8,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8,
             cwd=str(_HEALTH_REPO_ROOT),
         )
         return int(r.stdout.strip()) if r.returncode == 0 else -1
@@ -5928,7 +5928,7 @@ def check_release_ready() -> dict:
             try:
                 ci_result = subprocess.run(
                     ["bash", str(_HEALTH_REPO_ROOT / "tools" / "ci-checks.sh")],
-                    capture_output=True, text=True,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace",
                     timeout=_RELEASE_READY_CICHECKS_TIMEOUT_S,
                     cwd=str(_HEALTH_REPO_ROOT),
                 )
@@ -5993,7 +5993,7 @@ def check_release_ready() -> dict:
                 t_result = subprocess.run(
                     [sys.executable, "-m", "pytest", str(tests_dir), "-q",
                      "--no-header", "--tb=no"],
-                    capture_output=True, text=True,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace",
                     timeout=_RELEASE_READY_PYTEST_TIMEOUT_S,
                     cwd=str(_HEALTH_REPO_ROOT),
                 )
@@ -6545,7 +6545,7 @@ def check_hook_liveness() -> dict:
         try:
             r = subprocess.run(
                 ["git", "-C", str(_HEALTH_REPO_ROOT), "log", "-1", "--format=%cI"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
             )
             git_ts = _parse_ts(r.stdout.strip()) if r.returncode == 0 else 0.0
         except Exception:
@@ -7000,7 +7000,7 @@ def check_deploy_handshake() -> dict:
     try:
         result = subprocess.run(
             ["bash", str(script), "--check-only"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
             cwd=str(_HEALTH_REPO_ROOT),
         )
     except Exception as exc:
@@ -7139,7 +7139,7 @@ def _drain_ledger_dir(explicit: str | None = None) -> Path:
     try:
         out = subprocess.run(
             ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
-            capture_output=True, text=True, timeout=10, check=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10, check=True,
         ).stdout.strip()
         root = Path(os.path.dirname(os.path.abspath(out)))
     except Exception:
