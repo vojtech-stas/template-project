@@ -5197,6 +5197,7 @@ _STALE_BRANCH_DAYS = 14
 _REQUIRED_LABELS = [
     "prd", "slice", "backlog", "captured",
     "trivial", "needs-human", "needs-human-check", "root-cause",
+    "bug", "feature", "lane",
 ]
 
 
