@@ -59,16 +59,20 @@ subagent-prompt quality checks run automatically in CI via CHECK 18
 
 ## Two-tier delivery model (PRD #836 / ADR-0070 D1)
 
-The project uses a `develop`/`main` two-tier model (wave 5 of workflow v2).
-Agents merge slices to `develop`; `main` advances only via the deterministic
-promotion gate (`tools/promote.sh` + `RELEASE-READY`). These checks are
-queryable via the health check registry (`python dashboard/health.py --check <ID>`):
+The project uses a configurable two-tier model (wave 5 of workflow v2): an
+**integration branch** and a **release branch**, named in the tracked
+`.claude/pipeline.conf` and resolved by `tools/pipeline_config.py`
+(ADR-0089 D1). This repo's configured values are `develop`/`main`. Agents
+merge slices to the integration branch; the release branch advances only
+via the deterministic promotion gate (`tools/promote.sh` + `RELEASE-READY`).
+These checks are queryable via the health check registry
+(`python dashboard/health.py --check <ID>`):
 
 **Promotion gates** (`RELEASE-READY` + `BRANCH-TOPOLOGY` health-registry checks):
-- **RELEASE-READY** — evaluates all six conditions from ADR-0070 D2: (a) CI green on `develop` HEAD; (b) full test suite passes; (c) latest production-verify PASS with route-appropriate proof; (d) green-develop streak intact; (e) zero open `needs-human` items; (f) unpromoted batch touches no guardrail-machinery path. A `verdict="true"` means `tools/promote.sh` may advance `main`. Details report the first failing condition when held. Per ADR-0070 D2 / ADR-0072 D1.
-- **BRANCH-TOPOLOGY** — confirms slice PRs target `develop` (not `main`) and that `main` advances only via recorded `promotion` events. Dormant until slice #843 wires full branch-protection. Per ADR-0070 D1 / ADR-0072 D3.
+- **RELEASE-READY** — evaluates all six conditions from ADR-0070 D2: (a) CI green on the integration branch's HEAD; (b) full test suite passes; (c) latest production-verify PASS with route-appropriate proof; (d) green-develop streak intact; (e) zero open `needs-human` items; (f) unpromoted batch touches no guardrail-machinery path. A `verdict="true"` means `tools/promote.sh` may advance the release branch. Details report the first failing condition when held. Per ADR-0070 D2 / ADR-0072 D1.
+- **BRANCH-TOPOLOGY** — confirms slice PRs target the integration branch (not the release branch) and that the release branch advances only via recorded `promotion` events. Dormant until slice #843 wires full branch-protection. Per ADR-0070 D1 / ADR-0072 D3, as amended by ADR-0089 D1.
 
-**Promotion event log:** each promotion appends a `{"v":2,"event":"promotion","from":"develop","to":"main","sha":"..."}` event to `.claude/logs/workflow-events.jsonl` (recorded, CLI-queryable).
+**Promotion event log:** each promotion appends a `{"v":2,"event":"promotion","from":"<integration>","to":"<release>","sha":"..."}` event to `.claude/logs/workflow-events.jsonl` (recorded, CLI-queryable; this repo's configured values render as `"from":"develop","to":"main"`).
 
 The sole human-blocking role in this model is acking guardrail-machinery promotions (batches touching `.github/workflows/**`, `.claude/settings.json`, `.claude/hooks/**`, `tools/ci-checks.sh`, `.githooks/**`, `*-critic.md`, or the promotion gate itself). The `R-SENSITIVE-DETECTOR` health row tallies these and their ack status. Per ADR-0070 D4.
 

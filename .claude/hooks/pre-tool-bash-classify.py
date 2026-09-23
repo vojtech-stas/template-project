@@ -24,6 +24,7 @@ every allow-path fire (one CMD extraction, two classifier-JSON shape-
 validity checks, five per-flag `_flag()` reads) with this ONE python3
 invocation -- ADR-0079 D3 / slice #1198.
 """
+import importlib.util
 import json
 import os
 import re
@@ -32,8 +33,33 @@ import sys
 from datetime import datetime, timezone
 
 BOUNDARY_TOKENS = {";", "&", "&&", "|", "||"}
-REFSPEC_MAIN_RE = re.compile(r'(\borigin\s+main\b|:main\b|\brefs/heads/main\b)')
 ENV_PREFIX_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*=')
+
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_PIPELINE_CONFIG_PY = os.path.join(_THIS_DIR, "..", "..", "tools", "pipeline_config.py")
+
+
+def _load_pipeline_config():
+    # S1-c: located relative to THIS file's own path, never via cwd or
+    # `git rev-parse --show-toplevel` of the caller's cwd repo. Imports the
+    # resolver in-process (ADR-0089 D1) -- no subprocess, so this respects
+    # ADR-0079 D3's single-spawn hook-hot-path diet (S2-a).
+    spec = importlib.util.spec_from_file_location(
+        "pipeline_config", _PIPELINE_CONFIG_PY
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _refspec_release_re():
+    """Build the release-branch refspec-deny regex fresh on every call
+    (S2-ct: role sites resolve at call time, never at module import) --
+    ADR-0089 D1: the refspec deny set is built from the release role."""
+    release = re.escape(_load_pipeline_config().release_branch())
+    return re.compile(
+        r'(\borigin\s+' + release + r'\b|:' + release + r'\b|\brefs/heads/' + release + r'\b)'
+    )
 
 
 def _tokenize_line(line):
@@ -78,7 +104,18 @@ def _strip_env_prefix(tokens):
 
 
 def classify(cmd):
-    """Unchanged decision-flag logic from the pre-consolidation script."""
+    """Unchanged decision-flag logic from the pre-consolidation script.
+
+    S2-14: resolves (and thereby validates) the release role unconditionally
+    on every call, regardless of the command's own shape -- a malformed
+    `.claude/pipeline.conf` must raise (PipelineConfigError, uncaught) for
+    ANY payload, not only a push-shaped one, so pre-tool-bash.sh's existing
+    classifier-failed path (ERROR beacon, fail-open) fires per PRD #1500 §2
+    criterion 14's own verification recipe (a generic payload command).
+    No subprocess is spawned by this resolve (S2-a: in-process importlib
+    load only).
+    """
+    _load_pipeline_config().release_branch()
     deny_gh_merge = deny_push_main = deny_promote_invocation = warn_wip = False
     warn_issue_create_label = False
     for tokens in _clauses(cmd):
@@ -92,7 +129,7 @@ def classify(cmd):
            or head.endswith("tools/promote.sh"):
             deny_promote_invocation = True
         if head == "git" and len(t) >= 2 and t[1] == "push":
-            if REFSPEC_MAIN_RE.search(" ".join(t[2:])):
+            if _refspec_release_re().search(" ".join(t[2:])):
                 deny_push_main = True
         if head == "git" and len(t) >= 2 and t[1] == "commit":
             if "-m" in t[2:] and any("WIP" in tok for tok in t[2:]):
@@ -122,9 +159,10 @@ def decide(cmd, agent_type):
         return "allow", None
     flags = classify(cmd)
     if flags["deny_push_main"]:
+        release = _load_pipeline_config().release_branch()
         return "deny", (
-            'Direct push to main forbidden per CLAUDE.md rule #4 (all refspec '
-            'forms denied: origin main, HEAD:main, refs/heads/main, :main); '
+            f'Direct push to {release} forbidden per CLAUDE.md rule #4 (all refspec '
+            f'forms denied: origin {release}, HEAD:{release}, refs/heads/{release}, :{release}); '
             'open a PR instead.'
         )
     if flags["warn_wip"]:

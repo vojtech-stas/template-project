@@ -213,11 +213,12 @@ def _chain_record_green(deadline, sha=None):
     invocation already holds from the GitHub REST API, passed straight
     through as record-green's explicit sha argument so the chained call
     certifies the sha that was actually just merged -- never a local
-    `origin/develop` ref that can be stale by the time this fires (the
-    ci-trust fast path, #1163, made the chain fire 2-6s post-merge, which
-    widened that exposure). When `sha` is falsy (e.g. the GitHub API
-    response omitted merge_commit_sha), falls back to record-green's own
-    no-arg fetch-then-resolve path, preserving prior behavior."""
+    `origin/<integration>` ref (the configured integration branch,
+    ADR-0089 D1) that can be stale by the time this fires (the ci-trust
+    fast path, #1163, made the chain fire 2-6s post-merge, which widened
+    that exposure). When `sha` is falsy (e.g. the GitHub API response
+    omitted merge_commit_sha), falls back to record-green's own no-arg
+    fetch-then-resolve path, preserving prior behavior."""
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         print(
@@ -243,10 +244,13 @@ def _chain_record_green(deadline, sha=None):
     if result.returncode == 0:
         print("pr-merge: record-green chained -- develop_green recorded")
     else:
+        # Names the role, never the resolved branch: this runs after the
+        # merge, so a resolver read here could raise (malformed conf) and
+        # turn a completed merge into a non-zero exit (ADR-0089 D1).
         print(
             f"pr-merge: record-green chained -- evaluation FAILED "
-            f"(exit={result.returncode}); develop is NOT green (see "
-            "record-green output above)",
+            f"(exit={result.returncode}); the integration branch is NOT "
+            "green (see record-green output above)",
             file=sys.stderr,
         )
 

@@ -21,8 +21,9 @@ GitHub API) is passed straight through to tools/record-green.sh AND reused
 verbatim for this wrapper's own v3 span -- the SAME value certifies both the
 v2 event and the v3 span, never two independent local-ref resolutions that
 could disagree. With no <sha> argument, `_resolve_develop_sha()` fetches
-`origin develop` before resolving, so a stale local remote-tracking ref can
-never be certified on the fallback path.
+`origin <integration>` (the configured integration branch, ADR-0089 D1)
+before resolving, so a stale local remote-tracking ref can never be
+certified on the fallback path.
 
 Repoint target for ship/SKILL.md's post-merge green-develop step (previously
 an inline `python3 -c "..."` one-liner appending the v2 develop_green event
@@ -46,6 +47,7 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _TOOLS_DIR = os.path.dirname(_THIS_DIR)
 _TRACE_PY = os.path.join(_TOOLS_DIR, "trace.py")
 _RECORD_GREEN_SH = os.path.join(_TOOLS_DIR, "record-green.sh")
+_PIPELINE_CONFIG_PY = os.path.join(_TOOLS_DIR, "pipeline_config.py")
 
 
 def _load_trace():
@@ -56,23 +58,35 @@ def _load_trace():
     return mod
 
 
-def _resolve_develop_sha():
+def _load_pipeline_config():
+    # S1-c: located relative to THIS file (_TOOLS_DIR above), never via
+    # $REPO_ROOT or `git rev-parse --show-toplevel` of the cwd repo.
+    spec = importlib.util.spec_from_file_location(
+        "pipeline_config", _PIPELINE_CONFIG_PY
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _resolve_develop_sha(integration):
     """Fallback-only resolution (no explicit sha argument was given). Fetches
-    origin develop FIRST (#1188 / root-cause #1183) so a stale local
-    remote-tracking ref can never be certified — best-effort: a fetch
-    failure (e.g. offline) does not abort resolution, it just risks the
-    same staleness the fetch is meant to prevent, matching the pre-existing
-    fallback's own resilience posture."""
+    `origin <integration>` (the configured integration branch, ADR-0089 D1,
+    resolved by the caller before any side effect) FIRST (#1188 / root-cause
+    #1183) so a stale local remote-tracking ref can never be certified —
+    best-effort: a fetch failure (e.g. offline) does not abort resolution, it
+    just risks the same staleness the fetch is meant to prevent, matching the
+    pre-existing fallback's own resilience posture."""
     try:
         subprocess.run(
-            ["git", "fetch", "origin", "develop"],
+            ["git", "fetch", "origin", integration],
             capture_output=True, text=True, timeout=30,
         )
     except Exception:
         pass
     try:
         return subprocess.run(
-            ["git", "rev-parse", "origin/develop"],
+            ["git", "rev-parse", f"origin/{integration}"],
             capture_output=True, text=True, check=True,
         ).stdout.strip()
     except Exception:
@@ -85,6 +99,17 @@ def main(argv=None):
     # First non-flag token is the explicit sha (mirrors tools/record-green.sh's
     # own positional-argument parsing — see that script for the full contract).
     explicit_sha = next((a for a in argv if not a.startswith("--")), None)
+
+    # Resolve the integration role BEFORE record-green.sh runs: it writes the
+    # v2 event, and a resolver failure after that would exit non-zero on a
+    # half-record. record-green.sh refuses the same malformed conf itself, so
+    # refusing here first changes only the ordering, never the outcome.
+    pipeline_config = _load_pipeline_config()
+    try:
+        integration = pipeline_config.integration_branch()
+    except pipeline_config.PipelineConfigError as exc:
+        print(f"record-green: refusing, nothing recorded -- {exc}", file=sys.stderr)
+        return 1
 
     bash = shutil.which("bash") or "bash"
     result = subprocess.run([bash, _RECORD_GREEN_SH] + argv)
@@ -104,7 +129,7 @@ def main(argv=None):
 
     # Same value certifies both the v2 event (written by record-green.sh
     # above) and this v3 span -- never two independent resolutions.
-    sha = explicit_sha or _resolve_develop_sha() or "unknown"
+    sha = explicit_sha or _resolve_develop_sha(integration) or "unknown"
     trace = _load_trace()
     trace.emit_span(trace_id=f"green-{sha}", kind="develop_green", attrs={"sha": sha})
     print(f"record-green: v3 develop_green span appended sha={sha}")

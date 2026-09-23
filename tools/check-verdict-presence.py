@@ -3,7 +3,8 @@
 tools/check-verdict-presence.py — verdict-presence guard (PRD #1214 criterion
 3c / ADR-0080 D1's supersession of ADR-0075 D6, slice #1219).
 
-Verifies that every recently-merged `develop` PR carries a reviewer comment
+Verifies that every recently-merged PR to the configured integration branch
+(ADR-0089 D1) carries a reviewer comment
 matching the exact `VERDICT:\\s*APPROVE` signal `tools/pipe/pr-merge`'s
 `_VERDICT_APPROVE_RE` pattern requires before it will perform a merge (PIP-016
 / ADR-0076 D3). This is the D6-supersession's compensating control: the
@@ -16,8 +17,8 @@ with no local trace history), this check REALLY FAILS CI on a violation
 (e.g. the admin-bypass merge class ADR-0076 D3's residual #1098 names).
 
 Window scope: mechanically bounded — the last `--limit` (default 20, matching
-the `gh pr list --base develop --state merged --limit 20` convention already
-used by `dashboard/health.py`'s `_fetch_github_ci_conclusion` /
+the `gh pr list --base <integration> --state merged --limit 20` convention
+already used by `dashboard/health.py`'s `_fetch_github_ci_conclusion` /
 RECORD-VS-GH). NO special-case grandfather list: every PR in the window must
 carry the trailer, full stop — the reviewer's `VERDICT: APPROVE` comment
 convention predates ADR-0076, so there is no historical PR this check is
@@ -64,10 +65,27 @@ CI integration: tools/ci-checks.sh CHECK 23 calls this script directly.
 """
 
 import argparse
+import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
+
+_THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+_PIPELINE_CONFIG_PY = os.path.join(_THIS_DIR, "pipeline_config.py")
+
+
+def _load_pipeline_config():
+    # S1-c: located relative to THIS file (_THIS_DIR above), never via
+    # $REPO_ROOT or `git rev-parse --show-toplevel` of the cwd repo.
+    spec = importlib.util.spec_from_file_location(
+        "pipeline_config", _PIPELINE_CONFIG_PY
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
 
 # ---------------------------------------------------------------------------
 # Windows cp1252 fix (#1050 precedent, mirrors check-slicer-provenance.py):
@@ -168,14 +186,15 @@ def _run_gh(args: list, timeout: int = 30):
 
 
 def _fetch_recent_merged_pr_numbers(limit: int):
-    """`gh pr list --base develop --state merged --limit <limit> --json number`
-    — the same bounded-window convention `dashboard/health.py`'s
+    """`gh pr list --base <integration> --state merged --limit <limit> --json
+    number` — the same bounded-window convention `dashboard/health.py`'s
     `_fetch_github_ci_conclusion` / RECORD-VS-GH already use.
 
     Returns (status, value) per the tri-state contract: ("ok", [ints]),
     ("soft_degrade", reason), or ("hard_fail", reason)."""
+    integration = _load_pipeline_config().integration_branch()
     status, result = _run_gh([
-        "pr", "list", "--base", "develop", "--state", "merged",
+        "pr", "list", "--base", integration, "--state", "merged",
         "--limit", str(limit), "--json", "number",
     ])
     if status != _OK:
@@ -251,6 +270,7 @@ def main(argv=None) -> int:
         help="load a JSON fixture instead of live gh calls (test/demo only)",
     )
     args = parser.parse_args(argv)
+    integration = _load_pipeline_config().integration_branch()
 
     if args.fixture_file:
         prs = _load_fixture(args.fixture_file)
@@ -270,7 +290,7 @@ def main(argv=None) -> int:
         prs = value
 
     if not prs:
-        print("PASS: verdict-presence — no merged develop PRs found in window")
+        print(f"PASS: verdict-presence — no merged {integration} PRs found in window")
         return 0
 
     result = classify_prs(prs)
@@ -281,7 +301,7 @@ def main(argv=None) -> int:
         numbers = ", ".join(f"#{n}" for n in sorted(missing))
         print(f"FAIL: verdict-presence — {detail}: {numbers}", file=sys.stderr)
         print(
-            "These merged develop PRs carry no reviewer comment matching "
+            f"These merged {integration} PRs carry no reviewer comment matching "
             "'VERDICT: APPROVE' — the D6-supersession compensating control "
             "(ADR-0080 D1) treats this as a real CI failure, not a WARN.",
             file=sys.stderr,

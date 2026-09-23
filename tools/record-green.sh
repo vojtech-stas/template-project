@@ -56,6 +56,19 @@
 
 set -euo pipefail
 
+# Resolve the configured integration branch (ADR-0089 D1), located relative
+# to THIS script's own path (S1-c) — never via $REPO_ROOT or
+# `git rev-parse --show-toplevel` of the cwd repo. This script only ever
+# certifies the integration branch (never the release branch), so only one
+# role is resolved here. `pwd -W` (falls back to plain `pwd` where
+# unsupported) gives a native-form path so the python3 call below resolves
+# correctly even under MSYS_NO_PATHCONV=1.
+_RG_TOOLS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -W 2>/dev/null || pwd)"
+INTEGRATION_BRANCH="$(python3 "$_RG_TOOLS_DIR/pipeline_config.py" integration)" || {
+  echo "ERROR: record-green.sh: cannot resolve the integration branch (tools/pipeline_config.py failed)" >&2
+  exit 1
+}
+
 DRY_RUN=0
 EXPLICIT_SHA=""
 for arg in "$@"; do
@@ -84,17 +97,17 @@ if [ -n "$EXPLICIT_SHA" ]; then
   DEV_SHA="$EXPLICIT_SHA"
   echo "INFO: certifying caller-provided sha = $DEV_SHA (e.g. a confirmed merge oid)"
 else
-  echo "INFO: no explicit sha provided — fetching origin develop before resolving fallback ref"
-  if git fetch origin develop --quiet 2>/dev/null; then
-    echo "INFO: fetched origin develop"
+  echo "INFO: no explicit sha provided — fetching origin $INTEGRATION_BRANCH before resolving fallback ref"
+  if git fetch origin "$INTEGRATION_BRANCH" --quiet 2>/dev/null; then
+    echo "INFO: fetched origin $INTEGRATION_BRANCH"
   else
-    echo "WARN: git fetch origin develop failed — falling back to existing local ref (may be stale)" >&2
+    echo "WARN: git fetch origin $INTEGRATION_BRANCH failed — falling back to existing local ref (may be stale)" >&2
   fi
-  DEV_SHA="$(git rev-parse origin/develop 2>/dev/null || git rev-parse develop 2>/dev/null)" || {
-    echo "ERROR: cannot resolve develop HEAD — fetch origin first" >&2
+  DEV_SHA="$(git rev-parse "origin/$INTEGRATION_BRANCH" 2>/dev/null || git rev-parse "$INTEGRATION_BRANCH" 2>/dev/null)" || {
+    echo "ERROR: cannot resolve $INTEGRATION_BRANCH HEAD — fetch origin first" >&2
     exit 1
   }
-  echo "INFO: develop HEAD (post-fetch) = $DEV_SHA"
+  echo "INFO: $INTEGRATION_BRANCH HEAD (post-fetch) = $DEV_SHA"
 fi
 
 # --- 2a. Verify GitHub ci conclusion via PR-mergeCommit lookup ---
@@ -178,7 +191,7 @@ case "$CI_STATUS" in
     if [ -n "${RECORD_GREEN_PYTEST_CMD:-}" ]; then
       # Test injection: run the stub command.
       if ! eval "$RECORD_GREEN_PYTEST_CMD" >/dev/null 2>&1; then
-        echo "ERROR: pytest (stub) exited non-zero — develop tests are NOT green" >&2
+        echo "ERROR: pytest (stub) exited non-zero — $INTEGRATION_BRANCH tests are NOT green" >&2
         echo "ERROR: refusing to record develop_green (no false-green)" >&2
         exit 1
       fi
@@ -186,7 +199,7 @@ case "$CI_STATUS" in
       # Real path: run the full test suite.
       REPO_ROOT="$(git rev-parse --show-toplevel)"
       if ! python -m pytest "$REPO_ROOT/tests/" -q --no-header --tb=short 2>&1; then
-        echo "ERROR: pytest exited non-zero — develop tests are NOT green" >&2
+        echo "ERROR: pytest exited non-zero — $INTEGRATION_BRANCH tests are NOT green" >&2
         echo "ERROR: refusing to record develop_green (no false-green)" >&2
         exit 1
       fi
@@ -195,8 +208,8 @@ case "$CI_STATUS" in
     TESTS_EVIDENCE="local pytest fallback (no recorded GitHub ci run for sha $DEV_SHA: $CI_DETAIL)"
     ;;
   *)
-    echo "ERROR: GitHub ci conclusion for develop HEAD is '$CI_STATUS' (need 'pass', or 'unavailable' for local fallback)" >&2
-    echo "ERROR: develop is NOT green — refusing to record develop_green (no false-green)" >&2
+    echo "ERROR: GitHub ci conclusion for $INTEGRATION_BRANCH HEAD is '$CI_STATUS' (need 'pass', or 'unavailable' for local fallback)" >&2
+    echo "ERROR: $INTEGRATION_BRANCH is NOT green — refusing to record develop_green (no false-green)" >&2
     exit 1
     ;;
 esac
