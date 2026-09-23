@@ -124,45 +124,68 @@ class TestWorktreeGuardDevelop(unittest.TestCase):
 
 
 class TestCiChecksDevelop(unittest.TestCase):
-    """ci-checks.sh CHECK 3 must scan origin/develop..HEAD, not origin/main..HEAD,
-    per ADR-0070 D1 (integration branch is develop).
+    """ci-checks.sh CHECK 3 must resolve the integration branch via
+    tools/pipeline_config.py (ADR-0089 D1) rather than hardcoding a
+    'develop'/'main' literal — superseding the #841-era assertions that
+    pinned the integration branch to the literal 'develop' (ADR-0089 D1/D3,
+    S2-scan of slice #1512).
     """
 
     def setUp(self):
         self.content = _read(CI_SH)
 
-    def test_no_fetch_origin_main_in_check3(self):
-        """CHECK 3 must not fetch origin main (should be origin develop)."""
-        # Verify the CHECK 3 fetch line uses develop
-        check3_section = re.search(
-            r'CHECK 3.*?CHECK 4',
-            self.content,
-            re.DOTALL,
-        )
-        self.assertIsNotNone(check3_section, "CHECK 3 section not found in ci-checks.sh")
-        section = check3_section.group(0)
-        self.assertNotIn(
-            "fetch origin main",
-            section,
-            msg="CHECK 3 must not fetch origin main; should fetch origin develop",
-        )
-        self.assertIn(
-            "fetch origin develop",
-            section,
-            msg="CHECK 3 must fetch origin develop",
+    def test_no_hardcoded_branch_literal_outside_comments(self):
+        """Non-comment lines must not hardcode 'develop' or 'main' as a
+        git ref/branch name — CHECK 3 must route through the resolved
+        $INTEGRATION_BRANCH variable instead. Comment/docblock lines are
+        exempt (S2-prose). CHECK 9's own pass message ("clean main") is the
+        one out-of-scope line the slice's S2-prose oracle names: it
+        describes the DOCS-* registry run, naming no branch that a site in
+        this slice acts on."""
+        offending = []
+        for lineno, line in enumerate(self.content.splitlines(), start=1):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if "clean main" in line:
+                continue
+            if re.search(r"\b(develop|main)\b", line):
+                offending.append((lineno, line))
+        self.assertEqual(
+            [],
+            offending,
+            msg=(
+                "ci-checks.sh contains hardcoded branch literal(s) on "
+                "non-comment line(s) — roles must resolve via "
+                "tools/pipeline_config.py (ADR-0089 D1):\n"
+                + "\n".join(f"  {n}: {v}" for n, v in offending)
+            ),
         )
 
-    def test_commit_range_uses_develop(self):
-        """CHECK 3 git log range must be origin/develop..HEAD."""
+    def test_resolves_integration_branch_via_pipeline_config(self):
+        """The integration branch is resolved once via pipeline_config.py,
+        located relative to this script's own path (BASH_SOURCE[0])."""
         self.assertIn(
-            "origin/develop..HEAD",
+            '_CI_TOOLS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -W 2>/dev/null || pwd)"',
             self.content,
-            msg="ci-checks.sh CHECK 3 must scan 'origin/develop..HEAD' range",
         )
-        self.assertNotIn(
-            "origin/main..HEAD",
+        self.assertIn('pipeline_config.py" integration', self.content)
+        self.assertIn("INTEGRATION_BRANCH=", self.content)
+
+    def test_check3_fetches_integration_branch_var(self):
+        """CHECK 3 must fetch origin "$INTEGRATION_BRANCH", never a literal."""
+        self.assertIn(
+            'git fetch origin "$INTEGRATION_BRANCH"',
             self.content,
-            msg="ci-checks.sh must not reference 'origin/main..HEAD' (migrate to develop)",
+            msg='CHECK 3 must fetch origin "$INTEGRATION_BRANCH"',
+        )
+
+    def test_commit_range_uses_integration_branch_var(self):
+        """CHECK 3 git log range must be origin/${INTEGRATION_BRANCH}..HEAD."""
+        self.assertIn(
+            "origin/${INTEGRATION_BRANCH}..HEAD",
+            self.content,
+            msg="ci-checks.sh CHECK 3 must scan 'origin/${INTEGRATION_BRANCH}..HEAD' range",
         )
 
     def test_adr_comment_updated(self):
@@ -177,64 +200,71 @@ class TestCiChecksDevelop(unittest.TestCase):
 
 
 class TestSessionStartDevelop(unittest.TestCase):
-    """session-start.sh must fetch origin develop and report divergence vs
-    origin/develop (not origin/main), per ADR-0070 D1.
+    """session-start.sh must resolve the integration branch via
+    tools/pipeline_config.py (ADR-0089 D1), superseding the #841-era
+    assertions that pinned the integration branch to the literal 'develop'.
+    Its degrade-not-exit behaviour on a resolver failure (S2-d) is tested
+    by running the hook, in tests/test_branch_roles_sandbox_1512.py.
     """
 
     def setUp(self):
         self.content = _read(SESSION_START_SH)
 
-    def test_fetch_origin_develop(self):
-        """session-start.sh must fetch origin develop."""
-        self.assertIn(
-            "fetch origin develop",
-            self.content,
-            msg="session-start.sh must fetch origin develop (not origin main)",
-        )
-        self.assertNotIn(
-            "fetch origin main",
-            self.content,
-            msg="session-start.sh must not fetch origin main after two-tier migration",
-        )
-
-    def test_divergence_count_uses_develop(self):
-        """Divergence count must compare HEAD against origin/develop."""
-        self.assertIn(
-            "HEAD..origin/develop",
-            self.content,
-            msg="session-start.sh divergence count must use 'HEAD..origin/develop'",
-        )
-        self.assertNotIn(
-            "HEAD..origin/main",
-            self.content,
-            msg="session-start.sh must not count commits behind origin/main",
+    def test_no_hardcoded_branch_literal_outside_comments(self):
+        """Non-comment lines must not hardcode 'develop' or 'main' as a
+        git ref/branch name — the fetch, divergence count and context
+        string must all route through the resolved $INTEGRATION_BRANCH
+        variable instead. Comment/docblock lines are exempt (S2-prose)."""
+        offending = []
+        for lineno, line in enumerate(self.content.splitlines(), start=1):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            if re.search(r"\b(develop|main)\b", line):
+                offending.append((lineno, line))
+        self.assertEqual(
+            [],
+            offending,
+            msg=(
+                "session-start.sh contains hardcoded branch literal(s) on "
+                "non-comment line(s) — roles must resolve via "
+                "tools/pipeline_config.py (ADR-0089 D1):\n"
+                + "\n".join(f"  {n}: {v}" for n, v in offending)
+            ),
         )
 
-    def test_context_string_says_develop(self):
-        """Injected context string must say 'behind origin/develop', not 'behind origin/main'."""
+    def test_resolves_integration_branch_via_pipeline_config(self):
+        """The integration branch is resolved once via pipeline_config.py,
+        located relative to this script's own path (S1-c), through the
+        `pwd -W` fallback idiom the other bash call sites use (#1535)."""
         self.assertIn(
-            "behind origin/develop",
+            '_SS_TOOLS_DIR="$(cd "$SCRIPT_DIR/../../tools" && { pwd -W 2>/dev/null || pwd; })"',
             self.content,
-            msg="Context string must say 'commit(s) behind origin/develop'",
         )
-        self.assertNotIn(
-            "behind origin/main",
+        self.assertIn('PIPELINE_CONFIG_PY="$_SS_TOOLS_DIR/pipeline_config.py"', self.content)
+        self.assertIn("INTEGRATION_BRANCH=", self.content)
+
+    def test_fetch_uses_resolved_variable(self):
+        """session-start.sh must fetch origin "$INTEGRATION_BRANCH"."""
+        self.assertIn(
+            'git fetch origin "$INTEGRATION_BRANCH"',
             self.content,
-            msg="Context string must not say 'behind origin/main' after migration",
+            msg='session-start.sh must fetch origin "$INTEGRATION_BRANCH"',
         )
 
-    def test_comment_updated(self):
-        """Header comment must reference origin/develop divergence."""
+    def test_divergence_count_uses_resolved_variable(self):
+        """Divergence count must compare HEAD against origin/$INTEGRATION_BRANCH."""
         self.assertIn(
-            "origin/develop",
+            "HEAD..origin/$INTEGRATION_BRANCH",
             self.content,
-            msg="session-start.sh header comment must mention origin/develop",
+            msg="session-start.sh divergence count must use 'HEAD..origin/$INTEGRATION_BRANCH'",
         )
-        self.assertNotIn(
-            "origin/main",
-            self.content,
-            msg="session-start.sh must have no origin/main references after migration",
-        )
+
+    def test_context_string_interpolates_role(self):
+        """Injected context string must interpolate the resolved role, never
+        hardcode 'behind origin/develop' or 'behind origin/main'."""
+        self.assertIn("behind origin/%s", self.content)
+        self.assertIn('"${INTEGRATION_BRANCH:-?}"', self.content)
 
 
 if __name__ == "__main__":

@@ -23,6 +23,22 @@
 
 set -euo pipefail
 
+# Resolve both configured branch roles once (ADR-0089 D1), located relative
+# to THIS script's own path (S1-c) — never via $REPO_ROOT or
+# `git rev-parse --show-toplevel` of the cwd repo. `pwd -W` (falls back to
+# plain `pwd` where unsupported) gives a native-form path so the following
+# python3 call resolves correctly even under MSYS_NO_PATHCONV=1, which
+# disables MSYS's automatic POSIX-to-Windows argv conversion.
+_PROMOTE_TOOLS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -W 2>/dev/null || pwd)"
+INTEGRATION_BRANCH="$(python3 "$_PROMOTE_TOOLS_DIR/pipeline_config.py" integration)" || {
+  echo "ERROR: promote.sh: cannot resolve the integration branch (tools/pipeline_config.py failed)" >&2
+  exit 1
+}
+RELEASE_BRANCH="$(python3 "$_PROMOTE_TOOLS_DIR/pipeline_config.py" release)" || {
+  echo "ERROR: promote.sh: cannot resolve the release branch (tools/pipeline_config.py failed)" >&2
+  exit 1
+}
+
 # REPO_ROOT: the worktree path (used only for locating dashboard/health.py,
 # which is a tracked code file that lives in the worktree).
 REPO_ROOT="$(git rev-parse --show-toplevel)"
@@ -75,39 +91,39 @@ if printf '%s\n' "$RELEASE_READY_OUT" | grep -qE '^PASS: RELEASE-READY'; then
 else
   echo "ERROR: RELEASE-READY gate not open — promotion refused" >&2
   echo "ERROR: $RELEASE_READY_OUT" >&2
-  echo "INFO: Resolve all failing conditions before promoting develop → main." >&2
+  echo "INFO: Resolve all failing conditions before promoting $INTEGRATION_BRANCH → $RELEASE_BRANCH." >&2
   exit 1
 fi
 
-# --- 1. Resolve develop HEAD sha ---
-DEVELOP_SHA="$(git rev-parse origin/develop 2>/dev/null || git rev-parse develop 2>/dev/null)" || {
-  echo "ERROR: cannot resolve develop HEAD — branch does not exist yet" >&2
+# --- 1. Resolve integration-branch HEAD sha ---
+DEVELOP_SHA="$(git rev-parse "origin/$INTEGRATION_BRANCH" 2>/dev/null || git rev-parse "$INTEGRATION_BRANCH" 2>/dev/null)" || {
+  echo "ERROR: cannot resolve $INTEGRATION_BRANCH HEAD — branch does not exist yet" >&2
   exit 1
 }
 
 # --- 2. Verify fast-forward condition ---
-MAIN_SHA="$(git rev-parse origin/main 2>/dev/null || git rev-parse main 2>/dev/null)" || {
-  echo "ERROR: cannot resolve main HEAD" >&2
+MAIN_SHA="$(git rev-parse "origin/$RELEASE_BRANCH" 2>/dev/null || git rev-parse "$RELEASE_BRANCH" 2>/dev/null)" || {
+  echo "ERROR: cannot resolve $RELEASE_BRANCH HEAD" >&2
   exit 1
 }
 
 if [ "$MAIN_SHA" = "$DEVELOP_SHA" ]; then
-  echo "INFO: main already equals develop HEAD ($DEVELOP_SHA) — idempotent no-op push"
+  echo "INFO: $RELEASE_BRANCH already equals $INTEGRATION_BRANCH HEAD ($DEVELOP_SHA) — idempotent no-op push"
 else
-  # main must be an ancestor of develop (ff-only check)
+  # release must be an ancestor of integration (ff-only check)
   if ! git merge-base --is-ancestor "$MAIN_SHA" "$DEVELOP_SHA" 2>/dev/null; then
-    echo "ERROR: main ($MAIN_SHA) is NOT an ancestor of develop ($DEVELOP_SHA)" >&2
+    echo "ERROR: $RELEASE_BRANCH ($MAIN_SHA) is NOT an ancestor of $INTEGRATION_BRANCH ($DEVELOP_SHA)" >&2
     echo "ERROR: cannot fast-forward; promotion aborted (linear history invariant)" >&2
     exit 1
   fi
 
   # --- 3. Fast-forward push ---
-  echo "INFO: fast-forwarding main to develop HEAD $DEVELOP_SHA"
+  echo "INFO: fast-forwarding $RELEASE_BRANCH to $INTEGRATION_BRANCH HEAD $DEVELOP_SHA"
   # _PROMOTE_SH_SKIP_PUSH=1 bypasses the real push (test isolation only).
   if [ "${_PROMOTE_SH_SKIP_PUSH:-}" = "1" ]; then
     echo "INFO: _PROMOTE_SH_SKIP_PUSH=1 — skipping real push (test mode)"
   else
-    git push origin "refs/remotes/origin/develop:refs/heads/main" --force-with-lease="refs/heads/main:$MAIN_SHA"
+    git push origin "refs/remotes/origin/$INTEGRATION_BRANCH:refs/heads/$RELEASE_BRANCH" --force-with-lease="refs/heads/$RELEASE_BRANCH:$MAIN_SHA"
   fi
   echo "INFO: push complete"
 fi
@@ -128,7 +144,7 @@ TS="$(date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || python3 -c "from datetime imp
 SESSION_ID="${CLAUDE_SESSION_ID:-orchestrator}"
 
 mkdir -p "$(dirname "$EVENTS_LOG")"
-EVENT="{\"v\":2,\"ts\":\"$TS\",\"session_id\":\"$SESSION_ID\",\"src\":\"orchestrator\",\"event\":\"promotion\",\"from\":\"develop\",\"to\":\"main\",\"sha\":\"$DEVELOP_SHA\",\"ack\":true}"
+EVENT="{\"v\":2,\"ts\":\"$TS\",\"session_id\":\"$SESSION_ID\",\"src\":\"orchestrator\",\"event\":\"promotion\",\"from\":\"$INTEGRATION_BRANCH\",\"to\":\"$RELEASE_BRANCH\",\"sha\":\"$DEVELOP_SHA\",\"ack\":true}"
 echo "$EVENT" >> "$EVENTS_LOG"
 echo "INFO: promotion event appended — sha=$DEVELOP_SHA ts=$TS"
 
@@ -149,7 +165,7 @@ echo "INFO: promotion event appended — sha=$DEVELOP_SHA ts=$TS"
 # (never silent) but do NOT let it flip the script's exit code.
 if python3 "$REPO_ROOT/tools/trace.py" emit --kind promotion \
   --trace-id "promotion-$DEVELOP_SHA" \
-  --attr from=develop --attr to=main --attr "sha=$DEVELOP_SHA" >/dev/null 2>&1; then
+  --attr "from=$INTEGRATION_BRANCH" --attr "to=$RELEASE_BRANCH" --attr "sha=$DEVELOP_SHA" >/dev/null 2>&1; then
   echo "INFO: v3 promotion span appended — sha=$DEVELOP_SHA"
 else
   echo "WARNING: v3 promotion span emission failed — promotion itself already succeeded (sha=$DEVELOP_SHA); span is enrichment only, not gating (#1102)" >&2

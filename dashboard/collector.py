@@ -17,6 +17,7 @@ CLI: python dashboard/collector.py --prd N [--compare]
      python dashboard/collector.py --rollup [--last N] [--compare]
 """
 
+import importlib.util
 import json
 import os
 import re
@@ -31,6 +32,21 @@ from pathlib import Path
 _THIS_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _THIS_DIR.parent
 _CACHE_DIR = _REPO_ROOT / ".claude" / "logs" / "trail-cache"
+_PIPELINE_CONFIG_PY = _REPO_ROOT / "tools" / "pipeline_config.py"
+
+
+def _load_pipeline_config():
+    """S1-c: located relative to THIS file's own path (_REPO_ROOT above is
+    derived from Path(__file__)), never via cwd or `git rev-parse
+    --show-toplevel` of the caller's cwd repo. Called fresh at CALL time
+    (S2-ct) by every site below — never resolved at module-import time, so
+    a malformed conf can never break `import collector` itself."""
+    spec = importlib.util.spec_from_file_location(
+        "pipeline_config", _PIPELINE_CONFIG_PY
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -366,7 +382,8 @@ _CLOSES_RE = re.compile(
 def _parse_closes_from_body(body: str) -> list[int]:
     """Extract issue numbers from 'Closes #N' patterns in a PR body.
 
-    Fallback for develop-base PRs where closingIssuesReferences is empty.
+    Fallback for integration-branch-base PRs (ADR-0089 D1) where
+    closingIssuesReferences is empty.
     """
     if not body:
         return []
@@ -377,20 +394,24 @@ def _discover_develop_pr_slice_links(
     slice_numbers: set[int],
     limit: int = 200,
 ) -> dict[int, int]:
-    """Find slice→PR mapping for develop-base (or promoted-to-main) merged PRs.
+    """Find slice→PR mapping for integration-branch-base (or
+    promoted-to-release) merged PRs (ADR-0089 D1).
 
     GitHub only populates closingIssuesReferences (and triggers ClosedEvent
     on the issue) when a PR is merged into the *default* branch.  PRs merged
-    to 'develop' leave both fields empty, breaking trail correlation.
+    to the configured integration branch leave both fields empty, breaking
+    trail correlation.
 
     Strategy (two-pass, fix #1020):
-      Pass 1: scan --base develop merged PRs (the original path).
-      Pass 2: if any slices remain uncovered AND the develop scan returned data,
-              scan --base main merged PRs as fallback.  This covers the promoted-
-              to-main scenario: once develop is squash-merged to main, `gh pr list
-              --base develop` no longer shows the original feature PRs (they are
-              already on main), but `--base main` promotion PR body often does NOT
-              include the original Closes #N.  A broader no-base-filter scan is
+      Pass 1: scan --base <integration> merged PRs (the original path).
+      Pass 2: if any slices remain uncovered AND the integration-branch scan
+              returned data, scan --base <release> merged PRs as fallback.
+              This covers the promoted-to-release scenario: once the
+              integration branch is squash-merged to the release branch,
+              `gh pr list --base <integration>` no longer shows the original
+              feature PRs (they are already on the release branch), but
+              `--base <release>` promotion PR body often does NOT include
+              the original Closes #N.  A broader no-base-filter scan is
               used as the final fallback to catch all cases.
       Each pass: parse 'Closes #N' from each body.
 
@@ -444,16 +465,19 @@ def _discover_develop_pr_slice_links(
         return found
 
     mapping: dict[int, int] = {}
+    pipeline_config = _load_pipeline_config()
+    integration = pipeline_config.integration_branch()
+    release = pipeline_config.release_branch()
 
-    # Pass 1: develop-base scan (original path)
-    develop_prs = _scan_pr_list(["--base", "develop"])
+    # Pass 1: integration-branch-base scan (original path, ADR-0089 D1)
+    develop_prs = _scan_pr_list(["--base", integration])
     if develop_prs:
         mapping.update(_extract_mapping(develop_prs, slice_numbers - set(mapping)))
 
-    # Pass 2: main-base fallback (covers promoted-to-main scenario, fix #1020)
+    # Pass 2: release-base fallback (covers promoted-to-release scenario, fix #1020)
     uncovered = slice_numbers - set(mapping)
     if uncovered:
-        main_prs = _scan_pr_list(["--base", "main"])
+        main_prs = _scan_pr_list(["--base", release])
         if main_prs:
             mapping.update(_extract_mapping(main_prs, uncovered))
 

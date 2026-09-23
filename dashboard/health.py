@@ -47,6 +47,7 @@ Exports:
 Import direction: server <- health (this module must NOT import server).
 """
 
+import importlib.util
 import os
 import re
 import subprocess
@@ -54,6 +55,26 @@ import sys
 import threading
 import time
 from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Branch-role resolver (ADR-0089 D1) — pipeline_config.py is the one parser.
+# Located relative to THIS file's own path (S1-c), never via cwd or
+# `git rev-parse --show-toplevel` of the caller's cwd repo. Every site below
+# calls this fresh at CALL time (S2-ct) — never resolved at module-import
+# time, so a malformed conf can never break `import health` itself.
+# ---------------------------------------------------------------------------
+_HEALTH_PY_DIR = Path(__file__).resolve().parent
+_PIPELINE_CONFIG_PY = _HEALTH_PY_DIR.parent / "tools" / "pipeline_config.py"
+
+
+def _load_pipeline_config():
+    spec = importlib.util.spec_from_file_location(
+        "pipeline_config", _PIPELINE_CONFIG_PY
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
 
 # ---------------------------------------------------------------------------
 # gh_cache — shared TTL+timeout wrapper for gh CLI calls (slice #995/PRD #993).
@@ -572,13 +593,14 @@ _RELEASE_READY_PYTEST_TIMEOUT_S = 300
 
 
 def _fetch_github_ci_conclusion(repo_root, sha=None) -> tuple:
-    """Query GitHub for the `ci` check conclusion on the given (or develop
-    HEAD) commit.
+    """Query GitHub for the `ci` check conclusion on the given (or the
+    configured integration branch's, ADR-0089 D1, HEAD) commit.
 
     Strategy (issue #986):
       1. Resolve the sha to query — see `sha` parameter below.
-      2. Fetch the latest merged PRs targeting develop (gh pr list --base develop
-         --state merged --limit N --json number,mergeCommit).
+      2. Fetch the latest merged PRs targeting the integration branch
+         (gh pr list --base <integration> --state merged --limit N --json
+         number,mergeCommit).
       3. Find the PR whose mergeCommit.oid matches the resolved sha.
       4. Run `gh pr checks <n> --json name,state` and look for name="ci".
       5. Map state: SUCCESS/PASS → "pass"; FAILURE/ERROR/CANCELLED → "fail";
@@ -593,13 +615,14 @@ def _fetch_github_ci_conclusion(repo_root, sha=None) -> tuple:
                 resolved DEV_SHA, itself possibly a caller-provided confirmed
                 merge oid per #1188). When given, this function uses it
                 DIRECTLY and skips the internal `git rev-parse
-                origin/develop` derivation entirely — the PR-mergeCommit
-                search below can then only ever match the requested sha,
-                never a stale local ref. This closes the #1192 class: the
-                OLD (sha-less) code re-derived its own sha independently of
-                whatever the caller had already resolved, so a local ref
-                that moved between the two derivations (e.g. a DIFFERENT PR
-                merging to develop in between) could cause this function to
+                origin/<integration>` derivation entirely — the
+                PR-mergeCommit search below can then only ever match the
+                requested sha, never a stale local ref. This closes the
+                #1192 class: the OLD (sha-less) code re-derived its own sha
+                independently of whatever the caller had already resolved,
+                so a local ref that moved between the two derivations (e.g.
+                a DIFFERENT PR merging to the integration branch in
+                between) could cause this function to
                 cite a NEIGHBOURING PR's CI run instead of the one the
                 caller actually meant to certify (live incident: PR
                 #1190/#1191).
@@ -625,6 +648,7 @@ def _fetch_github_ci_conclusion(repo_root, sha=None) -> tuple:
     import subprocess as _sp
 
     repo_root = Path(repo_root)
+    integration = _load_pipeline_config().integration_branch(str(repo_root))
 
     if sha:
         # Explicit sha (ADR-0079 D2): use it as-is, no local git derivation.
@@ -634,12 +658,12 @@ def _fetch_github_ci_conclusion(repo_root, sha=None) -> tuple:
         # code — this branch is untouched by the sha parameter's addition).
         try:
             sha_r = _sp.run(
-                ["git", "rev-parse", "origin/develop"],
+                ["git", "rev-parse", f"origin/{integration}"],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
                 cwd=str(repo_root),
             )
             if sha_r.returncode != 0:
-                return "unavailable", "git rev-parse origin/develop failed"
+                return "unavailable", f"git rev-parse origin/{integration} failed"
             develop_sha = sha_r.stdout.strip()
         except Exception as exc:
             return "unavailable", f"git rev-parse error: {exc}"
@@ -653,7 +677,7 @@ def _fetch_github_ci_conclusion(repo_root, sha=None) -> tuple:
     # subprocess (empty cache) so the gate always reads LIVE GitHub ci (#986 honesty preserved).
     try:
         _pr_rc, _pr_out = _health_gh_fetch(
-            ["pr", "list", "--base", "develop", "--state", "merged",
+            ["pr", "list", "--base", integration, "--state", "merged",
              "--limit", "20", "--json", "number,mergeCommit"],
             ttl=30.0, timeout=5.0,
         )
@@ -672,7 +696,7 @@ def _fetch_github_ci_conclusion(repo_root, sha=None) -> tuple:
 
     if matching_pr is None:
         return "unavailable", (
-            f"no merged PR to develop matched HEAD {develop_sha[:8]} "
+            f"no merged PR to {integration} matched HEAD {develop_sha[:8]} "
             f"(checked {len(prs)} recent PRs)"
         )
 
@@ -2460,11 +2484,13 @@ def check_isolation_group() -> dict:
     Checks:
     1. Dirs under .claude/worktrees/ that are NOT registered in `git worktree list`
        (orphaned — agent-* dirs left behind after the worktree was removed).
-    2. Worktrees that are 0-ahead + clean relative to origin/main (prune drift —
-       they could be pruned).
+    2. Worktrees that are 0-ahead + clean relative to origin/<release>
+       (ADR-0089 D1 — this site keeps the role its code has always used;
+       prune drift — they could be pruned).
 
     Read-only: never removes anything; only reports.
     """
+    release = _load_pipeline_config().release_branch(str(_HEALTH_REPO_ROOT))
     worktrees_dir = _HEALTH_REPO_ROOT / ".claude" / "worktrees"
     if not worktrees_dir.exists():
         return {
@@ -2519,7 +2545,7 @@ def check_isolation_group() -> dict:
         # Check prune-drift: 0-ahead and clean
         try:
             ahead = subprocess.run(
-                ["git", "rev-list", "--count", "origin/main..HEAD"],
+                ["git", "rev-list", "--count", f"origin/{release}..HEAD"],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8, cwd=str(d),
             )
             status = subprocess.run(
@@ -3725,14 +3751,16 @@ def check_green_main() -> dict:
     """GREEN-MAIN: last develop_green (or backward-compat main_green) sha + lag + age.
 
     Reads workflow-events.jsonl for the last 'develop_green' event (ADR-0062 D3,
-    two-tier migration: slices merge to develop; green gate tracks develop HEAD).
+    two-tier migration: slices merge to the integration branch; green gate
+    tracks the integration branch's HEAD, ADR-0089 D1).
     Falls back to 'main_green' for backward compatibility with pre-migration history
     (avoids a false-WARN window while historical logs still only carry main_green).
-    lag = git rev-list <sha>..origin/develop --count
+    lag = git rev-list <sha>..origin/<integration> --count
     age = seconds since the event timestamp
     Red on lag > 0 or stale > 24h.
     """
     import json as _json
+    integration = _load_pipeline_config().integration_branch(str(_HEALTH_REPO_ROOT))
     events_log = _telemetry_log_root() / ".claude" / "logs" / "workflow-events.jsonl"
     if not events_log.exists():
         return {"id": "GREEN-MAIN", "result": "WARN",
@@ -3774,7 +3802,7 @@ def check_green_main() -> dict:
     lag = -1
     try:
         r = subprocess.run(
-            ["git", "rev-list", "--count", f"{sha}..origin/develop"],
+            ["git", "rev-list", "--count", f"{sha}..origin/{integration}"],
             capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10, cwd=str(_HEALTH_REPO_ROOT),
         )
         if r.returncode == 0:
@@ -3837,9 +3865,10 @@ _RECORD_VS_GH_WINDOW_EXCEPTIONS = {"1089"}
 
 def check_record_vs_gh() -> dict:
     """RECORD-VS-GH: reconcile recorded pr_merged spans (trace-v3.jsonl) vs
-    gh's merged-PR ground truth on develop (PRD #1075 criterion 3 / slice #1081).
+    gh's merged-PR ground truth on the integration branch (ADR-0089 D1;
+    PRD #1075 criterion 3 / slice #1081).
 
-    Ground truth: `gh pr list --base develop --state merged --json
+    Ground truth: `gh pr list --base <integration> --state merged --json
     number,mergedAt,mergeCommit`, routed through the existing
     _health_gh_fetch/gh_cache seam (timeout-bounded; degrades honestly to
     'unverifiable — gh unavailable' rather than fabricating PASS/FAIL).
@@ -3863,6 +3892,8 @@ def check_record_vs_gh() -> dict:
     """
     import json as _json
     from datetime import datetime
+
+    integration = _load_pipeline_config().integration_branch(str(_HEALTH_REPO_ROOT))
 
     def _parse_ts(s: str):
         return datetime.fromisoformat(s.replace("Z", "+00:00"))
@@ -3912,9 +3943,9 @@ def check_record_vs_gh() -> dict:
             ),
         }
 
-    # --- Step 2: fetch merged PRs on develop, routed through gh_cache ---
+    # --- Step 2: fetch merged PRs on the integration branch, routed through gh_cache ---
     rc, out = _health_gh_fetch(
-        ["pr", "list", "--base", "develop", "--state", "merged",
+        ["pr", "list", "--base", integration, "--state", "merged",
          "--limit", "100", "--json", "number,mergedAt,mergeCommit"],
         ttl=60.0, timeout=5.0,
     )
@@ -4060,15 +4091,17 @@ def _resolve_adr_0076_anchor_ts():
 
 
 def check_slice_vs_pr() -> dict:
-    """SLICE-VS-PR: reconcile merged slice-closing PRs on develop against
-    their recorded dispatch + pr_opened v3 spans (PRD #1127 §2 criterion
-    11b; ADR-0076 D1 enforcement item (c) -- the #918 hand-created-slice
-    class stays caught even when it routes entirely around the verbs).
+    """SLICE-VS-PR: reconcile merged slice-closing PRs on the integration
+    branch against their recorded dispatch + pr_opened v3 spans (ADR-0089
+    D1; PRD #1127 §2 criterion 11b; ADR-0076 D1 enforcement item (c) -- the
+    #918 hand-created-slice class stays caught even when it routes
+    entirely around the verbs).
 
     Ground truth for "is this a slice PR": GitHub's own
-    closingIssuesReferences is empty for every PR here (this repo's default
-    branch is main; every slice PR merges to develop, and GitHub only
-    auto-populates issue-closing references against the default branch) --
+    closingIssuesReferences is empty for every PR here (the release branch
+    is this repo's default branch; every slice PR merges to the
+    integration branch, and GitHub only auto-populates issue-closing
+    references against the default branch) --
     so this check parses each merged PR's own body for a `Closes #<n>`
     reference (the same regex tools/pipe/pr-open uses to derive its own
     pr_opened span's attrs.slice) and cross-checks the referenced issue
@@ -4091,6 +4124,8 @@ def check_slice_vs_pr() -> dict:
     import json as _json
     from datetime import datetime as _dt
 
+    integration = _load_pipeline_config().integration_branch(str(_HEALTH_REPO_ROOT))
+
     def _parse_ts(s: str):
         return _dt.fromisoformat(s.replace("Z", "+00:00"))
 
@@ -4111,7 +4146,7 @@ def check_slice_vs_pr() -> dict:
                 )}
 
     rc, out = _health_gh_fetch(
-        ["pr", "list", "--base", "develop", "--state", "merged",
+        ["pr", "list", "--base", integration, "--state", "merged",
          "--limit", "100", "--json", "number,mergedAt,body"],
         ttl=60.0, timeout=5.0,
     )
@@ -4224,9 +4259,10 @@ def check_slice_vs_pr() -> dict:
 
 
 def check_merged_without_verdict() -> dict:
-    """MERGED-WITHOUT-VERDICT: every PR merged to develop after the ADR-0076
-    bind-forward anchor MUST carry a recorded `verdict` v3 span (PRD #1127
-    §2 criterion 11b; ADR-0076 D3's merge-time reviewer-verdict assertion).
+    """MERGED-WITHOUT-VERDICT: every PR merged to the integration branch
+    (ADR-0089 D1) after the ADR-0076 bind-forward anchor MUST carry a
+    recorded `verdict` v3 span (PRD #1127 §2 criterion 11b; ADR-0076 D3's
+    merge-time reviewer-verdict assertion).
 
     tools/pipe/pr-merge only started emitting `verdict` spans once slice
     #1130 (this PRD's own pr-merge verdict-floor extension) landed -- ITSELF
@@ -4237,7 +4273,7 @@ def check_merged_without_verdict() -> dict:
     -- ADR-0076's binding paragraph is explicit that the gap is named, not
     hidden.
 
-    Ground truth: `gh pr list --base develop --state merged --json
+    Ground truth: `gh pr list --base <integration> --state merged --json
     number,mergedAt` (same shape as RECORD-VS-GH). Spans: recorded
     `verdict`-kind spans in the canonical v3 trace log, matched on attrs.pr
     (string).
@@ -4246,6 +4282,8 @@ def check_merged_without_verdict() -> dict:
     """
     import json as _json
     from datetime import datetime as _dt
+
+    integration = _load_pipeline_config().integration_branch(str(_HEALTH_REPO_ROOT))
 
     def _parse_ts(s: str):
         return _dt.fromisoformat(s.replace("Z", "+00:00"))
@@ -4267,7 +4305,7 @@ def check_merged_without_verdict() -> dict:
                 )}
 
     rc, out = _health_gh_fetch(
-        ["pr", "list", "--base", "develop", "--state", "merged",
+        ["pr", "list", "--base", integration, "--state", "merged",
          "--limit", "100", "--json", "number,mergedAt"],
         ttl=60.0, timeout=5.0,
     )
@@ -4802,13 +4840,14 @@ def check_test_ordering() -> dict:
     1. Fetch recently merged PRs whose headRefName starts with fix/.
     2. Squash-merge detection (slice #1060 / ADR-0042 D3): the pipeline's
        ONLY merge mode is squash-merge, which collapses a PR's test+fix
-       commits into ONE develop commit. A merge commit with exactly one
-       parent is a squash (a merge-preserving strategy would have two).
+       commits into ONE commit on the integration branch (ADR-0089 D1). A
+       merge commit with exactly one parent is a squash (a merge-preserving
+       strategy would have two).
        For such PRs, fetch the PR's ORIGINAL branch commit list via
        `gh pr view N --json commits` (routed through the health gh_cache
        seam) and evaluate ordering on THAT sequence — using the same
        file-touch classification logic — instead of the collapsed
-       develop-history commit. This also avoids the direct-history range
+       integration-branch-history commit. This also avoids the direct-history range
        walk picking up unrelated sibling PRs' commits (root-cause of the
        false-negatives on PRs 1045/1047/1049/1051/1055/1058).
        Degrade: if gh is unavailable, or a commit oid gh reports is no
@@ -4828,6 +4867,8 @@ def check_test_ordering() -> dict:
     """
     import json as _json
     import subprocess as _sp
+
+    release = _load_pipeline_config().release_branch(str(_HEALTH_REPO_ROOT))
 
     _GRANDFATHERED_BELOW = 816  # PRs linked to slices < #816 are pre-activation
 
@@ -4951,7 +4992,7 @@ def check_test_ordering() -> dict:
             try:
                 result = _sp.run(
                     ["git", "log", "--reverse", "--pretty=%H",
-                     f"origin/main...{merge_commit}", "--"],
+                     f"origin/{release}...{merge_commit}", "--"],
                     capture_output=True, text=True, encoding="utf-8",
                     errors="replace", timeout=15,
                     cwd=str(_HEALTH_REPO_ROOT),
@@ -5324,6 +5365,8 @@ def check_stale_branches() -> dict:
         import datetime as _dt
         import json as _json
 
+        release = _load_pipeline_config().release_branch(str(_HEALTH_REPO_ROOT))
+
         # Fetch remote branch refs + last commit date.
         result = subprocess.run(
             ["git", "for-each-ref",
@@ -5350,8 +5393,9 @@ def check_stale_branches() -> dict:
             if len(parts) < 2:
                 continue
             ref_name = parts[0]
-            # Skip HEAD and main
-            if ref_name in ("origin/HEAD", "origin/main"):
+            # Skip HEAD and the release branch (ADR-0089 D1 — this site
+            # keeps the role its code has always used).
+            if ref_name in ("origin/HEAD", f"origin/{release}"):
                 continue
             total += 1
             date_str = parts[1].strip()
@@ -5577,15 +5621,16 @@ def _git_count(range_spec: str) -> int:
 
 
 def check_branch_topology() -> dict:
-    """BRANCH-TOPOLOGY: real two-tier develop/main topology assertion (ADR-0070 D1/D3).
+    """BRANCH-TOPOLOGY: real two-tier integration/release topology assertion
+    (ADR-0070 D1/D3, as amended by ADR-0089 D1).
 
     Checks (in order; first failure determines result/detail):
-    1. origin/develop exists — FAIL if missing.
-    2. origin/main exists — FAIL if missing.
-    3. main is an ancestor of develop (fast-forward topology) — WARN if not.
-    4. develop is ahead of main by N commits (healthy: N>=0).
-    5. Recent merged PRs base develop, not main — WARN if any recent PR has main base.
-    6. Branch-protection on develop — WARN (honest, requires API availability).
+    1. origin/<integration> exists — FAIL if missing.
+    2. origin/<release> exists — FAIL if missing.
+    3. release is an ancestor of integration (fast-forward topology) — WARN if not.
+    4. integration is ahead of release by N commits (healthy: N>=0).
+    5. Recent merged PRs base integration, not release — WARN if any recent PR has release base.
+    6. Branch-protection on integration — WARN (honest, requires API availability).
 
     Returns PASS when the topology is clean, WARN on advisory issues, FAIL on
     structural breaks. Always emits real data — never the "dormant" stub.
@@ -5596,32 +5641,35 @@ def check_branch_topology() -> dict:
     """
     import json as _json
 
-    # 1. Check origin/develop exists
-    develop_sha = _git_sha("origin/develop")
+    integration = _load_pipeline_config().integration_branch(str(_HEALTH_REPO_ROOT))
+    release = _load_pipeline_config().release_branch(str(_HEALTH_REPO_ROOT))
+
+    # 1. Check origin/<integration> exists
+    develop_sha = _git_sha(f"origin/{integration}")
     if not develop_sha:
         return {
             "id": "BRANCH-TOPOLOGY",
             "result": "FAIL",
-            "detail": "origin/develop does not exist — two-tier topology not initialised",
+            "detail": f"origin/{integration} does not exist — two-tier topology not initialised",
         }
 
-    # 2. Check origin/main exists
-    main_sha = _git_sha("origin/main")
+    # 2. Check origin/<release> exists
+    main_sha = _git_sha(f"origin/{release}")
     if not main_sha:
         return {
             "id": "BRANCH-TOPOLOGY",
             "result": "FAIL",
-            "detail": "origin/main does not exist",
+            "detail": f"origin/{release} does not exist",
         }
 
     # 3. Commit counts
-    ahead = _git_count(f"origin/main..origin/develop")
-    behind = _git_count(f"origin/develop..origin/main")
+    ahead = _git_count(f"origin/{release}..origin/{integration}")
+    behind = _git_count(f"origin/{integration}..origin/{release}")
 
-    # 4. Ancestor check: main should be ancestor of develop (ff-clean)
+    # 4. Ancestor check: release should be ancestor of integration (ff-clean)
     try:
         anc = subprocess.run(
-            ["git", "merge-base", "--is-ancestor", "origin/main", "origin/develop"],
+            ["git", "merge-base", "--is-ancestor", f"origin/{release}", f"origin/{integration}"],
             capture_output=True, timeout=8, cwd=str(_HEALTH_REPO_ROOT),
         )
         main_is_ancestor = (anc.returncode == 0)
@@ -5654,45 +5702,50 @@ def check_branch_topology() -> dict:
             except Exception:
                 pr_unconfirmed = True
             else:
-                main_based = [p["number"] for p in prs if p.get("baseRefName") == "main"]
+                main_based = [p["number"] for p in prs if p.get("baseRefName") == release]
                 if main_based:
                     pr_base_ok = False
-                    pr_warn_detail = f" | recent PRs with main base: {main_based[:3]}"
+                    pr_warn_detail = f" | recent PRs with {release} base: {main_based[:3]}"
     except Exception:
         pr_unconfirmed = True
 
     # 6. Branch-protection advisory (via gh_cache — PRD #993 cr.3, slice #996)
-    # #1525 / same class as ADR-0087 D3: a failed or exception-raising fetch
-    # must never let the function fall through to PASS on a state it never
-    # confirmed -- bp_confirmed gates the result below.
+    # #1525 / same class as ADR-0087 D3: a failed or exception-raising fetch,
+    # or a confirmed source paired with an empty, unparsable, or
+    # `protected`-less payload, must never let the function fall through to
+    # PASS on a state it never confirmed -- bp_confirmed gates the result
+    # below, mirroring step 5's pr_unconfirmed handling above.
     bp_note = ""
     bp_confirmed = True
-    bp_unconfirmed_reason = ""
+    bp_source = "computing"
     try:
-        _bp_rc, _bp_out = _health_gh_fetch(
-            ["api", "repos/{owner}/{repo}/branches/develop"],
-            ttl=60.0, timeout=5.0,
+        _bp_rc, _bp_out, _bp_source = _health_gh_fetch(
+            ["api", f"repos/{{owner}}/{{repo}}/branches/{integration}"],
+            ttl=60.0, timeout=5.0, with_source=True,
         )
-        if _bp_rc == 0 and _bp_out.strip():
-            bp = _json.loads(_bp_out)
-            protected = bp.get("protected", False)
-            bp_note = f" | branch-protection={'on' if protected else 'off (advisory: enable)'}"
-        else:
+        bp_source = _bp_source
+        if _bp_rc != 0:
             bp_confirmed = False
-            bp_unconfirmed_reason = "API unavailable"
-            bp_note = " | branch-protection: API unavailable (WARN)"
+        else:
+            try:
+                bp = _json.loads(_bp_out)
+                if not isinstance(bp, dict) or "protected" not in bp:
+                    raise ValueError("payload is not a dict with a protected field")
+            except Exception:
+                bp_confirmed = False
+            else:
+                protected = bp["protected"]
+                bp_note = f" | branch-protection={'on' if protected else 'off (advisory: enable)'}"
     except Exception:
         bp_confirmed = False
-        bp_unconfirmed_reason = "check skipped"
-        bp_note = " | branch-protection: check skipped"
 
     # Determine result
     ahead_str = str(ahead) if ahead >= 0 else "?"
     behind_str = str(behind) if behind >= 0 else "?"
     base_detail = (
-        f"develop ahead of main by {ahead_str}, behind by {behind_str}; "
-        f"main-is-ancestor={main_is_ancestor}; "
-        f"develop={develop_sha[:8]}, main={main_sha[:8]}"
+        f"{integration} ahead of {release} by {ahead_str}, behind by {behind_str}; "
+        f"{release}-is-ancestor={main_is_ancestor}; "
+        f"{integration}={develop_sha[:8]}, {release}={main_sha[:8]}"
         f"{pr_warn_detail}{bp_note}"
     )
 
@@ -5700,7 +5753,7 @@ def check_branch_topology() -> dict:
         return {
             "id": "BRANCH-TOPOLOGY",
             "result": "WARN",
-            "detail": f"main is NOT ancestor of develop (diverged topology); {base_detail}",
+            "detail": f"{release} is NOT ancestor of {integration} (diverged topology); {base_detail}",
             "develop_sha": develop_sha,
             "main_sha": main_sha,
             "ahead": ahead,
@@ -5726,7 +5779,7 @@ def check_branch_topology() -> dict:
         return {
             "id": "BRANCH-TOPOLOGY",
             "result": "WARN",
-            "detail": f"recent PRs targeting main (should target develop); {base_detail}",
+            "detail": f"recent PRs targeting {release} (should target {integration}); {base_detail}",
             "develop_sha": develop_sha,
             "main_sha": main_sha,
             "ahead": ahead,
@@ -5739,7 +5792,7 @@ def check_branch_topology() -> dict:
             "id": "BRANCH-TOPOLOGY",
             "result": "WARN",
             "detail": (
-                f"branch-protection fetch unconfirmed ({bp_unconfirmed_reason}); {base_detail}"
+                f"branch-protection fetch unconfirmed (source={bp_source}); {base_detail}"
             ),
             "develop_sha": develop_sha,
             "main_sha": main_sha,
@@ -5761,9 +5814,10 @@ def check_branch_topology() -> dict:
 
 
 def check_promotion_lag() -> dict:
-    """PROMOTION-LAG: age of develop HEAD since last promotion to main (ADR-0070 D3).
+    """PROMOTION-LAG: age of integration-branch HEAD since last promotion to
+    the release branch (ADR-0070 D3, as amended by ADR-0089 D1).
 
-    Measures how long develop has been ahead of main:
+    Measures how long the integration branch has been ahead of the release branch:
     - 0 commits ahead: no lag (PASS)
     - ahead > 0, last promotion < 24h ago: PASS
     - ahead > 0, last promotion 24h-72h: WARN (promotion due)
@@ -5775,8 +5829,11 @@ def check_promotion_lag() -> dict:
     import json as _json
     import time as _time
 
+    integration = _load_pipeline_config().integration_branch(str(_HEALTH_REPO_ROOT))
+    release = _load_pipeline_config().release_branch(str(_HEALTH_REPO_ROOT))
+
     promotions = _read_promotion_events()
-    ahead = _git_count("origin/main..origin/develop")
+    ahead = _git_count(f"origin/{release}..origin/{integration}")
     now = _time.time()
 
     if ahead == 0:
@@ -5784,7 +5841,7 @@ def check_promotion_lag() -> dict:
         return {
             "id": "PROMOTION-LAG",
             "result": "PASS",
-            "detail": f"develop == main (0 commits ahead); last promotion sha: {last_sha}",
+            "detail": f"{integration} == {release} (0 commits ahead); last promotion sha: {last_sha}",
             "ahead": 0,
             "last_promotion_ts": promotions[-1].get("ts", "") if promotions else None,
             "lag_hours": 0.0,
@@ -5795,7 +5852,7 @@ def check_promotion_lag() -> dict:
             "id": "PROMOTION-LAG",
             "result": "WARN",
             "detail": (
-                f"develop is {ahead} commit(s) ahead of main; no promotion events yet "
+                f"{integration} is {ahead} commit(s) ahead of {release}; no promotion events yet "
                 f"(honest day-one — first promotion pending); ADR-0070 D3"
             ),
             "ahead": ahead,
@@ -5815,7 +5872,7 @@ def check_promotion_lag() -> dict:
 
     last_sha = last_promo.get("sha", "")[:8]
     detail = (
-        f"develop {ahead} commit(s) ahead of main; "
+        f"{integration} {ahead} commit(s) ahead of {release}; "
         f"last promotion {lag_hours}h ago (sha={last_sha}, ts={last_ts_str})"
     )
 
@@ -5841,8 +5898,10 @@ def check_promotion_lag() -> dict:
 def check_release_ready() -> dict:
     """RELEASE-READY: deterministic six-condition promotion gate (ADR-0070 D2).
 
-    Evaluates develop HEAD against six conditions (ADR-0070 D2):
-      (a) CI green on develop HEAD — via real GitHub ci conclusion (#986);
+    Evaluates the integration branch's HEAD (ADR-0089 D1) against six
+    conditions (ADR-0070 D2):
+      (a) CI green on the integration branch's HEAD — via real GitHub ci
+          conclusion (#986);
           falls back to local tools/ci-checks.sh when gh is unavailable
       (b) full test suite passes (ADR-0067 D1) — GREEN-FAST (#1161): when (a)
           was satisfied by a REAL (non-override) recorded GitHub ci=pass for

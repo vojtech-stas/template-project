@@ -17,6 +17,17 @@ set -uo pipefail
 
 FAIL_COUNT=0
 
+# Resolve the configured integration branch once (ADR-0089 D1), located
+# relative to THIS script's own path (S1-c) — never via $REPO_ROOT or
+# `git rev-parse --show-toplevel` of the cwd repo. `pwd -W` (falls back to
+# plain `pwd` where unsupported) gives a native-form path so the python3
+# call below resolves correctly even under MSYS_NO_PATHCONV=1.
+_CI_TOOLS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -W 2>/dev/null || pwd)"
+INTEGRATION_BRANCH="$(python3 "$_CI_TOOLS_DIR/pipeline_config.py" integration)" || {
+    echo "FAIL: cannot resolve the integration branch (tools/pipeline_config.py failed)" >&2
+    exit 1
+}
+
 fail() {
     echo "FAIL: $*" >&2
     FAIL_COUNT=$((FAIL_COUNT + 1))
@@ -70,12 +81,13 @@ fi
 # ---------------------------------------------------------------------------
 # CHECK 3: Commit subjects — ≤72 chars + Conventional Commits format
 # ---------------------------------------------------------------------------
-echo "--- CHECK 3: commit subjects over origin/develop..HEAD ---"
-# Fetch origin/develop so the range is available in CI (ADR-0070 D1).
-git fetch origin develop --quiet 2>/dev/null || true
+echo "--- CHECK 3: commit subjects over origin/${INTEGRATION_BRANCH}..HEAD ---"
+# Fetch origin/<integration> so the range is available in CI (ADR-0070 D1,
+# as amended by ADR-0089 D1).
+git fetch origin "$INTEGRATION_BRANCH" --quiet 2>/dev/null || true
 
 CONV_RE='^(feat|fix|chore|refactor|docs|test|perf|style|build|ci)(\(.+\))?: .+'
-RANGE_COMMITS=$(git log --no-merges --format='%s' origin/develop..HEAD 2>/dev/null || true)
+RANGE_COMMITS=$(git log --no-merges --format='%s' "origin/${INTEGRATION_BRANCH}..HEAD" 2>/dev/null || true)
 
 if [ -z "$RANGE_COMMITS" ]; then
     echo "CHECK 3 VACUOUS — no commits in range; subject-format not verified"
@@ -1112,7 +1124,7 @@ fi
 # (CHECK-19 precedent); soft-degrades to SKIP when gh is unavailable/
 # unauthenticated for local dev runs without a token.
 # ---------------------------------------------------------------------------
-echo "--- CHECK 23: verdict-presence — merged develop PRs carry VERDICT: APPROVE ---"
+echo "--- CHECK 23: verdict-presence — merged ${INTEGRATION_BRANCH} PRs carry VERDICT: APPROVE ---"
 if ! command -v python3 > /dev/null 2>&1 || [ ! -f "tools/check-verdict-presence.py" ]; then
     echo "SKIP: CHECK 23 — python3 or tools/check-verdict-presence.py not available (soft-degrade)"
 else
