@@ -5,7 +5,7 @@ paths: decisions/**, **/*.md
 Atomic rules for the `docs` scope, generated from non-superseded ADR frontmatter by `tools/gen_rules.py`.
 
 ## Source: ADR-0034 (`decisions/0034-build-orchestrator-and-generated-docs.md`)
-- **DOC-001:** `README.md` is a build artifact: `dashboard/server.py --generate-readme` reads `README.template.md` + filesystem, writes `README.md`; the file MUST NOT be hand-edited — always regenerate (ADR-0034 D4).
+- **DOC-001:** `README.md` is a build artifact: `python3 dashboard/readme_gen.py` reads `README.template.md` + filesystem, writes `README.md`; the file MUST NOT be hand-edited — always regenerate (ADR-0034 D4; generator entrypoint relocated by ADR-0088 D3).
 - **DOC-002:** The reviewer enforces `R-DOCS-CURRENT`: any PR that changes a template placeholder source without regenerating README.md is BLOCKed; this is the unbypassable currency gate for generated documentation (ADR-0034 D5).
 
 ## Source: ADR-0043 (`decisions/0043-claude-md-restructure.md`)

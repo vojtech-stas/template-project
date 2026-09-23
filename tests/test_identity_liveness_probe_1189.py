@@ -47,7 +47,6 @@ from urllib.parse import urlsplit, urlunsplit
 
 REPO_ROOT = Path(__file__).parent.parent
 LIB_ROOT_SH = ".claude/hooks/lib-root.sh"  # relative to REPO_ROOT, posix-style for bash
-AUTOSTART_SH = REPO_ROOT / ".claude" / "hooks" / "dashboard-autostart.sh"
 HEALTH_PY = REPO_ROOT / "dashboard" / "health.py"
 
 _FORBIDDEN_PORTS = (8765, 8766)  # real dashboard ports — never bind/target these
@@ -199,20 +198,6 @@ class TestSharedBashIdentityProbe(unittest.TestCase):
         self.assertEqual(
             "no-server", proc.stdout.strip(),
             msg="Genuine no-listener must classify as 'no-server'",
-        )
-
-    def test_dashboard_autostart_wired_to_shared_probe(self):
-        """dashboard-autostart.sh's idempotency check must call the shared
-        contract, and must no longer probe /api/architecture directly for
-        idempotency (the #1184 repoint)."""
-        content = AUTOSTART_SH.read_text(encoding="utf-8")
-        self.assertIn(
-            "dashboard_probe_identity", content,
-            msg="dashboard-autostart.sh must call the shared dashboard_probe_identity contract",
-        )
-        self.assertNotIn(
-            "/api/architecture", content,
-            msg="dashboard-autostart.sh must no longer probe /api/architecture for idempotency",
         )
 
 

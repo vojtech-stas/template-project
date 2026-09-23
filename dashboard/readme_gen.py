@@ -1,11 +1,11 @@
 """
-dashboard/readme_gen.py — README generator (--generate-readme CLI mode).
+dashboard/readme_gen.py — README generator; canonical CLI entrypoint (ADR-0088 D3).
+
+Run directly: python3 dashboard/readme_gen.py
 
 Exports:
     render_pipeline_mermaid(spec) -> str
     generate_readme() -> None
-
-Import direction: server <- readme_gen (this module must NOT import server).
 """
 
 import os
@@ -418,3 +418,7 @@ def generate_readme() -> None:
 
     readme_path.write_text(final, encoding="utf-8")
     print(f"README.md written ({len(final)} bytes)", flush=True)
+
+
+if __name__ == "__main__":
+    generate_readme()

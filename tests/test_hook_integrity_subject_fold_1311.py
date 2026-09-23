@@ -172,15 +172,21 @@ class TestRegisteredHooksAreCountable(_ScratchLogCase):
     each carry a ratio entry when the log holds their records."""
 
     def test_three_previously_invisible_streams_get_ratio_entries(self):
+        # "dashboard-autostart" was one of three example subjects at slice
+        # #1311's writing; its SessionStart registration is deleted per
+        # ADR-0088 D1 (slice #1481), so "session-start" — the surviving
+        # SessionStart-registered, non-auto hook — stands in as the third
+        # example. The invariant under test (three hooks beaconing under
+        # their own script stems each get a ratio entry) is unchanged.
         res = self.run_check([
             {"hook": "pre-tool-bash", "status": "attempt"},
             {"hook": "pre-tool-bash", "status": "ok"},
             {"hook": "user-prompt-submit", "status": "attempt"},
             {"hook": "user-prompt-submit", "status": "ok"},
-            {"hook": "dashboard-autostart", "status": "attempt"},
-            {"hook": "dashboard-autostart", "status": "ok"},
+            {"hook": "session-start", "status": "attempt"},
+            {"hook": "session-start", "status": "ok"},
         ])
-        for name in ("pre-tool-bash", "user-prompt-submit", "dashboard-autostart"):
+        for name in ("pre-tool-bash", "user-prompt-submit", "session-start"):
             with self.subTest(hook=name):
                 self.assertIn(f"{name}:1/1", res["detail"], res["detail"])
 

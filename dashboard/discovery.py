@@ -36,17 +36,10 @@ try:
 except ImportError:
     _tracked_files = None  # type: ignore[assignment]
 
-# Known critics (explicit allow-list).  Kept in sync with server.py's
-# KNOWN_CRITICS literal (CHECK 7 regexes server.py SOURCE — the literal stays
-# in server.py; this module reads the same set for classification).
-_KNOWN_CRITICS = {
-    "reviewer",
-    "prd-critic",
-    "adr-critic",
-    "slicer-critic",
-    "backlog-critic",
-    "codebase-critic",
-}
+# Known critics — single-sourced from _constants.py (CHECK 7 regexes that
+# file's literal; ADR-0088 D4). Aliased to the pre-existing local name so
+# every downstream reference in this module is unchanged.
+from _constants import KNOWN_CRITICS as _KNOWN_CRITICS  # noqa: E402
 
 _KNOWN_GENERATORS = {
     "slicer",

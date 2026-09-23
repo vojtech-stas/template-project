@@ -96,7 +96,7 @@ if [ -z "$REPO_ROOT" ]; then
     exit 0
 fi
 
-GENERATOR="$REPO_ROOT/dashboard/server.py"
+GENERATOR="$REPO_ROOT/dashboard/readme_gen.py"
 
 if [ ! -f "$GENERATOR" ]; then
     echo "pre-commit: warning: generator not found at '$GENERATOR'; skipping README currency check (fail-open). See ADR-0034 D6." >&2
@@ -104,7 +104,7 @@ if [ ! -f "$GENERATOR" ]; then
 fi
 
 # Run the generator. Capture stderr; on non-zero exit, fail-open with warning.
-if ! "$PYTHON" "$GENERATOR" --generate-readme >/dev/null 2>&1; then
+if ! "$PYTHON" "$GENERATOR" >/dev/null 2>&1; then
     echo "pre-commit: warning: README generator exited non-zero; skipping README currency check (fail-open). See ADR-0034 D6." >&2
     exit 0
 fi
@@ -113,7 +113,7 @@ fi
 # Use `git diff --exit-code` on the worktree state (not staged vs HEAD, but
 # worktree vs HEAD — generator wrote to the worktree file).
 if ! git -C "$REPO_ROOT" diff --exit-code README.md >/dev/null 2>&1; then
-    echo "pre-commit: ERROR: README out of sync — run \`python dashboard/server.py --generate-readme\` and re-stage README.md before committing." >&2
+    echo "pre-commit: ERROR: README out of sync — run \`python dashboard/readme_gen.py\` and re-stage README.md before committing." >&2
     echo "pre-commit: (ADR-0034 D6 — defense-in-depth pre-commit doc-generation gate)" >&2
     # Restore README.md so the working tree is clean after blocking.
     git -C "$REPO_ROOT" checkout README.md >/dev/null 2>&1 || true
