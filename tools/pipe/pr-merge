@@ -76,6 +76,21 @@ pr-merge's own exit code: the merge already succeeded and was already
 recorded before the chain runs (mirrors the #1102 non-fatal-enrichment
 posture for `tools/promote.sh`'s own span emit).
 
+LANE MODE (slice #1506 / PRD #1501, ADR-0090 D3/D4): when the PR carries the
+`lane` label, three additional legs gate on the SAME `gh pr view` call
+`_fetch_pr_view` already widened to include `labels,body,headRefName` — no
+extra gh call on an ordinary PR:
+  - MODEL: refusal (criterion 24) — the APPROVE comment's `MODEL:` line must
+    be present and name a non-Sonnet/Haiku model.
+  - Window refusal (criterion 25) — every non-merge commit on the lane's
+    head branch must fall inside a recorded `dispatch`->`dispatch_end`
+    window on trace_id `lane-<headRefName>`.
+  - Close-on-merge (criterion 26 only — criterion 27's closing comment is
+    deferred to slice 2 per the SPIDR note): on confirmed merge, every
+    `Closes #<n>` issue in the PR body is closed (no comment), after merge
+    confirmation and before the span append, never on the already-recorded
+    idempotence shortcut.
+
 Env overrides (test seam; production defaults are sane real-world values):
   PR_MERGE_BUDGET_S        (default 90) — overall wall-clock budget for ONE
                             invocation (merge attempts + BEHIND checks-poll
@@ -91,6 +106,7 @@ import shutil
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _TOOLS_DIR = os.path.dirname(_THIS_DIR)
@@ -104,6 +120,17 @@ POLL_INTERVAL_S = float(os.environ.get("PR_MERGE_POLL_INTERVAL_S", "5"))
 
 def _load_trace():
     spec = importlib.util.spec_from_file_location("trace_v3", _TRACE_PY)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _load_pipeline_config():
+    # No literal branch names (C1) — the integration branch is resolved
+    # only through this module (ADR-0089 D1), same pattern as dispatch's
+    # own _load_pipeline_config().
+    pc_py = os.path.join(_TOOLS_DIR, "pipeline_config.py")
+    spec = importlib.util.spec_from_file_location("pipeline_config_prmerge", pc_py)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -263,18 +290,22 @@ _CRITIC_ATTR_RE = re.compile(r"^CRITIC:\s*(\S+)", re.MULTILINE)
 _ROUND_ATTR_RE = re.compile(r"^ROUND:\s*(\S+)", re.MULTILINE)
 
 
-def _fetch_pr_comments(pr):
-    """Fetch PR comments via `gh pr view <pr> --json comments` — the same gh
-    call stop-reviewer-gate.sh uses. Returns a list of comment dicts, or None
-    if gh failed or returned unparseable output."""
-    res = _run_gh(["pr", "view", str(pr), "--json", "comments"])
+def _fetch_pr_view(pr):
+    """Fetch the PR view via `gh pr view <pr> --json comments,labels,body,
+    headRefName` — WIDENED (slice #1506 / ADR-0090 D3/D4) from the original
+    `--json comments`-only call stop-reviewer-gate.sh also uses, so the lane
+    legs below (label check, close-on-merge, window check) read from this
+    SAME gh call rather than issuing a second one. On a non-lane PR the
+    extra fields are simply unused -- no new gh call, no behavior change.
+    Returns the parsed dict, or None if gh failed or returned unparseable
+    output."""
+    res = _run_gh(["pr", "view", str(pr), "--json", "comments,labels,body,headRefName"])
     if res.returncode != 0:
         return None
     try:
-        data = json.loads(res.stdout)
+        return json.loads(res.stdout)
     except json.JSONDecodeError:
         return None
-    return data.get("comments", [])
 
 
 def _find_approve_comment(comments):
@@ -300,19 +331,22 @@ def _verdict_attrs(pr, comment):
 
 def _assert_verdict_or_refuse(pr):
     """Precondition (ADR-0076 D3 / PRD #1127 criterion 3a): refuse (return
-    None) unless the PR carries a reviewer comment matching the exact
+    (None, None)) unless the PR carries a reviewer comment matching the exact
     `VERDICT:\\s*APPROVE` signal `.claude/hooks/stop-reviewer-gate.sh` greps.
     A named reason is printed to stderr; the caller exits non-zero having
-    performed NO merge attempt and written NO span. On success, returns the
-    matched comment dict — `_verdict_attrs` derives the verdict span from it."""
-    comments = _fetch_pr_comments(pr)
-    if comments is None:
+    performed NO merge attempt and written NO span. On success, returns
+    `(comment, view)` — `_verdict_attrs` derives the verdict span from
+    `comment`; `view` (labels/body/headRefName) feeds the lane legs below
+    (slice #1506) so callers never re-fetch."""
+    view = _fetch_pr_view(pr)
+    if view is None:
         print(
             f"pr-merge: could not fetch PR #{pr} comments to verify a reviewer "
             "VERDICT: APPROVE -- refusing to merge",
             file=sys.stderr,
         )
-        return None
+        return None, None
+    comments = view.get("comments", [])
     comment = _find_approve_comment(comments)
     if comment is None:
         print(
@@ -320,8 +354,134 @@ def _assert_verdict_or_refuse(pr):
             "'VERDICT: APPROVE' -- refusing to merge",
             file=sys.stderr,
         )
+        return None, None
+    return comment, view
+
+
+# ---------------------------------------------------------------------------
+# LANE MODE (slice #1506 / PRD #1501, ADR-0090 D3/D4): MODEL: refusal,
+# dispatch-window refusal, close-on-merge -- gated on the "lane" label so
+# NONE of these three legs run any extra gh call, print, or refusal on an
+# ordinary (non-lane) PR (named risk, PRD #1501 constraint 5).
+# ---------------------------------------------------------------------------
+
+_MODEL_LINE_RE = re.compile(r"^MODEL:\s*(\S+)", re.MULTILINE)
+_WEAK_MODEL_RE = re.compile(r"sonnet|haiku", re.IGNORECASE)
+_LANE_CLOSES_RE = re.compile(r"closes\s*#(\d+)", re.IGNORECASE)
+
+
+def _is_lane_pr(view):
+    """True iff the PR view (from `_fetch_pr_view`) carries the `lane`
+    label (ADR-0090 D1 class label; bootstrap.sh's `lane` entry)."""
+    if not view:
+        return False
+    labels = view.get("labels") or []
+    names = {l.get("name") for l in labels if isinstance(l, dict)}
+    return "lane" in names
+
+
+def _assert_lane_model_or_refuse(pr, approve_comment):
+    """Criterion 24: refuse (before any merge call) when the APPROVE
+    comment's `MODEL:` line is absent, or names a Sonnet/Haiku model
+    (case-insensitively) -- lane PRs demand a non-weak reviewing model."""
+    body = approve_comment.get("body", "") or ""
+    m = _MODEL_LINE_RE.search(body)
+    if not m or _WEAK_MODEL_RE.search(m.group(1)):
+        print(
+            f"pr-merge: lane PR #{pr} refused -- the APPROVE comment's MODEL: "
+            "line is absent or names a Sonnet/Haiku model",
+            file=sys.stderr,
+        )
+        return False
+    return True
+
+
+def _fetch_lane_commits(head_ref):
+    """Non-merge commits authored on `head_ref` but not on the configured
+    integration branch (C1: resolved via pipeline_config, never a literal),
+    as `(sha, authored_ts)` pairs -- `ts` in the same UTC Z-suffixed format
+    trace-v3 spans use, so it compares directly against span `ts` strings.
+    Returns None if the git plumbing itself fails (treated as refusal by
+    the caller -- never a silent pass)."""
+    pc = _load_pipeline_config()
+    base = pc.integration_branch()
+    subprocess.run(["git", "fetch", "origin", head_ref], capture_output=True, text=True)
+    subprocess.run(["git", "fetch", "origin", base], capture_output=True, text=True)
+    res = subprocess.run(
+        ["git", "log", f"origin/{base}..origin/{head_ref}", "--no-merges", "--pretty=%H %at"],
+        capture_output=True, text=True,
+    )
+    if res.returncode != 0:
         return None
-    return comment
+    commits = []
+    for line in res.stdout.strip().splitlines():
+        if not line.strip():
+            continue
+        sha, epoch = line.strip().split(" ", 1)
+        ts = datetime.fromtimestamp(int(epoch), tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        commits.append((sha, ts))
+    return commits
+
+
+def _lane_dispatch_windows(trace, head_ref):
+    """The list of `(dispatch_ts, dispatch_end_ts)` windows recorded on
+    trace_id `lane-<head_ref>` -- matching pairs by chronological open/close
+    order (mirrors dispatch's own last-event-wins span reading, but paired
+    rather than reduced to a single active/inactive bit)."""
+    spans = trace.read_spans()
+    relevant = [
+        s for s in spans
+        if s.get("trace_id") == f"lane-{head_ref}" and s.get("kind") in ("dispatch", "dispatch_end")
+    ]
+    relevant.sort(key=lambda s: s.get("ts", ""))
+    windows = []
+    open_start = None
+    for s in relevant:
+        if s.get("kind") == "dispatch":
+            open_start = s.get("ts")
+        elif s.get("kind") == "dispatch_end" and open_start is not None:
+            windows.append((open_start, s.get("ts")))
+            open_start = None
+    return windows
+
+
+def _assert_lane_window_or_refuse(pr, view):
+    """Criterion 25: refuse (before any merge call) when a non-merge commit
+    on the lane PR's head branch was authored OUTSIDE every recorded
+    `dispatch`->`dispatch_end` window on trace_id `lane-<headRefName>` --
+    proof the commit landed via a dispatched implementer turn, not a
+    manual out-of-band push."""
+    head_ref = view.get("headRefName") or ""
+    if not head_ref:
+        print(f"pr-merge: lane PR #{pr} refused -- could not resolve headRefName", file=sys.stderr)
+        return False
+    commits = _fetch_lane_commits(head_ref)
+    if commits is None:
+        print(f"pr-merge: lane PR #{pr} refused -- could not read its commit history", file=sys.stderr)
+        return False
+    trace = _load_trace()
+    windows = _lane_dispatch_windows(trace, head_ref)
+    offenders = [
+        sha for sha, ts in commits
+        if not any(start <= ts <= end for start, end in windows)
+    ]
+    if offenders:
+        print(
+            f"pr-merge: lane PR #{pr} refused -- commit(s) authored outside "
+            f"every dispatch window of lane-{head_ref}: {', '.join(offenders)}",
+            file=sys.stderr,
+        )
+        return False
+    return True
+
+
+def _close_lane_issues(view):
+    """Criterion 26 ONLY (criterion 27's closing comment is deferred to
+    slice 2 per the SPIDR note / A10): close every `Closes #<n>` issue named
+    in the lane PR's body -- issue-close only, never a comment."""
+    body = (view or {}).get("body", "") or ""
+    for num in _LANE_CLOSES_RE.findall(body):
+        _run_gh(["issue", "close", num])
 
 
 def _do_confirm(pr, deadline, start):
@@ -335,9 +495,15 @@ def _do_confirm(pr, deadline, start):
         print(f"pr-merge: PR #{pr} already recorded (span {existing.get('span_id')})")
         return 0
 
-    approve_comment = _assert_verdict_or_refuse(pr)
+    approve_comment, view = _assert_verdict_or_refuse(pr)
     if approve_comment is None:
         return 1
+
+    if _is_lane_pr(view):
+        if not _assert_lane_model_or_refuse(pr, approve_comment):
+            return 1
+        if not _assert_lane_window_or_refuse(pr, view):
+            return 1
 
     merged, sha = _poll_confirm_merged(pr, deadline)
     if not merged:
@@ -350,6 +516,9 @@ def _do_confirm(pr, deadline, start):
     if existing:
         print(f"pr-merge: PR #{pr} already recorded (span {existing.get('span_id')})")
         return 0
+
+    if _is_lane_pr(view):
+        _close_lane_issues(view)
 
     dur_ms = int((time.monotonic() - start) * 1000)
     attrs = {"pr": pr, "sha": sha} if sha else {"pr": pr}
@@ -364,9 +533,15 @@ def _do_default(pr, deadline, start):
     # VERDICT ASSERTION (ADR-0076 D3 / criterion 3a): refuse BEFORE any merge
     # attempt -- not just before recording -- when the PR lacks a reviewer
     # comment matching VERDICT: APPROVE.
-    approve_comment = _assert_verdict_or_refuse(pr)
+    approve_comment, view = _assert_verdict_or_refuse(pr)
     if approve_comment is None:
         return 1
+
+    if _is_lane_pr(view):
+        if not _assert_lane_model_or_refuse(pr, approve_comment):
+            return 1
+        if not _assert_lane_window_or_refuse(pr, view):
+            return 1
 
     merged_command_ok = False
     last_returncode = 1
@@ -412,6 +587,9 @@ def _do_default(pr, deadline, start):
     if not merged:
         print(_pending_message(pr), file=sys.stderr)
         return 3
+
+    if _is_lane_pr(view):
+        _close_lane_issues(view)
 
     dur_ms = int((time.monotonic() - start) * 1000)
     attrs = {"pr": pr, "sha": sha} if sha else {"pr": pr}
