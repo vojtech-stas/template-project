@@ -233,8 +233,11 @@ def test_packet_excerpt_is_the_utf8_text_at_that_sha_on_cp1252_host(tmp_path, mo
 
 def test_verify_lane_pr_lookup_decodes_utf8_on_cp1252_host(monkeypatch):
     release = _load(RELEASE_PY, "enc_verify_lookup")
-    pr_list = [{"number": 12, "body": "Closes #7\nCheck #7: grep -c '—' notes.md"}]
-    canned = [(lambda c: _is_gh(c) and "search" in c, 0,
+    pr_list = [{"number": 12, "body": "Closes #7\nCheck #7: grep -c '—' notes.md",
+                "mergedAt": "2026-09-23T14:59:00Z", "labels": [{"name": "lane"}]}]
+    # The lookup is `gh search prs` before the R1 fix and `gh pr list`
+    # (which carries `mergedAt`) after it; either way its output is UTF-8.
+    canned = [(lambda c: _is_gh(c) and ("search" in c or "list" in c), 0,
                json.dumps(pr_list, ensure_ascii=False).encode("utf-8"))]
     monkeypatch.setattr(subprocess, "run", _cp1252_host_run(canned))
     monkeypatch.setattr(release, "_fetch_issue_json", lambda o, r, n: {"number": int(n), "body": "no check"})
