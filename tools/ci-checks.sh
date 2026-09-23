@@ -330,7 +330,7 @@ def read_file(path):
 
 # ------------------------------------------------ (a) source ↔ reality ------
 # Parse KNOWN_CRITICS from dashboard/_constants.py (set literal, one name per
-# line) — the single-sourced home since ADR-0088 D4 retired dashboard/server.py.
+# line) — the single-sourced home since ADR-0088 D4 retired the HTTP server module.
 spec_text = read_file(CONSTANTS_PY)
 if not spec_text:
     fail('CHECK 7(a) — could not read dashboard/_constants.py')
@@ -542,7 +542,7 @@ fi
 #   automatically as new checks are added to the registry, so no manual
 #   update is needed here (ADR-0064 D3 single-source model).
 #
-#   Prior design imported server.py directly (DOCS-1..10 hard-coded list);
+#   Prior design imported the HTTP server module directly (DOCS-1..10 hard-coded list);
 #   that approach silently omitted DOCS-11 (check_docs11_dead_citations) and
 #   any future DOCS-N — a regression-class risk per codebase-critic CC-REF-CURRENCY.
 #   The registry-CLI approach eliminates the static enumeration entirely.

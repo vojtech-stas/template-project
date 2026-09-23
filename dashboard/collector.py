@@ -1,7 +1,7 @@
 """
 dashboard/collector.py — GitHub artifact trail collector (ADR-0053 D1/D4).
 
-Stdlib-only; shells to `gh` CLI like dashboard/server.py's workitems fetcher.
+Stdlib-only; shells to the `gh` CLI directly via `subprocess.run`.
 Reconstructs a complete PRD run trail from GitHub artifacts:
   PRD issue → sub-issues (slices) → PRs (via closingIssuesReferences) →
   PR comments (reviewer verdicts) → merge events + timestamps.
@@ -772,7 +772,7 @@ def get_trail(prd_number: int, force_refresh: bool = False) -> dict:
 def get_closed_prd_numbers(last_n: int = 10) -> list[int]:
     """Return the last N closed PRD issue numbers (most-recent-closed first).
 
-    Uses gh issue list CLI (same pattern as server.py workitems fetcher).
+    Uses gh issue list CLI directly (no API-server wrapper).
     Returns [] on any error.
     """
     try:

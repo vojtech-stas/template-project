@@ -49,10 +49,10 @@ git-common-dir resolution soft-degrades to that dir directly and LOG_DIR /
 hook-fires.jsonl / workflow-events.jsonl all resolve INSIDE the sandbox --
 never the real `.claude/logs/*` store -- and a fake `gh` binary shadows
 PATH, so no real GitHub network call is ever made. The harness also NEVER
-dials localhost:8765/8766: it truncates session-start.sh's execution at the
-closing `fi` of the `GH_OK` block -- the entire extent of code this slice
-touches -- which is BEFORE the (untouched, #1191) dashboard-liveness probe
-that owns that port.
+dials the retired dashboard ports: it truncates session-start.sh's execution
+at the closing `fi` of the `GH_OK` block -- the entire extent of code this
+slice touches -- which is BEFORE the (since-removed, #1191/ADR-0088 D1)
+dashboard-liveness probe that used to live there.
 
 Runner: stdlib unittest + pytest compatible.
   python -m pytest tests/test_session_start_concurrent_1199.py -v
@@ -230,11 +230,11 @@ def _write_fake_gh(dirpath: str) -> str:
 #
 # Executes session-start.sh's lines [1 .. closing 'fi' of the GH_OK block]
 # ONLY -- the entire extent of code this slice touches. This deliberately
-# excludes the (untouched, #1191) dashboard-liveness probe -- so the
-# harness NEVER dials localhost:8765/8766 -- and the later python3
-# event-emission heredoc (unaffected by this slice; its v2 event shape is
-# provably unchanged by inspection, not by execution, since this slice adds
-# no lines before it and does not touch it).
+# excludes the (since-removed, #1191/ADR-0088 D1) dashboard-liveness probe
+# -- so the harness NEVER dials the retired dashboard ports -- and the
+# later python3 event-emission heredoc (unaffected by this slice; its v2
+# event shape is provably unchanged by inspection, not by execution, since
+# this slice adds no lines before it and does not touch it).
 # ---------------------------------------------------------------------------
 
 _FIELD_TRAILER = (

@@ -2,18 +2,18 @@
 dashboard/telemetry_root.py — shared helper for resolving the canonical
 telemetry-log root via git-common-dir.
 
-Problem: dashboard/server.py and dashboard/health.py compute their repo root
-as Path(__file__).resolve().parent.parent — i.e. the WORKTREE the code runs
-from.  But .claude/logs/* is gitignored and exists ONLY in the canonical root
-checkout.  When the dashboard is launched from a worktree (the develop-
-dogfooding path), it reads an absent log and falsely reports HOOKS DARK / no
-events.
+Problem: dashboard modules that need the log root historically computed it
+inline as Path(__file__).resolve().parent.parent — i.e. the WORKTREE the
+code runs from.  But .claude/logs/* is gitignored and exists ONLY in the
+canonical root checkout.  When a dashboard command is run from a worktree
+(the develop-dogfooding path), that computation reads an absent log and
+falsely reports HOOKS DARK / no events.
 
 Fix: resolve shared telemetry-log paths via `git rev-parse --git-common-dir`,
 which always returns the canonical .git directory regardless of which worktree
 the process runs in.  The parent of that .git dir is the canonical root.
 
-Usage (in server.py / health.py):
+Usage (e.g. in discovery.py):
     from telemetry_root import _telemetry_log_root
     fires_log = _telemetry_log_root() / ".claude" / "logs" / "hook-fires.jsonl"
 
