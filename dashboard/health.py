@@ -39,7 +39,7 @@ Exports:
     check_merged_without_verdict() -> dict  (slice #1136/PRD #1127 cr.11b: merged PR vs verdict span, ADR-0076 anchor)
     check_closed_prd_vs_qa() -> dict     (slice #1136/PRD #1127 cr.11b: closed PRD vs qa_verified PASS span)
     check_query_honesty() -> dict   (slice #1498/ADR-0087 D2: REST-attested canary over the `prd`-label path;
-                                      gates every `--label` call through the seam)
+                                      gates every confirmed `--label` answer through the seam)
     serve_health() -> dict          (TTL-cached; <200ms on second call)
     _health_background() -> None    (background thread target)
     _health_cache, _health_lock, _health_computing, _HEALTH_TTL
@@ -140,7 +140,7 @@ def _health_gh_fetch(
     this wrapper requires `_query_honesty_attest()` to PASS before letting
     that confirmed answer through as-is. When the attestation does not
     PASS, the call is downgraded to `(1, "", "unverified")` (or its
-    2-tuple prefix) regardless of what the real `gh` call answered — the
+    2-tuple prefix) regardless of that confirmed answer's payload — the
     seven pre-existing label-filtered callers already treat any non-zero
     `rc` as "gh unavailable", so none of them needed editing.
 
@@ -182,7 +182,9 @@ def _health_gh_fetch_raw(
     function and is what every check should call. This function exists
     separately so the QUERY-HONESTY canary's own label-path query can
     bypass its own attestation gate (ADR-0087 D2): calling `_health_gh_fetch`
-    for that query would recurse.
+    for that query would recurse whenever its raw fetch came back
+    confirmed (the seam consults the attestation for a label-filtered call
+    only once its raw fetch is confirmed).
 
     Returns (returncode: int, stdout: str) by default, matching the existing
     ``_sp.run`` pattern used inside each check's inner helper. Pass
@@ -306,11 +308,20 @@ def _query_honesty_attest() -> tuple:
     Deliberately calls `_health_gh_fetch_raw()`, NOT the seam
     `_health_gh_fetch()`, for its own two queries: the label-path query is
     itself `--label`-bearing, and routing it through the seam would recurse
-    into this same function.
+    into this same function whenever that query's raw fetch came back
+    confirmed (the seam consults this function only then).
 
     Returns (passed: bool, verdict: "PASS"|"FAIL"|"WARN", detail: str).
-    `passed` is True iff verdict == "PASS" — that is the sole condition
-    under which the seam lets a `--label` call through as confirmed.
+    `passed` is True iff verdict == "PASS". At the seam, `passed` is a
+    required condition, not the only one: the seam first fetches through
+    `_health_gh_fetch_raw()`, and only when that raw fetch comes back
+    confirmed (`rc == 0`) for a label-filtered call (any spelling
+    `_args_apply_label_filter` recognizes) does it consult this function —
+    letting the confirmed answer through as-is when `passed` is True and
+    downgrading it to rc=1, empty stdout, source "unverified" otherwise. An
+    unconfirmed raw fetch is returned with its own source and never
+    consults this function; neither does a call that applies no label
+    filter.
     """
     now = time.time()
     with _query_honesty_lock:
@@ -390,8 +401,12 @@ def _query_honesty_attest() -> tuple:
 
 def check_query_honesty() -> dict:
     """QUERY-HONESTY: attests the `prd`-label query path against a REST
-    canary, and is the sole gate deciding whether any `--label`-bearing
-    call through the seam (`_health_gh_fetch`) may be read as confirmed.
+    canary. At the seam (`_health_gh_fetch`) this attestation is a
+    required condition, not the only one: a label-filtered call reads as
+    confirmed only when its raw fetch is confirmed (`rc == 0`) AND the
+    attestation PASSes. The seam consults the attestation only after the
+    raw fetch is confirmed; an unconfirmed raw fetch is returned with its
+    own source, without consulting it.
 
     A repo-slug desync (e.g. after a rename) can leave `gh issue list
     --label prd` answering an empty, `source=live` list while the repo
@@ -7379,8 +7394,8 @@ CHECK_REGISTRY: dict[str, callable] = {
     "CAPTURE-SHAPE":   check_capture_shape,
     "GREEN-MAIN":      check_green_main,
     "RECORD-VS-GH":    check_record_vs_gh,
-    # REST-attested canary gating every --label call through the seam
-    # (ADR-0087 D2 — slice #1498)
+    # REST-attested canary gating every confirmed --label answer through
+    # the seam (ADR-0087 D2 — slice #1498)
     "QUERY-HONESTY":   check_query_honesty,
     # ADR-0076 reconciler family (PRD #1127 §2 criterion 11b / slice #1136)
     "SLICE-VS-PR":            check_slice_vs_pr,

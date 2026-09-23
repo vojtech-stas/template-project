@@ -304,8 +304,9 @@ def test_sum_paginated_rest_issue_count_raises_on_garbage():
 # ===========================================================================
 
 def test_seam_gates_label_calls_unverified_on_attestation_fail():
-    """Criterion 9 shape: attestation FAILs (desynced counts) -> any
-    --label call through the seam returns (1, '', 'unverified')."""
+    """Criterion 9 shape: attestation FAILs (desynced counts) -> a --label
+    call through the seam whose raw fetch came back confirmed returns
+    (1, '', 'unverified')."""
     health = _reimport_health()
     fetch, _ = _router(
         label_result=_FakeGhResult(json.dumps([]), "live"),
@@ -323,8 +324,8 @@ def test_seam_gates_label_calls_unverified_on_attestation_fail():
 
 
 def test_seam_lets_label_calls_through_on_attestation_pass():
-    """Criterion 10 shape: attestation PASSes -> the --label call itself
-    proceeds to the real seam answer (here, a live, confirmed leg)."""
+    """Criterion 10 shape: attestation PASSes -> the --label call's
+    confirmed raw answer is returned as-is (here, a live, confirmed leg)."""
     health = _reimport_health()
     fetch, _ = _router(
         label_result=_FakeGhResult(json.dumps([{"number": 1}]), "live"),
@@ -463,7 +464,8 @@ def test_seam_does_not_false_positive_on_uppercase_limit_shorthand():
 
 def test_attestation_own_label_query_bypasses_gate_no_recursion():
     """ADR-0087 D2: the canary's own label-path query must bypass its own
-    attestation (else it recurses). Proven by breaking the seam
+    attestation (else it recurses whenever that query's raw fetch comes
+    back confirmed, as it does here). Proven by breaking the seam
     (`_health_gh_fetch`) and showing the attestation still completes."""
     health = _reimport_health()
     fetch, _ = _router(
