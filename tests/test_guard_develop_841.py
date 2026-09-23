@@ -235,11 +235,13 @@ class TestSessionStartDevelop(unittest.TestCase):
 
     def test_resolves_integration_branch_via_pipeline_config(self):
         """The integration branch is resolved once via pipeline_config.py,
-        located relative to this script's own path (S1-c)."""
+        located relative to this script's own path (S1-c), through the
+        `pwd -W` fallback idiom the other bash call sites use (#1535)."""
         self.assertIn(
-            'PIPELINE_CONFIG_PY="$SCRIPT_DIR/../../tools/pipeline_config.py"',
+            '_SS_TOOLS_DIR="$(cd "$SCRIPT_DIR/../../tools" && { pwd -W 2>/dev/null || pwd; })"',
             self.content,
         )
+        self.assertIn('PIPELINE_CONFIG_PY="$_SS_TOOLS_DIR/pipeline_config.py"', self.content)
         self.assertIn("INTEGRATION_BRANCH=", self.content)
 
     def test_fetch_uses_resolved_variable(self):
