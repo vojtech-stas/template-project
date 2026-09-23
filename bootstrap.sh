@@ -6,18 +6,18 @@
 #   Run this once after `git clone`. Re-running is safe (idempotent).
 #
 # Scope (per ADR-0008 D6, slice #60; extended by ADR-0030 D1+D2;
-# renumbered by ADR-0089 D2, slice #1511):
+# extended by ADR-0089 D2, slice #1511):
 #   1. Sanity: confirm we're inside a git repo + `gh` is authenticated.
 #   2. Create the 8 repo-level labels (skip if they already exist).
 #   3. Install local git hooks (`git config core.hooksPath .githooks`).
 #   4. Detect the GitHub Project v2 board (manual hint if missing).
-#   5. Create the configured integration branch from the release tip, when
-#      origin lacks it (ADR-0089 D2; idempotent, never forced).
-#   6. Apply branch protection R1+R2+R4 to BOTH configured branches
+#   4b. Create the configured integration branch from the release tip, when
+#       origin lacks it (ADR-0089 D2; idempotent, never forced).
+#   5. Apply branch protection R1+R2+R4 to BOTH configured branches
 #      (warn-and-proceed if no admin, or if the release branch is absent).
-#   7. python3 presence check (warn-only; required by event logger).
-#   8. jq install — idempotent winget/brew/apt (ADR-0030 D1).
-#   9. Playwright Python library install (pip install playwright; ADR-0050 D1).
+#   6. python3 presence check (warn-only; required by event logger).
+#   7. jq install — idempotent winget/brew/apt (ADR-0030 D1).
+#   8. Playwright Python library install (pip install playwright; ADR-0050 D1).
 #
 # Explicit DEFERRALS (NOT done here):
 #   - Matt Pocock skills install                    — user-level concern
@@ -257,9 +257,9 @@ else
     note "⚠ project board: skipped (gh not ready)"
 fi
 
-# ---- step 5: create the integration branch from the release tip ----------
+# ---- step 4b: create the integration branch from the release tip ---------
 
-step 5 "create integration branch from release tip (idempotent)"
+step "4b" "create integration branch from release tip (idempotent)"
 
 # ADR-0089 D2: a repo built from this template starts with only its default
 # (release) branch. Before applying protection (next step), ensure the
@@ -294,9 +294,9 @@ else
     fi
 fi
 
-# ---- step 6: branch protection R1+R2+R4 on both configured branches ------
+# ---- step 5: branch protection R1+R2+R4 on both configured branches ------
 
-step 6 "branch protection R1+R2+R4 on both configured branches"
+step 5 "branch protection R1+R2+R4 on both configured branches"
 
 # R1 = require PR (required_pull_request_reviews block present, count=0).
 # R2 = no force-push, no deletion (allow_force_pushes=false, allow_deletions=false).
@@ -375,9 +375,9 @@ else
     note "⚠ branch protection: skipped (gh not ready)"
 fi
 
-# ---- step 7: python3 presence check (warn-only) ---------------------------
+# ---- step 6: python3 presence check (warn-only) ---------------------------
 
-step 7 "python3 presence check (warn-only)"
+step 6 "python3 presence check (warn-only)"
 
 # python3 is required by the canonical workflow event logger
 # (.claude/hooks/log-tool-event.sh calls python3 for JSON emission) and by
@@ -392,9 +392,9 @@ else
     note "⚠ python3: missing (install for event logger + Playwright qa-tester)"
 fi
 
-# ---- step 8: jq install (per ADR-0030 D1) ---------------------------------
+# ---- step 7: jq install (per ADR-0030 D1) ---------------------------------
 
-step 8 "jq install (idempotent; cross-platform)"
+step 7 "jq install (idempotent; cross-platform)"
 
 # jq is required by:
 #   - .claude/hooks/pre-tool-edit.sh (parses tool_input.file_path JSON)
@@ -474,9 +474,9 @@ else
     fi
 fi
 
-# ---- step 9: Playwright Python library install (per ADR-0050 D1) ----------
+# ---- step 8: Playwright Python library install (per ADR-0050 D1) ----------
 
-step 9 "Playwright Python library install (pip install playwright — idempotent)"
+step 8 "Playwright Python library install (pip install playwright — idempotent)"
 
 # ADR-0050 D1 reinstates Playwright as the qa-tester browser driver, replacing
 # Claude_Preview MCP. The driver is now the Playwright Python LIBRARY driving
@@ -491,9 +491,9 @@ step 9 "Playwright Python library install (pip install playwright — idempotent
 #
 # Supersedes: the prior ADR-0049 D1 note (Claude_Preview was harness-provided;
 # no pip install was needed). ADR-0049 D1/D2 are now superseded by ADR-0050.
-# The step was numbered 8 from ADR-0050 D1 through ADR-0077's ceremony-
-# overhead reduction; ADR-0089 D2's new integration-branch-creation step
-# (step 5) shifted every step after step 4 down by one — this step is now 9.
+# The step number (8) is preserved for audit-trail continuity (do not
+# renumber). ADR-0089 D2's integration-branch-creation step lives at 4b,
+# between step 4 and step 5 — it does not shift this step's number.
 if command -v pip >/dev/null 2>&1 || command -v pip3 >/dev/null 2>&1; then
     PIP_CMD="pip"
     command -v pip >/dev/null 2>&1 || PIP_CMD="pip3"
@@ -512,9 +512,9 @@ else
     note "⚠ Playwright library: pip missing — install pip then run 'pip install playwright'"
 fi
 
-# ---- step 10: label-sync drift warning (ADR-0068 D1) ------------------------
+# ---- step 9: label-sync drift warning (ADR-0068 D1) -------------------------
 
-step 10 "label-sync drift check (declared vs live)"
+step 9 "label-sync drift check (declared vs live)"
 
 # Warn if the labels declared in LABELS[] above differ from labels present on
 # the live repo. Drift = bootstrap.sh drifted from the live label set (observed
