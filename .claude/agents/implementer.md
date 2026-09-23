@@ -65,6 +65,13 @@ A **separate** dispatch shape from the slice workflow above: `/ship release <ver
 - **PR shape:** label `lane`; one `Closes #<n>` per lane bug; a `Check #<n>: <command>` line for every bug whose issue has no `Check:` of its own; `## Scope`, `## Out-of-scope`, `## Verification` (each check's before/after output).
 - **Dispatch bracket:** your whole turn runs inside the orchestrator's `dispatch --lane` / `--end --lane` window — every commit you make must land inside that window (a commit authored outside it fails `pr-merge`'s window-refusal leg, ADR-0090 D4).
 - **A BLOCK gets a fresh dispatch**, never a resumed transcript: the next round rebuilds the packet from the current integration-branch HEAD plus the reviewer's findings (ADR-0090 D4 optimization 3).
+- **Never, in lane mode.** These acts belong to the orchestrator or to the separately dispatched reviewer. A builder that does any of them voids the gate it feeds (advisory: the hook deny and dispatch token are #1529 and slice #1507):
+  - posting any review comment, or any comment carrying a `VERDICT:` or `MODEL:` line, on any PR. The verdict and its `MODEL:` come only from the fresh reviewer (ADR-0090 D4);
+  - running `tools/pipe/pr-merge` in any form. The merge follows the reviewer's APPROVE;
+  - running `tools/pipe/dispatch` in any form (`--lane`, `--end --lane`, or a slice dispatch). The dispatch window is the orchestrator's; a builder that opens its own window makes the window leg prove nothing;
+  - running `tools/release.py freeze`. The orchestrator sets a version's scope at release start and end;
+  - writing, appending to or editing anything under `.claude/logs/` (trace, drain ledger, workflow events). The orchestrator appends each record as its action happens (rule #21).
+- **Evidence you cannot produce goes back in `CONCERNS:`, never simulated.** Name every reviewer verdict, ledger or trace record, CI result or production-check leg you did not observe yourself as missing. Never self-author it, backdate it, or reconstruct it after the fact.
 
 ## Tool boundaries (per [ADR-0010](../../decisions/0010-implementer-subagent-auto-pipeline.md) D6 — SECURITY-CRITICAL)
 
