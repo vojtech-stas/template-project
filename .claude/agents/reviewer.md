@@ -198,6 +198,10 @@ grep -E '^## Verification' /tmp/pr-body.md
 
 **Literal pattern:** `PR body missing required sections (scope / out-of-scope / verification)`.
 
+**Lane leg — `Check #<n>:` lines (ADR-0090 D4):** on a PR carrying the `lane` label, every bug it closes whose issue has no `Check:` line of its own MUST have exactly one plain-text `Check #<n>: <command>` line (no backticks: `tools/release.py verify` runs the text as a shell command). Re-derive it yourself and never trust the body's pasted runs: the packet sha is the `sha` attr of the newest `dispatch` span with trace id `lane-<headRefName>` in `$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/.claude/logs/trace-v3.jsonl` (read it, never write under `.claude/logs/`); run the line's exact text from the root of a temporary worktree at that sha, where it must exit non-zero; for a code defect, at the PR's test-only commit (its R-PROVE regression-test commit, before the first fix commit), where it must also exit non-zero on a real test failure (pytest exit 4, `no tests ran`, or a not-found path does not count: a test id that does not exist yet fails anywhere); and at the PR head, where it must exit 0. A line that is missing, duplicated, backticked, passes at the packet sha, does not fail at the test-only commit, or fails at head → `R-PR-BODY: lane PR check for #<m> <missing | duplicated | not plain text | passes at packet sha <sha> | does not fail at test-only commit <sha> | fails at head>`.
+
+**Temporary worktrees (ISO-003):** create that worktree only under your own worktree directory or the system temp dir, with a unique name (e.g. `git worktree add --detach "$(mktemp -d)/lane-check-<PR>-<sha7>" <sha>`), and remove only worktrees you created. Never `git worktree remove` or `prune` a worktree you did not create; every worktree shares this `.git`.
+
 **Rationale:** Structured PR bodies are load-bearing input to every downstream rule. Without `## Scope`, R-SCOPE cannot judge drift. Without `## Out-of-scope`, the drift-defense lever is absent. Without `## Verification`, the reviewer cannot verify acceptance criteria. Exemptions: PRD-tier PRs labeled `prd` (body IS the PRD content); trivial-lane PRs labeled `trivial` (single-line scope acceptable).
 
 ### R-ADR-CONFLICT — ADR conflict
@@ -245,6 +249,8 @@ If sum > 600 → BLOCK: `R-LOC: slice diff is <N> LoC of runtime-artifact code; 
 - Missing `Closes #N` line → `R-CLOSES: PR body missing Closes #<n> line; every slice PR must close exactly one slice-labeled issue`
 - Referenced issue does not exist → `R-CLOSES: referenced issue #<n> does not exist`
 - Referenced issue lacks required label → `R-CLOSES: referenced issue #<n> is not labeled slice (labels: <list>)`
+
+**Lane leg (ADR-0090 D3/D4 — release-mode lane PRs):** when the PR carries the `lane` label, its closing references are exactly its lines matching `^Closes #(\d+)\s*$` (multiline), the same anchored pattern `tools/pipe/pr-merge` closes on merge; a `closes #<m>` inside prose closes nothing, so do not count it. Every such `Closes #<n>` MUST reference an issue labeled `bug` — never `slice` or `prd`. A lane PR closing a non-`bug` issue is `R-CLOSES: lane PR #<n> closes #<m>, which is not labeled bug (labels: <list>) — a lane PR closes bugs only`. This is the mirror of *slice smuggling*: slice work must never close through a lane PR, past the slicer.
 
 **Rationale:** The PR-to-slice binding is the load-bearing link of the audit trail. Without it, merged PRs become unanchored from the planning artifact that authorized them. `Closes #N` in a commit subject (not PR body) is also a violation — CLAUDE.md rule #5 mandates PR body location. A PR MAY close multiple issues (e.g., slice + parent PRD on terminal slice).
 
@@ -431,7 +437,9 @@ Reviewer-specific instance: 5 body sections (Header → Subject of review → Ru
 
 The canonical verdict template + CRITIC trailer field schema is defined in [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D1 and restated in each agent's system prompt per CLAUDE.md rule #9 (DRY).
 
-**CRITIC trailer mandatory keys (per ADR-0054 D2):** every trailer — BLOCK and APPROVE alike — MUST include these three core keys in this order: `VERDICT`, `REASON`, `ROUND`. Per-agent extension keys (e.g. `MERGE_STATUS`, `ESCALATE`, `ESCALATION_STATUS`) are allowed only after the core three.
+**CRITIC trailer mandatory keys (per ADR-0054 D2):** every trailer — BLOCK and APPROVE alike — MUST include these three core keys in this order: `VERDICT`, `REASON`, `ROUND`. Per-agent extension keys (e.g. `MERGE_STATUS`, `ESCALATE`, `ESCALATION_STATUS`, `MODEL`) are allowed only after the core three.
+
+**`MODEL:` (ADR-0090 D4 — read only on lane PRs):** on a PR carrying the `lane` label, write the model your own system prompt names — its exact id (e.g. `claude-opus-5-5`) or display name (`Claude Opus 5.5`), and nothing else on the line. `tools/pipe/pr-merge`'s lane leg reads the whole value against an allow-list of Claude Opus ids (`opus`, optionally prefixed `claude`, optionally followed by a version) and refuses the merge when the key is absent or empty, a placeholder (`n/a`, `<id>`), carries extra words, or names any other model, Sonnet and Haiku included. On any other PR, `pr-merge` never reads the key: write `n/a`.
 
 **Reviewer trailer template** (emit this fenced block verbatim, filling in values):
 ```
@@ -439,6 +447,7 @@ VERDICT: <APPROVE|BLOCK>
 REASON: <one sentence>
 ROUND: <N>
 CRITIC: reviewer
+MODEL: <lane PR: your model id, e.g. claude-opus-5-5 | any other PR: n/a>
 MERGE_STATUS: <merged:<sha>|queued|failed:<error>|n/a>
 ESCALATE: <needs-human|n/a>
 ESCALATION_STATUS: <applied (...)|n/a>

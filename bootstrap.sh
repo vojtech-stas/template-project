@@ -142,6 +142,9 @@ LABELS=(
     "needs-human|d93f0b|Round-3 BLOCK escalation per I5"
     "needs-human-check|e4e669|QA-plan residual queue; cleared by the operator via decide-flow / gh issue list"
     "root-cause|B60205|rule #13 root-cause capture (3-part shape per ADR-0063)"
+    "bug|d73a4a|Class label: breaks the system's own promise, doc drift included (ADR-0090 D1)"
+    "feature|1d76db|Class label: anything that is not a bug (ADR-0090 D1)"
+    "lane|5319e7|Release-mode file-lane PR closing bug issues only (ADR-0090 D3/D4)"
 )
 
 create_label() {

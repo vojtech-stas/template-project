@@ -41,6 +41,8 @@ Enter this mode on the normative trigger set — **"drain the queue"**, **"/ship
 
 Absent either qualifier, the drain is unbounded and runs to queue exhaustion or a park.
 
+A third, **release**, sub-form — **`/ship release <version> lanes <N>`** — enters **QD11** instead: a version-scoped drain over one milestone's bugs, file-lane dispatched, never the plain per-item lane model above (ADR-0090 D2).
+
 ### QD2. Queue assembly
 
 Re-count the queue **live at every run start** — never carry a figure over from a previous run or from a document. Assemble from open `prd`-, `slice`-, `backlog`- and `captured`-labeled issues plus open **non-draft** PRs. Write the `run_start` record with the resulting snapshot before anything else happens; that record is what makes the run's own claims about its queue checkable afterwards.
@@ -78,6 +80,8 @@ Both write an `escalated` record carrying `label` and `label_applied: true` **at
 
 Predict file overlap coarsely from the paths named in issue bodies and titles. Overlapping items **serialize into one lane**; independent lanes run in parallel in isolated worktrees (I4a / [ADR-0036](../../../decisions/0036-worktree-isolation-all-dispatches.md) D1). **Unknown overlap serializes** — a wrong independence guess costs a merge conflict; a wrong serialization guess costs only time. **At most 3 items are in flight concurrently** (open `item_start` records minus their `item_done`); the DRAIN-LEDGER row FAILs a ledger that exceeds it. Merges stay serialized through the PR gate ([ADR-0062](../../../decisions/0062-merge-integrity-green-main.md) D2). Pace GitHub mutations across the run.
 
+A **release** run (QD11) counts differently: concurrency is **distinct file lanes**, capped at **15** in flight, not items — DRAIN-LEDGER applies this cap only when `run_start.mode == "release"` (ADR-0090 D3).
+
 ### QD7. Fix-in-run
 
 A discovery made mid-run whose remedy fits the trivial lane is **appended to this run's queue**, not filed and forgotten. This protocol changes only **where** a trivial fix lands, never **what** qualifies as one: I3's definition is untouched.
@@ -98,7 +102,7 @@ Append one JSON object per line to `.claude/logs/drain/<run-id>.jsonl`, resolved
 
 | Kind | Required fields beyond `kind` | Written when |
 |---|---|---|
-| `run_start` | `counts` (`prd`/`slice`/`backlog`/`captured`), `open_prs` | first, before any other action |
+| `run_start` | `counts` (`prd`/`slice`/`backlog`/`captured`), `open_prs` (+ `mode`, `version` in release mode) | first, before any other action |
 | `triaged` | `item`, `bucket`, `lane` | once per queue item |
 | `item_start` / `item_done` | `item` | item enters / leaves flight |
 | `escalated` | `item`, `label`, `label_applied` | at the moment the label is applied |
@@ -134,6 +138,23 @@ The ledger supplies **intent, never truth**. It says which items this run had an
 ### QD10. Invariants the drain never overrides
 
 No triage verdict relaxes any of these: the drain **never** creates `.claude/PROMOTE_OK` ([ADR-0070](../../../decisions/0070-two-tier-autonomous-delivery.md) D4 — guardrail promotions wait for the human); a round-3 BLOCK strict-stops that item; destructive or irreversible operations confirm with the operator first; every dispatch passes `isolation: "worktree"` and a result without `worktreePath` is a dispatch failure ([ADR-0058](../../../decisions/0058-worktree-isolation-as-asserted-interface.md) D1/D2); slice issues are created only through the slicer flow.
+
+### QD11. Release mode
+
+Per [ADR-0090](../../../decisions/0090-release-mode.md) D1–D4. `/ship release <version> lanes <N>` is a queue-drain sub-form whose work set is one milestone's bugs and admitted features — never the plain per-item lane model QD6 describes. This slice ships the `lanes N` bounded form only (no unbounded release drain yet).
+
+**Interim, until #1529's mechanical fix lands in slice #1507:** only orchestrator-supervised lanes run. The orchestrator watches every builder and reviewer round of a lane itself; no lane runs unattended, because until then `pr-merge` cannot tell a builder's self-posted verdict or self-opened dispatch window from the real ones.
+
+1. **Classify.** Every issue carries exactly one class label at creation — `bug` (anything that breaks the system's own promise, docs/rules/ADRs/doc drift included) or `feature` — applied by the creating skill; a slice takes its PRD's class.
+2. **Freeze.** `tools/release.py freeze <V> --next <W> --features <list>` admits every open bug and the owner's listed features (with their slices) to `<V>`, moves every other feature to `<W>`, and refuses on any unclassified issue.
+3. **Route (ADR-0090 D2), first match wins:** admitted features and every `slice`/`prd` issue ride the ordinary PRD → slicer flow (rule #16 — a feature never rides a lane); `captured` bugs pass the captured→backlog autopilot first; a bug needing a design decision takes the PRD path; every other bug rides a lane PR, with no PRD and no slicer.
+4. **`lanes N`.** `tools/release.py lanes <V> [--evidence <sweep.json>] [--priority <file>]` groups the lane-bound bugs into disjoint file groups by cited path and orders them; a bug with no cited path runs exclusively, with no other lane in flight (ADR-0085 D3's serialize-on-unknown default).
+5. **The dispatch bracket.** For each lane round: `tools/pipe/dispatch --lane <branch> --milestone <V> --model sonnet <n>…` immediately before the builder's `Agent` call (it prints the packet — sha, per-bug `path:line` refs and excerpt, `Check:` line — the builder's brief), then `tools/pipe/dispatch --end --lane <branch> --result <r>` immediately after that dispatch returns. Each round is a **fresh** `implementer` dispatch (`model: "sonnet"`, `isolation: "worktree"`) briefed with the packet and `implementer.md`'s Lane mode — never a resumed transcript.
+6. **Review.** Every round gets a fresh reviewer, dispatched with `model: "opus"`, `isolation: "worktree"` and only the `BLIND-REVIEW <PR>` message (ADR-0060 D1) — it never sees the packet and re-derives each fix.
+7. **Merge.** `tools/pipe/pr-merge` on the reviewer's APPROVE — its lane legs (MODEL: refusal, window refusal, close-on-merge) are described in `pr-merge`'s own docstring, not repeated here.
+8. **Verify.** `tools/release.py verify <n>…` runs each bug's check against the integration branch HEAD after merge. `UNCONFIRMED #<n>` means a gh read failed, not that the check is missing: re-run it.
+9. **Ledger fields.** Write exactly one `item_start`/`item_done` pair per **bug** (never per lane — a lane can hold many bugs), and `triaged.lane` carries the lane branch name as a non-empty string (DRAIN-LEDGER release mode, [`dashboard/health.py`](../../../dashboard/health.py) `check_drain_ledger`).
+10. **Exclusive lanes run alone.** A bug with no cited path (an exclusive lane) never runs concurrently with any other lane — it is the one case release mode still serializes.
 
 ## Whole-repo macro audit — session-scoped background spawn (ADR-0051 D1–D4)
 
@@ -432,7 +453,8 @@ evidence for this run; note it explicitly in the step 7 final report.
 - [ADR-0037](../../../decisions/0037-production-verification-gate.md) — D1 (mandatory blocking gate per feature), D3 (orchestrator-enforced; qa-tester is the generator, /ship is the enforcer), D5 (failure loop ≤3 rounds + needs-human escalation), D6 (bootstrap-mode).
 - [ADR-0002](../../../decisions/0002-autonomous-merge-policy.md) — reviewer auto-merge on APPROVE; the handoff target after implementer SUCCESS.
 - [ADR-0076](../../../decisions/0076-guarded-verb-pipeline-engine.md) — D1 (verbs are the sole sanctioned path for mechanical pipeline transitions); step 5b/5c's `python tools/pipe/dispatch <slice>` / `--end` calls are the walking-skeleton repoint (slice #1129).
-- [ADR-0085](../../../decisions/0085-queue-drain-mode.md) — D1 (queue-drain is an entry mode on `/ship`, never a second orchestrator; plan-only and bounded sub-forms), D2 (reasonable-engineer triage litmus; label-and-continue escalation on `needs-human-check`), D4 (a durable per-run drain ledger, separate from trace-v3), D5 (fix-in-run: trivial-lane discoveries land inside the drain run).
+- [ADR-0085](../../../decisions/0085-queue-drain-mode.md) — D1 (queue-drain is an entry mode on `/ship`, never a second orchestrator; plan-only and bounded sub-forms — superseded in part by [ADR-0090](../../../decisions/0090-release-mode.md) D2's release work-set/routing), D2 (reasonable-engineer triage litmus; label-and-continue escalation on `needs-human-check`), D4 (a durable per-run drain ledger, separate from trace-v3), D5 (fix-in-run: trivial-lane discoveries land inside the drain run — superseded in part by [ADR-0090](../../../decisions/0090-release-mode.md) D5's in-run-fix rider, slice 4).
+- [ADR-0090](../../../decisions/0090-release-mode.md) — D1 (a version is a frozen milestone of every open bug plus the owner's named features; `freeze`), D2 (`/ship release <version>` is a queue-drain sub-form; QD11), D3 (disjoint file lanes, script-built packets, ≤15 lanes in flight), D4 (a lane PR is gated like a slice PR, reviewed by a strong model, verified by script).
 - [ADR-0051](../../../decisions/0051-whole-repo-macro-audit-cadence.md) — D1 (whole-repo macro-audit cadence: auto-launches at `/ship` start, once per session, non-blocking), D2 (mechanism is `codebase-critic` whole-repo mode — no new critic), D3 (background dispatch + harvest-on-completion), D4 (once-per-session marker guard).
 - Sibling skills the chain calls: [`.claude/skills/to-prd/SKILL.md`](../to-prd/SKILL.md), [`.claude/skills/to-issues/SKILL.md`](../to-issues/SKILL.md). Subagent dispatched at stage 4: [`.claude/agents/implementer.md`](../../agents/implementer.md). Subagent dispatched at step 6: [`.claude/agents/qa-tester.md`](../../agents/qa-tester.md) in production-verify mode.
 

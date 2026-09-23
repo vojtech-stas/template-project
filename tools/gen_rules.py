@@ -63,7 +63,7 @@ def _resolve_repo_root() -> Path:
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=5, cwd=os.getcwd(),
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, cwd=os.getcwd(),
         )
         if result.returncode == 0:
             root = Path(result.stdout.strip())
@@ -169,9 +169,14 @@ SCOPE_PATHS: dict[str, str] = {
 # per-decision partial, so `superseded_by: []` stays on every one of them and
 # no rule_id drops: the delta is +2, measured from the baseline on `develop`
 # at the commit this slice branched from (91).
+# ADR-0090 (slice #1506) adds 2 new PIP-* ids (PIP-033, PIP-034). Its eight
+# supersessions (ADR-0003 D1, ADR-0024 D1/D2, ADR-0063 D1, ADR-0085 D1/D3/D5/
+# D6) are all per-decision partial, so `superseded_by: []` stays on every one
+# of them and no rule_id drops: the delta is +2, measured from the baseline
+# on the integration branch at the commit this slice branched from (93).
 # Breakdown: CAP(8) + COM(2) + CRI(5) + DOC(6) + GLO(4) + HOK(9) +
-#            ISO(6) + OUT(5) + PIP(30) + REG(3) + SLI(3) + VER(12) = 93
-RULE_IDS_BASELINE: int = 93
+#            ISO(6) + OUT(5) + PIP(32) + REG(3) + SLI(3) + VER(12) = 95
+RULE_IDS_BASELINE: int = 95
 
 # ---------------------------------------------------------------------------
 # Frontmatter parser (stdlib, no PyYAML)
@@ -347,7 +352,8 @@ _RULE_STATEMENTS: dict[str, str] = {
     # ADR-0003: autonomous pipeline + critics
     "PIP-002": (
         "The unit-of-delivery hierarchy is exactly three tiers: PRD (prd-labeled issue) "
-        "→ Slice (slice-labeled sub-issue) → PR (closes one slice)."
+        "→ Slice (slice-labeled sub-issue) → PR (closes one slice); as amended by "
+        "ADR-0090 D4: a release-mode lane PR closes one or more `bug` issues and no slice."
     ),
     "PIP-003": (
         "The pipeline has five stages: grill-me → to-prd+prd-critic → slicer+slicer-critic "
@@ -521,14 +527,18 @@ _RULE_STATEMENTS: dict[str, str] = {
         "answer; hard invariants (no agent-created PROMOTE_OK per ADR-0070 "
         "D4, round-3 strict-stop, destructive-op confirmation, worktree "
         "isolation, slicer-only slice creation) are absolute and not "
-        "triage-overridable (ADR-0085 D1/D2)."
+        "triage-overridable (ADR-0085 D1/D2); as amended by ADR-0090 D2: a "
+        "release run's work set is its version's bugs and admitted features; "
+        "bugs without a design fork ride lane PRs, and admitted features the "
+        "PRD → slicer flow."
     ),
     "PIP-027": (
         "Drain parallelism lifts the slice model to queue level: file-overlap "
         "lanes, independent lanes parallel in isolated worktrees, at most 3 "
         "items concurrently in flight (enforced by DRAIN-LEDGER), unknown "
         "overlap serializes, merges serialize through the PR gate per "
-        "ADR-0062 D2 (ADR-0085 D3)."
+        "ADR-0062 D2 (ADR-0085 D3); as amended by ADR-0090 D3: a release run "
+        "allows 15 lanes in flight."
     ),
     "PIP-028": (
         "Every drain run appends to `.claude/logs/drain/<run-id>.jsonl` at the "
@@ -568,6 +578,38 @@ _RULE_STATEMENTS: dict[str, str] = {
         "merge time through `grandfathered()`. It is never a PR/issue "
         "number or commit sha of this repo. CI CHECK 29 fails on a numeric "
         "or sha-valued anchor constant (ADR-0089 D4)."
+    ),
+    # ADR-0090: release mode for /ship (freeze a version, drain bugs through
+    # script-briefed file lanes)
+    "PIP-033": (
+        "Every issue carries exactly one class label at creation: `bug` "
+        "(anything that breaks the system's own promise, docs, rules, ADRs "
+        "and doc drift included) or `feature`; residuals (`needs-human-check` "
+        "issues without `bug`: QA residuals and pure policy questions) are "
+        "exempt and never admitted to a milestone. `/ship release <version>` "
+        "is a queue-drain sub-form: `tools/release.py freeze <V> --next <W> "
+        "--features <list>` refuses on an unclassified issue, admits every "
+        "open bug and the owner's listed features with their slices to "
+        "`<V>`, and moves every other feature to `<W>`; bugs without a "
+        "design fork ride lane PRs, not the PRD pipeline, and admitted "
+        "features ride the PRD → slicer flow. A version is done when "
+        "`RELEASE-GATE` PASSes (zero open non-residual issues in its "
+        "milestone, zero open non-residual bugs in none, zero unclassified "
+        "open issues), so a bug escalated to the owner holds it; only the "
+        "owner promotes and tags (ADR-0090 D1/D2)."
+    ),
+    "PIP-034": (
+        "Release-mode bugs are fixed in lane PRs: one fresh Sonnet builder "
+        "per disjoint file lane, dispatched only through `tools/pipe/"
+        "dispatch --lane`, whose packet (evidence, excerpts from "
+        "`origin/develop` at dispatch, check) is the builder's brief; "
+        "branch `fix/<n>-lane-<slug>`, label `lane`, closing only `bug` "
+        "issues and never slice or PRD issues; R-LOC 600 applies. "
+        "`tools/pipe/pr-merge` merges a lane PR only on an APPROVE whose "
+        "`MODEL:` is not Sonnet or Haiku, with every commit inside a "
+        "dispatch window of its lane, then closes its bugs. DRAIN-LEDGER "
+        "caps a release run at 15 lanes in flight, and `tools/release.py "
+        "verify` checks each bug after merge (ADR-0090 D3/D4)."
     ),
     # -----------------------------------------------------------------------
     # hooks scope (ADR-0015, ADR-0023, ADR-0033, ADR-0057)

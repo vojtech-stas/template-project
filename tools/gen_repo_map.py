@@ -32,7 +32,7 @@ def _resolve_repo_root() -> Path:
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=5, cwd=os.getcwd(),
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, cwd=os.getcwd(),
         )
         if result.returncode == 0:
             root = Path(result.stdout.strip())
@@ -139,6 +139,8 @@ def _build_repo_map() -> str:
          "Verify slicer-lane slice issues carry Slicer-provenance trailer (root-cause lane exempt)"),
         ("check-verdict-presence.py","tools/check-verdict-presence.py",
          "Verify recently-merged develop PRs carry a reviewer VERDICT: APPROVE comment"),
+        ("release.py","tools/release.py",
+         "Release-mode freeze/lanes/packet/verify (ADR-0090 D1/D3/D4)"),
     ]
     for tool_name, tool_path, tool_desc in _TOOLS:
         full_path = REPO_ROOT / tool_path

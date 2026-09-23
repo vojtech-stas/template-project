@@ -479,7 +479,7 @@ def _telemetry_log_root() -> Path:
             ["git", "rev-parse", "--git-common-dir"],
             cwd=str(_HEALTH_REPO_ROOT),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=5,
         )
         if result.returncode != 0:
@@ -659,7 +659,7 @@ def _fetch_github_ci_conclusion(repo_root, sha=None) -> tuple:
         try:
             sha_r = _sp.run(
                 ["git", "rev-parse", f"origin/{integration}"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
                 cwd=str(repo_root),
             )
             if sha_r.returncode != 0:
@@ -798,7 +798,7 @@ def _tracked_files(root: Path, pathspec: str) -> "list[Path] | None":
     try:
         result = subprocess.run(
             ["git", "-C", str(root), "ls-files", pathspec],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
         )
         if result.returncode != 0:
             # git failed (e.g. not a git repo) — signal fallback with None
@@ -1403,7 +1403,7 @@ def check_meta_tripwire() -> dict:
         result = subprocess.run(
             ["git", "log", "--name-only", "--format=COMMIT:%H",
              f"{last_sha}..HEAD"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
             cwd=str(_HEALTH_REPO_ROOT),
         )
         if result.returncode != 0:
@@ -2546,11 +2546,11 @@ def check_isolation_group() -> dict:
         try:
             ahead = subprocess.run(
                 ["git", "rev-list", "--count", f"origin/{release}..HEAD"],
-                capture_output=True, text=True, timeout=8, cwd=str(d),
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8, cwd=str(d),
             )
             status = subprocess.run(
                 ["git", "status", "--porcelain"],
-                capture_output=True, text=True, timeout=8, cwd=str(d),
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8, cwd=str(d),
             )
             if (ahead.returncode == 0 and ahead.stdout.strip() == "0"
                     and status.returncode == 0 and not status.stdout.strip()):
@@ -3803,7 +3803,7 @@ def check_green_main() -> dict:
     try:
         r = subprocess.run(
             ["git", "rev-list", "--count", f"{sha}..origin/{integration}"],
-            capture_output=True, text=True, timeout=10, cwd=str(_HEALTH_REPO_ROOT),
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10, cwd=str(_HEALTH_REPO_ROOT),
         )
         if r.returncode == 0:
             lag = int(r.stdout.strip())
@@ -3906,7 +3906,7 @@ def check_record_vs_gh() -> dict:
         try:
             r = subprocess.run(
                 ["git", "show", "-s", "--format=%cI", _RECORD_VS_GH_ANCHOR_SHA],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
                 cwd=str(_HEALTH_REPO_ROOT),
             )
             anchor_ts_str = r.stdout.strip() if r.returncode == 0 else ""
@@ -4074,7 +4074,7 @@ def _resolve_adr_0076_anchor_ts():
         try:
             r = subprocess.run(
                 ["git", "show", "-s", "--format=%cI", _ADR_0076_ANCHOR_SHA],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
                 cwd=str(_HEALTH_REPO_ROOT),
             )
             ts_str = r.stdout.strip() if r.returncode == 0 else ""
@@ -4700,7 +4700,7 @@ def check_tests_collected() -> dict:
             [sys.executable, "-m", "pytest", str(tests_dir),
              "--collect-only", "-q", "--no-header"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=30,
             cwd=str(_HEALTH_REPO_ROOT),
         )
@@ -5238,6 +5238,7 @@ _STALE_BRANCH_DAYS = 14
 _REQUIRED_LABELS = [
     "prd", "slice", "backlog", "captured",
     "trivial", "needs-human", "needs-human-check", "root-cause",
+    "bug", "feature", "lane",
 ]
 
 
@@ -5598,7 +5599,7 @@ def _git_sha(ref: str) -> str:
     try:
         r = subprocess.run(
             ["git", "rev-parse", ref],
-            capture_output=True, text=True, timeout=8,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8,
             cwd=str(_HEALTH_REPO_ROOT),
         )
         return r.stdout.strip() if r.returncode == 0 else ""
@@ -5611,7 +5612,7 @@ def _git_count(range_spec: str) -> int:
     try:
         r = subprocess.run(
             ["git", "rev-list", "--count", range_spec],
-            capture_output=True, text=True, timeout=8,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8,
             cwd=str(_HEALTH_REPO_ROOT),
         )
         return int(r.stdout.strip()) if r.returncode == 0 else -1
@@ -5986,7 +5987,7 @@ def check_release_ready() -> dict:
             try:
                 ci_result = subprocess.run(
                     ["bash", str(_HEALTH_REPO_ROOT / "tools" / "ci-checks.sh")],
-                    capture_output=True, text=True,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace",
                     timeout=_RELEASE_READY_CICHECKS_TIMEOUT_S,
                     cwd=str(_HEALTH_REPO_ROOT),
                 )
@@ -6051,7 +6052,7 @@ def check_release_ready() -> dict:
                 t_result = subprocess.run(
                     [sys.executable, "-m", "pytest", str(tests_dir), "-q",
                      "--no-header", "--tb=no"],
-                    capture_output=True, text=True,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace",
                     timeout=_RELEASE_READY_PYTEST_TIMEOUT_S,
                     cwd=str(_HEALTH_REPO_ROOT),
                 )
@@ -6603,7 +6604,7 @@ def check_hook_liveness() -> dict:
         try:
             r = subprocess.run(
                 ["git", "-C", str(_HEALTH_REPO_ROOT), "log", "-1", "--format=%cI"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
             )
             git_ts = _parse_ts(r.stdout.strip()) if r.returncode == 0 else 0.0
         except Exception:
@@ -7058,7 +7059,7 @@ def check_deploy_handshake() -> dict:
     try:
         result = subprocess.run(
             ["bash", str(script), "--check-only"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
             cwd=str(_HEALTH_REPO_ROOT),
         )
     except Exception as exc:
@@ -7157,6 +7158,15 @@ _DRAIN_RUN_START_COUNTS = ("prd", "slice", "backlog", "captured")
 _DRAIN_ESCALATION_LABELS = frozenset({"needs-human-check", "needs-human"})
 _DRAIN_CONCURRENCY_CAP = 3
 
+# Release mode (ADR-0090 D2/D3 — slice #1506): a `run_start` record carrying
+# `mode: "release"` switches two things below, and nothing else — a plain
+# (non-release) run's validation is byte-for-byte unchanged:
+#   - `triaged.lane` must be a non-empty STRING (a file-lane branch name);
+#     plain-mode `lane` stays an unvalidated integer queue-lane index.
+#   - concurrency counts DISTINCT LANES open at once (via each open item's
+#     triaged-recorded lane), capped at 15 — not distinct items capped at 3.
+_DRAIN_RELEASE_CONCURRENCY_CAP = 15
+
 
 def _drain_repr(value: object, limit: int = 60) -> str:
     """Bounded `repr` of a malformed ledger value for a FAIL message.
@@ -7188,7 +7198,7 @@ def _drain_ledger_dir(explicit: str | None = None) -> Path:
     try:
         out = subprocess.run(
             ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
-            capture_output=True, text=True, timeout=10, check=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10, check=True,
         ).stdout.strip()
         root = Path(os.path.dirname(os.path.abspath(out)))
     except Exception:
@@ -7225,6 +7235,12 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
          Because the ledger is append-only, a later `fix_queued` record for
          the same item is the sanctioned way to attach a `captured_ref`.
       7. a `parked` record with an empty remaining-items list
+      8. release mode (`run_start.mode == "release"`, ADR-0090 D2 — slice
+         #1506): a `run_start` missing `version`; a `triaged.lane` that is
+         not a non-empty string; concurrency counted by DISTINCT LANES
+         (each open item's triaged-recorded lane) exceeding 15, in place of
+         condition 5's distinct-item/3 cap, which stays exactly as-is for a
+         plain-mode run
 
     No ledger present → WARN (a drain may simply never have run here).
 
@@ -7258,6 +7274,11 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
 
     failures: list[str] = []
     records: list[dict] = []
+    # Release mode (condition 8, ADR-0090 D2/D3): set from the run_start
+    # record's `mode` field, which precedes every other record in a
+    # well-formed ledger — a malformed ledger with no leading run_start
+    # simply validates as plain mode, same as an absent `mode` field would.
+    release_mode = False
 
     # --- conditions 1 + 2: parse, kind membership, required fields ---
     for lineno, line in enumerate(raw.splitlines(), start=1):
@@ -7287,8 +7308,15 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
                 f"{', '.join(missing)}"
             )
             continue
+        # Release mode (condition 8) additionally demands `triaged.lane` be a
+        # non-empty string — a plain-mode `lane` (an integer queue-lane
+        # index) is deliberately left unvalidated, per _DRAIN_IDENTITY_FIELDS
+        # staying unchanged.
+        identity_fields = _DRAIN_IDENTITY_FIELDS.get(kind, ())
+        if release_mode and kind == "triaged":
+            identity_fields = identity_fields + ("lane",)
         bad_ids = [
-            f for f in _DRAIN_IDENTITY_FIELDS.get(kind, ())
+            f for f in identity_fields
             if not (isinstance(rec[f], str) and rec[f].strip())
         ]
         if bad_ids:
@@ -7299,6 +7327,7 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
             )
             continue
         if kind == "run_start":
+            release_mode = rec.get("mode") == "release"
             counts = rec.get("counts")
             if not isinstance(counts, dict):
                 failures.append(f"line {lineno}: run_start `counts` is not an object")
@@ -7308,6 +7337,11 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
                 failures.append(
                     f"line {lineno}: run_start `counts` missing "
                     f"{', '.join(missing_counts)}"
+                )
+                continue
+            if release_mode and not rec.get("version"):
+                failures.append(
+                    f"line {lineno}: release-mode run_start missing `version` (ADR-0090 D2)"
                 )
                 continue
         records.append(rec)
@@ -7323,6 +7357,10 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
     # revisit on a real ledger that double-starts one item).
     open_items: set = set()
     max_concurrent = 0
+    # Release mode only (condition 8): items grouped by their triaged-
+    # recorded lane, so concurrency counts distinct LANES rather than items.
+    item_to_lane: dict = {}
+    max_concurrent_lanes = 0
     fix_queued: dict = {}      # item -> True when a captured_ref was recorded
     fixed_items: set = set()
     reported_unresolved: set = set()   # report each escaping fix once, not per terminal
@@ -7348,6 +7386,7 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
 
         elif kind == "triaged":
             triaged_items.add(item)
+            item_to_lane[item] = rec.get("lane")
 
         elif kind == "item_start":
             if item not in triaged_items:
@@ -7356,7 +7395,13 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
                     "triaged record"
                 )
             open_items.add(item)
-            max_concurrent = max(max_concurrent, len(open_items))
+            if release_mode:
+                open_lanes = {
+                    item_to_lane[i] for i in open_items if item_to_lane.get(i)
+                }
+                max_concurrent_lanes = max(max_concurrent_lanes, len(open_lanes))
+            else:
+                max_concurrent = max(max_concurrent, len(open_items))
 
         elif kind == "item_done":
             open_items.discard(item)
@@ -7409,10 +7454,18 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
                 )
             terminal_seen = True
 
-    if max_concurrent > _DRAIN_CONCURRENCY_CAP:
+    if release_mode:
+        effective_peak, effective_cap, cap_unit, cap_adr = (
+            max_concurrent_lanes, _DRAIN_RELEASE_CONCURRENCY_CAP, "lanes", "ADR-0090 D3",
+        )
+    else:
+        effective_peak, effective_cap, cap_unit, cap_adr = (
+            max_concurrent, _DRAIN_CONCURRENCY_CAP, "items", "ADR-0085 D3",
+        )
+    if effective_peak > effective_cap:
         failures.append(
-            f"{max_concurrent} distinct items concurrently in flight; the "
-            f"cap is {_DRAIN_CONCURRENCY_CAP} (ADR-0085 D3)"
+            f"{effective_peak} distinct {cap_unit} concurrently in flight; "
+            f"the cap is {effective_cap} ({cap_adr})"
         )
 
     if failures:
@@ -7427,7 +7480,7 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
         "detail": (
             f"{newest.name}: {len(records)} records valid, "
             f"{len(triaged_items)} triaged, peak concurrency "
-            f"{max_concurrent}/{_DRAIN_CONCURRENCY_CAP}{terminal_note}"
+            f"{effective_peak}/{effective_cap} {cap_unit}{terminal_note}"
         ),
     }
 
