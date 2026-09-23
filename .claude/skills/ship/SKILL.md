@@ -143,6 +143,8 @@ No triage verdict relaxes any of these: the drain **never** creates `.claude/PRO
 
 Per [ADR-0090](../../../decisions/0090-release-mode.md) D1–D4. `/ship release <version> lanes <N>` is a queue-drain sub-form whose work set is one milestone's bugs and admitted features — never the plain per-item lane model QD6 describes. This slice ships the `lanes N` bounded form only (no unbounded release drain yet).
 
+**Interim, until #1529's mechanical fix lands in slice #1507:** only orchestrator-supervised lanes run. The orchestrator watches every builder and reviewer round of a lane itself; no lane runs unattended, because until then `pr-merge` cannot tell a builder's self-posted verdict or self-opened dispatch window from the real ones.
+
 1. **Classify.** Every issue carries exactly one class label at creation — `bug` (anything that breaks the system's own promise, docs/rules/ADRs/doc drift included) or `feature` — applied by the creating skill; a slice takes its PRD's class.
 2. **Freeze.** `tools/release.py freeze <V> --next <W> --features <list>` admits every open bug and the owner's listed features (with their slices) to `<V>`, moves every other feature to `<W>`, and refuses on any unclassified issue.
 3. **Route (ADR-0090 D2), first match wins:** admitted features and every `slice`/`prd` issue ride the ordinary PRD → slicer flow (rule #16 — a feature never rides a lane); `captured` bugs pass the captured→backlog autopilot first; a bug needing a design decision takes the PRD path; every other bug rides a lane PR, with no PRD and no slicer.
@@ -150,7 +152,7 @@ Per [ADR-0090](../../../decisions/0090-release-mode.md) D1–D4. `/ship release 
 5. **The dispatch bracket.** For each lane round: `tools/pipe/dispatch --lane <branch> --milestone <V> --model sonnet <n>…` immediately before the builder's `Agent` call (it prints the packet — sha, per-bug `path:line` refs and excerpt, `Check:` line — the builder's brief), then `tools/pipe/dispatch --end --lane <branch> --result <r>` immediately after that dispatch returns. Each round is a **fresh** `implementer` dispatch (`model: "sonnet"`, `isolation: "worktree"`) briefed with the packet and `implementer.md`'s Lane mode — never a resumed transcript.
 6. **Review.** Every round gets a fresh reviewer, dispatched with `model: "opus"`, `isolation: "worktree"` and only the `BLIND-REVIEW <PR>` message (ADR-0060 D1) — it never sees the packet and re-derives each fix.
 7. **Merge.** `tools/pipe/pr-merge` on the reviewer's APPROVE — its lane legs (MODEL: refusal, window refusal, close-on-merge) are described in `pr-merge`'s own docstring, not repeated here.
-8. **Verify.** `tools/release.py verify <n>…` runs each bug's check against the integration branch HEAD after merge.
+8. **Verify.** `tools/release.py verify <n>…` runs each bug's check against the integration branch HEAD after merge. `UNCONFIRMED #<n>` means a gh read failed, not that the check is missing: re-run it.
 9. **Ledger fields.** Write exactly one `item_start`/`item_done` pair per **bug** (never per lane — a lane can hold many bugs), and `triaged.lane` carries the lane branch name as a non-empty string (DRAIN-LEDGER release mode, [`dashboard/health.py`](../../../dashboard/health.py) `check_drain_ledger`).
 10. **Exclusive lanes run alone.** A bug with no cited path (an exclusive lane) never runs concurrently with any other lane — it is the one case release mode still serializes.
 
