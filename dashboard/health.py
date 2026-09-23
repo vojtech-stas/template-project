@@ -3236,32 +3236,48 @@ def check_residual_ratio() -> dict:
 
     def _fetch_closed_prds(limit):
         # Routed through gh_cache — PRD #993 cr.3/cr.4, slice #996.
+        # ADR-0087 D3: an unconfirmed fetch, and a confirmed source paired
+        # with an empty/unparsable payload, both count as unconfirmed —
+        # never as a confirmed empty list. Returns (numbers, confirmed, source).
         try:
-            rc, out = _health_gh_fetch(
+            rc, out, source = _health_gh_fetch(
                 ["issue", "list", "--label", "prd",
                  "--state", "closed", "--limit", str(limit),
                  "--json", "number"],
-                ttl=60.0, timeout=5.0,
+                ttl=60.0, timeout=5.0, with_source=True,
             )
-            if rc == 0 and out.strip():
-                return [item["number"] for item in _json.loads(out)]
-        except Exception:
-            pass
-        return []
+        except Exception as exc:
+            return [], False, f"computing: {exc}"
+        if rc != 0:
+            return [], False, source
+        try:
+            items = _json.loads(out)
+            if not isinstance(items, list):
+                raise ValueError("payload is not a JSON list")
+        except Exception as exc:
+            return [], False, f"{source}: unparsable payload: {exc}"
+        return [item["number"] for item in items], True, source
 
     def _fetch_comments(prd_num):
-        # Routed through gh_cache — each PRD comment fetch is individually cached.
+        # Routed through gh_cache — each PRD comment fetch is individually
+        # cached. Same unconfirmed contract as _fetch_closed_prds above.
         try:
-            rc, out = _health_gh_fetch(
+            rc, out, source = _health_gh_fetch(
                 ["issue", "view", str(prd_num), "--json", "comments"],
-                ttl=60.0, timeout=5.0,
+                ttl=60.0, timeout=5.0, with_source=True,
             )
-            if rc == 0 and out.strip():
-                data = _json.loads(out)
-                return [c.get("body", "") for c in data.get("comments", [])]
-        except Exception:
-            pass
-        return []
+        except Exception as exc:
+            return [], False, f"computing: {exc}"
+        if rc != 0:
+            return [], False, source
+        try:
+            data = _json.loads(out)
+            comments = data.get("comments") if isinstance(data, dict) else None
+            if comments is None:
+                raise ValueError("payload missing a comments list")
+        except Exception as exc:
+            return [], False, f"{source}: unparsable payload: {exc}"
+        return [c.get("body", "") for c in comments], True, source
 
     # Separator rows like "|---|---|" -- skip these
     _separator_re = re.compile(r'^\|\s*[-:]+\s*\|')
@@ -3270,9 +3286,16 @@ def check_residual_ratio() -> dict:
     extract_failed = 0
     total = 0
     prds_scanned = 0
-    fetch_error = None
+    unconfirmed_source = None
 
-    prd_numbers = _fetch_closed_prds(_RESIDUAL_RATIO_PRD_WINDOW)
+    prd_numbers, prds_confirmed, prds_source = _fetch_closed_prds(_RESIDUAL_RATIO_PRD_WINDOW)
+    if not prds_confirmed:
+        return {
+            "id": "RESIDUAL-RATIO",
+            "result": "WARN",
+            "detail": f"unconfirmed (source={prds_source})",
+            "judgment": 0, "extract_failed": 0, "total": 0, "rate": None,
+        }
     if not prd_numbers:
         return {
             "id": "RESIDUAL-RATIO",
@@ -3285,9 +3308,15 @@ def check_residual_ratio() -> dict:
         }
 
     for prd_num in prd_numbers:
-        comments = _fetch_comments(prd_num)
-        if not comments and fetch_error is None:
-            fetch_error = "comment fetch failed for PRD #{} (auth or timeout)".format(prd_num)
+        comments, comments_confirmed, comments_source = _fetch_comments(prd_num)
+        if not comments_confirmed:
+            # ADR-0087 D3: RESIDUAL-RATIO must not compute a ratio from
+            # partial comment data — remember the first unconfirmed leg and
+            # report it once the loop ends, instead of silently treating a
+            # failed comment fetch as "no QA-plan in this PRD".
+            if unconfirmed_source is None:
+                unconfirmed_source = comments_source
+            continue
         prd_has_plan = False
         for body in comments:
             if "## QA-plan" not in body:
@@ -3319,14 +3348,21 @@ def check_residual_ratio() -> dict:
         if prd_has_plan:
             prds_scanned += 1
 
+    if unconfirmed_source is not None:
+        return {
+            "id": "RESIDUAL-RATIO",
+            "result": "WARN",
+            "detail": f"unconfirmed (source={unconfirmed_source})",
+            "judgment": judgment, "extract_failed": extract_failed,
+            "total": total, "rate": None,
+        }
+
     if total < _RESIDUAL_RATIO_MIN_ROWS:
         detail = (
             "low-sample: {} criteria rows across {} PRDs with QA-plans "
             "(min={}); judgment={}, extract_failed={}; "
             "ratio not computed -- insufficient data for ADR-0066 D1 drop-criterion signal"
         ).format(total, prds_scanned, _RESIDUAL_RATIO_MIN_ROWS, judgment, extract_failed)
-        if fetch_error:
-            detail += " | note: {}".format(fetch_error)
         return {
             "id": "RESIDUAL-RATIO",
             "result": "WARN",
@@ -3344,8 +3380,6 @@ def check_residual_ratio() -> dict:
         "across {} PRDs with QA-plans "
         "(bind-forward ADR-0066 D1: ratio should fall after PC-EARS adoption)"
     ).format(residual, total, rate_pct, judgment, extract_failed, prds_scanned)
-    if fetch_error:
-        detail += " | note: {}".format(fetch_error)
 
     # WARN always (not FAIL) -- this is a measurement row, not a blocking check.
     # The drop-criterion is a human-reviewed decision, not an automated gate.
@@ -3530,23 +3564,43 @@ def check_capture_shape() -> dict:
         r'\*\*Symptom:\*\*(.*?)(?=\*\*Root cause:\*\*)', re.DOTALL
     )
 
-    def _fetch_issues(label: str) -> list[dict]:
+    def _fetch_issues(label: str) -> tuple:
         # Routed through gh_cache — PRD #993 cr.3/cr.4, slice #996.
+        # ADR-0087 D3: an unconfirmed fetch, and a confirmed source paired
+        # with an empty/unparsable payload, both count as unconfirmed —
+        # never as a confirmed empty list. Returns (items, confirmed, source).
         try:
-            rc, out = _health_gh_fetch(
+            rc, out, source = _health_gh_fetch(
                 ["issue", "list", "--label", label,
                  "--state", "all", "--limit", "50",
                  "--json", "number,body,labels"],
-                ttl=60.0, timeout=5.0,
+                ttl=60.0, timeout=5.0, with_source=True,
             )
-            if rc == 0 and out.strip():
-                return _json.loads(out)
-        except Exception:
-            pass
-        return []
+        except Exception as exc:
+            return [], False, f"computing: {exc}"
+        if rc != 0:
+            return [], False, source
+        try:
+            items = _json.loads(out)
+            if not isinstance(items, list):
+                raise ValueError("payload is not a JSON list")
+        except Exception as exc:
+            return [], False, f"{source}: unparsable payload: {exc}"
+        return items, True, source
 
     # Step 1: Check root-cause labeled issues
-    root_cause_issues = _fetch_issues("root-cause")
+    root_cause_issues, rc_confirmed, rc_source = _fetch_issues("root-cause")
+    if not rc_confirmed:
+        return {
+            "id": "CAPTURE-SHAPE",
+            "result": "WARN",
+            "detail": f"unconfirmed (source={rc_source})",
+            "total_root_cause": 0,
+            "conforming_count": 0,
+            "evidence_count": 0,
+            "non_conformers": [],
+            "unlabeled_candidates": [],
+        }
     total_rc = len(root_cause_issues)
     conforming = []
     non_conformers = []
@@ -3568,7 +3622,18 @@ def check_capture_shape() -> dict:
     evid_rate = round(evidence_present / len(conforming), 3) if conforming else None
 
     # Step 2: Unlabeled-candidate counter (captured issues with 3-section shape)
-    captured_issues = _fetch_issues("captured")
+    captured_issues, cap_confirmed, cap_source = _fetch_issues("captured")
+    if not cap_confirmed:
+        return {
+            "id": "CAPTURE-SHAPE",
+            "result": "WARN",
+            "detail": f"unconfirmed (source={cap_source})",
+            "total_root_cause": total_rc,
+            "conforming_count": len(conforming),
+            "evidence_count": evidence_present,
+            "non_conformers": non_conformers,
+            "unlabeled_candidates": [],
+        }
     unlabeled_candidates = []
     rc_numbers = {i["number"] for i in root_cause_issues}
     for issue in captured_issues:
@@ -5511,22 +5576,37 @@ def check_branch_topology() -> dict:
         main_is_ancestor = False
 
     # 5. Recent PRs base check via gh CLI (via gh_cache — PRD #993 cr.3, slice #996)
+    # ADR-0087 D3: an unconfirmed fetch — or a confirmed source paired with
+    # an empty/unparsable payload — must never silently default
+    # pr_base_ok = True; it must report WARN naming the unconfirmed source
+    # (closes #1448).
     pr_base_ok = True
+    pr_unconfirmed = False
     pr_warn_detail = ""
+    pr_source = "computing"
     try:
-        _pr5_rc, _pr5_out = _health_gh_fetch(
+        _pr5_rc, _pr5_out, _pr5_source = _health_gh_fetch(
             ["pr", "list", "--state", "merged", "--limit", "10",
              "--json", "number,baseRefName"],
-            ttl=60.0, timeout=5.0,
+            ttl=60.0, timeout=5.0, with_source=True,
         )
-        if _pr5_rc == 0 and _pr5_out.strip():
-            prs = _json.loads(_pr5_out)
-            main_based = [p["number"] for p in prs if p.get("baseRefName") == "main"]
-            if main_based:
-                pr_base_ok = False
-                pr_warn_detail = f" | recent PRs with main base: {main_based[:3]}"
+        pr_source = _pr5_source
+        if _pr5_rc != 0:
+            pr_unconfirmed = True
+        else:
+            try:
+                prs = _json.loads(_pr5_out)
+                if not isinstance(prs, list):
+                    raise ValueError("payload is not a JSON list")
+            except Exception:
+                pr_unconfirmed = True
+            else:
+                main_based = [p["number"] for p in prs if p.get("baseRefName") == "main"]
+                if main_based:
+                    pr_base_ok = False
+                    pr_warn_detail = f" | recent PRs with main base: {main_based[:3]}"
     except Exception:
-        pass  # gh unavailable — skip PR check, don't WARN for this
+        pr_unconfirmed = True
 
     # 6. Branch-protection advisory (via gh_cache — PRD #993 cr.3, slice #996)
     bp_note = ""
@@ -5559,6 +5639,20 @@ def check_branch_topology() -> dict:
             "id": "BRANCH-TOPOLOGY",
             "result": "WARN",
             "detail": f"main is NOT ancestor of develop (diverged topology); {base_detail}",
+            "develop_sha": develop_sha,
+            "main_sha": main_sha,
+            "ahead": ahead,
+            "behind": behind,
+            "main_is_ancestor": main_is_ancestor,
+        }
+
+    if pr_unconfirmed:
+        return {
+            "id": "BRANCH-TOPOLOGY",
+            "result": "WARN",
+            "detail": (
+                f"recent-PR base check unconfirmed (source={pr_source}); {base_detail}"
+            ),
             "develop_sha": develop_sha,
             "main_sha": main_sha,
             "ahead": ahead,
