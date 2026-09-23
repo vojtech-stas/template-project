@@ -5439,7 +5439,9 @@ def check_release_ready() -> dict:
       (d) green-develop streak intact — no failing checkpoint since last promotion
           (uses main_green events in workflow-events.jsonl as the green-develop proxy
           until a full green-develop event stream is landed by migration slices)
-      (e) zero open needs-human items — gh issue list --label needs-human
+      (e) zero open, CONFIRMED needs-human items — gh issue list AND
+          gh pr list --label needs-human (issues + PRs, ADR-0087 D4);
+          holds on any unconfirmed source or unparsable payload (D3)
       (f) guardrail-path batch check — wired to check_meta_tripwire() (slice #840 / ADR-0070 D4)
 
     Returns:
@@ -5455,7 +5457,7 @@ def check_release_ready() -> dict:
       _RELEASE_READY_TESTS_RESULT        PASS|FAIL  (bypasses pytest)
       _RELEASE_READY_PROOF_INTEGRITY_RESULT  PASS|WARN|FAIL  (bypasses check_proof_integrity)
       _RELEASE_READY_STREAK_RESULT       PASS|FAIL  (bypasses event-log streak check)
-      _RELEASE_READY_NEEDS_HUMAN_COUNT   <int>      (bypasses gh issue list)
+      _RELEASE_READY_NEEDS_HUMAN_COUNT   <int>      (bypasses gh issue list + gh pr list)
       _META_TRIPWIRE_RESULT_OVERRIDE     PASS|FAIL|WARN  (bypasses check_meta_tripwire for (f))
       _RELEASE_READY_FORCE_FAIL          1          (forces verdict false; for promote.sh guard tests)
     """
@@ -5695,6 +5697,13 @@ def check_release_ready() -> dict:
         nh_confirmed = True
         nh_count = 0
         nh_legs = []
+        # ADR-0083 D5 (advisory): name the observation and the states
+        # consistent with it, not a single guessed cause.
+        _unconfirmed_explanations = {
+            "computing": "GitHub unreachable, unauthenticated, rate-limited or timed out",
+            "stale": "GitHub unreachable, unauthenticated, rate-limited or timed out",
+            "unverified": "label-filtered path failed QUERY-HONESTY",
+        }
         for _leg_label, _leg_args in (
             ("issues", ["issue", "list", "--label", "needs-human",
                         "--state", "open", "--json", "number"]),
@@ -5711,10 +5720,21 @@ def check_release_ready() -> dict:
                 continue
             if _leg_rc != 0:
                 nh_confirmed = False
-                nh_legs.append(f"{_leg_label} unconfirmed (source={_leg_source})")
+                _explain = _unconfirmed_explanations.get(_leg_source)
+                if _explain:
+                    nh_legs.append(
+                        f"{_leg_label} unconfirmed (source={_leg_source}: {_explain})"
+                    )
+                else:
+                    nh_legs.append(f"{_leg_label} unconfirmed (source={_leg_source})")
                 continue
             try:
-                _leg_items = _json.loads(_leg_out) if _leg_out.strip() else []
+                # ADR-0087 D3: confirmed means a confirmed source AND a
+                # payload that parses as a JSON list. An empty (or
+                # whitespace-only) string does NOT parse as one — do not
+                # substitute [] for it, or a confirmed-source leg with no
+                # payload reads as a confirmed zero instead of holding.
+                _leg_items = _json.loads(_leg_out)
                 if not isinstance(_leg_items, list):
                     raise ValueError("payload is not a JSON list")
             except Exception as exc:
