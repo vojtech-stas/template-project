@@ -5661,7 +5661,12 @@ def check_branch_topology() -> dict:
         pr_unconfirmed = True
 
     # 6. Branch-protection advisory (via gh_cache — PRD #993 cr.3, slice #996)
+    # #1525 / same class as ADR-0087 D3: a failed or exception-raising fetch
+    # must never let the function fall through to PASS on a state it never
+    # confirmed -- bp_confirmed gates the result below.
     bp_note = ""
+    bp_confirmed = True
+    bp_unconfirmed_reason = ""
     try:
         _bp_rc, _bp_out = _health_gh_fetch(
             ["api", "repos/{owner}/{repo}/branches/develop"],
@@ -5672,8 +5677,12 @@ def check_branch_topology() -> dict:
             protected = bp.get("protected", False)
             bp_note = f" | branch-protection={'on' if protected else 'off (advisory: enable)'}"
         else:
+            bp_confirmed = False
+            bp_unconfirmed_reason = "API unavailable"
             bp_note = " | branch-protection: API unavailable (WARN)"
     except Exception:
+        bp_confirmed = False
+        bp_unconfirmed_reason = "check skipped"
         bp_note = " | branch-protection: check skipped"
 
     # Determine result
@@ -5717,6 +5726,20 @@ def check_branch_topology() -> dict:
             "id": "BRANCH-TOPOLOGY",
             "result": "WARN",
             "detail": f"recent PRs targeting main (should target develop); {base_detail}",
+            "develop_sha": develop_sha,
+            "main_sha": main_sha,
+            "ahead": ahead,
+            "behind": behind,
+            "main_is_ancestor": main_is_ancestor,
+        }
+
+    if not bp_confirmed:
+        return {
+            "id": "BRANCH-TOPOLOGY",
+            "result": "WARN",
+            "detail": (
+                f"branch-protection fetch unconfirmed ({bp_unconfirmed_reason}); {base_detail}"
+            ),
             "develop_sha": develop_sha,
             "main_sha": main_sha,
             "ahead": ahead,
