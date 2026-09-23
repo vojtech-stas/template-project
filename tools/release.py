@@ -85,9 +85,7 @@ def _gh_api_json(path, method="GET", fields=None, paginate=False):
     gh failure or unparseable output. `--paginate` concatenates each
     page's top-level JSON value back-to-back on stdout; this decodes the
     stream and flattens list-shaped pages into one list."""
-    args = ["api", path]
-    if method != "GET":
-        args += ["-X", method]
+    args = ["api", path, "-X", method]
     if paginate:
         args += ["--paginate"]
     for k, v in (fields or {}).items():
