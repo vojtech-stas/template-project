@@ -279,6 +279,21 @@ class TestB1RestTimelineLookup(unittest.TestCase):
         self.assertNotEqual(rc, 0)
 
 
+class TestB1GhCannotRun(unittest.TestCase):
+    def test_b1_gh_that_cannot_run_is_unconfirmed_per_issue_not_a_crash(self):
+        """A missing or unrunnable gh is a failed read like any other: one
+        `UNCONFIRMED #<n>` line per issue and a non-zero exit, never a
+        traceback that drops every line after it."""
+        release = _load(RELEASE_PY, "b1_no_gh")
+        release._remote_owner_repo = lambda: ("o", "r")
+        release._gh = lambda: str(Path(tempfile.gettempdir()) / "no-such-dir-1528" / "gh-missing")
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = release._cmd_verify(argparse.Namespace(issues=["1525", "1526"]))
+        self.assertEqual(_lines(out.getvalue()), ["UNCONFIRMED #1525", "UNCONFIRMED #1526"])
+        self.assertNotEqual(rc, 0)
+
+
 class TestB1PacketAndDispatch(unittest.TestCase):
     def test_b1_packet_resolves_the_lane_pr_via_rest(self):
         release = _load(RELEASE_PY, "b1_packet_rest")
