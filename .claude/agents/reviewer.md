@@ -239,6 +239,8 @@ gh pr view <PR> --json files --jq '.files[] | select((.path | startswith(".claud
 
 If sum > 600 → BLOCK: `R-LOC: slice diff is <N> LoC of runtime-artifact code; cap is 600. Split the slice or move non-runtime content out of .claude/`.
 
+**Lane PRs (ADR-0090 D4):** a lane PR (label `lane`) is capped exactly like a slice PR: the same runtime-artifact count, the same 600 cap and the same BLOCK. The `trivial` and `prd` exemptions below never cover a lane PR, and no lane PR gets a wider cap.
+
 **Rationale:** Slice reviewability degrades non-linearly past ~600 LoC of runtime-artifact code — R-CLOSES becomes nominal and R-YAGNI misses drift hidden in volume. Docs and ADR additions are uncapped because they are expansionary by design; counting them would force artificial splitting with no reviewability gain. Exemptions: trivial-lane PRs labeled `trivial`; PRD-tier PRs labeled `prd`.
 
 ### R-CLOSES — PR body must close a valid slice issue
