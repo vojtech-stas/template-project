@@ -125,8 +125,8 @@ def _repo_with_notes(tmp_path, text):
 
 
 # ---------------------------------------------------------------------------
-# The class guard: every text-mode subprocess.run in the three release-mode
-# files names an encoding (so none falls back to the host locale).
+# The class guard: every text-mode subprocess.run in the Python files this
+# PR touches names an encoding (so none falls back to the host locale).
 # ---------------------------------------------------------------------------
 
 def _text_runs_without_encoding(path):
@@ -148,11 +148,20 @@ def _text_runs_without_encoding(path):
 
 _THREE_FILES = [RELEASE_PY, DISPATCH, PR_MERGE]
 _THREE_IDS = ["release", "dispatch", "pr-merge"]
+# Every Python file PR #1528 touches: the three release-mode tools plus the
+# three it edits for the rule layer and DRAIN-LEDGER (rule #19: the class is
+# closed across the PR's files, not only the ones the review named).
+_TOUCHED_FILES = _THREE_FILES + [
+    REPO_ROOT / "dashboard" / "health.py",
+    REPO_ROOT / "tools" / "gen_rules.py",
+    REPO_ROOT / "tools" / "gen_repo_map.py",
+]
+_TOUCHED_IDS = _THREE_IDS + ["health", "gen_rules", "gen_repo_map"]
 
 # Parametrized only when pytest is present; the stdlib unittest fallback
 # collects no module-level function in this file anyway.
 if pytest is not None:
-    @pytest.mark.parametrize("path", _THREE_FILES, ids=_THREE_IDS)
+    @pytest.mark.parametrize("path", _TOUCHED_FILES, ids=_TOUCHED_IDS)
     def test_every_text_subprocess_names_an_encoding(path):
         assert _text_runs_without_encoding(path) == [], (
             f"{path.name}: text-mode subprocess.run without encoding= at these lines "
