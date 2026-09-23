@@ -398,6 +398,86 @@ def test_no_pass_on_unconfirmed_registry_wide_invariant():
     )
 
 
+# ===========================================================================
+# Fix round 1 regression (codebase-critic PR #1516 finding CC-ARCH-DRIFT):
+# the seam used to consult _query_honesty_attest() BEFORE fetching, so ANY
+# non-PASS attestation (a WARN caused by plain GitHub unreachability
+# included) collapsed every label-filtered call to source="unverified" --
+# masking the raw fetch's true cause and regressing PRD criterion 13 (the
+# walking-skeleton criterion from slice #1497). ADR-0087 D2's own wording
+# is that the attestation gates a call "before [the seam] returns [it] ...
+# as confirmed" -- an already-unconfirmed raw answer has nothing left to
+# gate, and must come back exactly as observed.
+#
+# These tests patch `_gh_fetch_impl` (the underlying fetch), NOT the seam,
+# so the raw fetch and the attestation compose together for real -- the
+# same technique the registry-wide invariant above uses, applied here to
+# pin the SOURCE the composed seam reports, not just a generic
+# "unconfirmed" token (which both the pre-fix and post-fix detail strings
+# contain, and so cannot by itself catch this regression).
+# ===========================================================================
+
+def _gh_unreachable_impl(args, *, ttl, timeout):
+    """Forces every `_gh_fetch_impl` call -- including QUERY-HONESTY's own
+    two internal `_health_gh_fetch_raw()` queries -- to a genuinely
+    unconfirmed `computing` answer, without touching the network."""
+    return _FakeGhResult(None, "computing")
+
+
+def _release_ready_with_gh_unreachable(health):
+    tracked_keys = set(_ISO_ENV) | {_NH_COUNT_VAR}
+    saved_env = {k: os.environ.get(k) for k in tracked_keys}
+    os.environ.update(_ISO_ENV)
+    os.environ.pop(_NH_COUNT_VAR, None)
+    try:
+        health._gh_fetch_impl = _gh_unreachable_impl
+        health._GH_CACHE_AVAILABLE = True
+        return health.check_release_ready()
+    finally:
+        for k, v in saved_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def test_release_ready_e_gh_unreachable_reports_source_computing():
+    """Criterion 13 at the unit level: with gh genuinely unreachable (the
+    fetch itself fails, so the attestation is never even reached),
+    condition (e)'s held detail must carry 'source=computing', the raw
+    fetch's own true cause -- and must NOT read 'source=unverified', which
+    misattributes a plain outage to a QUERY-HONESTY slug-desync failure."""
+    health = _reimport_health()
+    r = _release_ready_with_gh_unreachable(health)
+    assert r["result"] == "WARN", r
+    assert r["first_failing_condition"] == "e", r
+    assert "source=computing" in r["detail"], r["detail"]
+    assert "unverified" not in r["detail"], r["detail"]
+
+
+def test_capture_shape_gh_unreachable_reports_source_computing():
+    """Same composed-seam regression for CAPTURE-SHAPE: an unreachable gh
+    must read source=computing, never source=unverified."""
+    health = _reimport_health()
+    health._gh_fetch_impl = _gh_unreachable_impl
+    health._GH_CACHE_AVAILABLE = True
+    r = health.check_capture_shape()
+    assert r["result"] == "WARN", r
+    assert "source=computing" in r["detail"], r["detail"]
+    assert "unverified" not in r["detail"], r["detail"]
+
+
+def test_residual_ratio_gh_unreachable_reports_source_computing():
+    """Same composed-seam regression for RESIDUAL-RATIO."""
+    health = _reimport_health()
+    health._gh_fetch_impl = _gh_unreachable_impl
+    health._GH_CACHE_AVAILABLE = True
+    r = health.check_residual_ratio()
+    assert r["result"] == "WARN", r
+    assert "source=computing" in r["detail"], r["detail"]
+    assert "unverified" not in r["detail"], r["detail"]
+
+
 if __name__ == "__main__":
     import pytest as _pytest
 
