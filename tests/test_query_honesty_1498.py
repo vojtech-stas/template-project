@@ -358,6 +358,109 @@ def test_seam_non_label_calls_bypass_attestation_entirely():
     assert r == (0, json.dumps([{"number": 99}]), "live"), r
 
 
+# ---------------------------------------------------------------------------
+# Round-2 fix (reviewer R2): the gate must catch every gh flag spelling
+# that applies a label filter, not just the exact two-token "--label X"
+# form. `gh issue list --help` / `gh pr list --help` document
+# `-l, --label strings`; live `gh issue list -l=<x>` and `gh issue list
+# -l<x>` (run against vojtech-stas/template-project, 2026-09-23) both
+# returned the same label-filtered result as `--label <x>`, confirming
+# gh (cobra/pflag) accepts all of these spellings.
+# ---------------------------------------------------------------------------
+
+def test_seam_gates_label_equals_form():
+    """`--label=<x>` (single argv token) must be gated exactly like the
+    two-token `--label <x>` form."""
+    health = _reimport_health()
+    fetch, _ = _router(
+        label_result=_FakeGhResult(json.dumps([]), "live"),
+        api_result=_FakeGhResult(_rest_page([1, 2]), "live"),
+    )
+    health._gh_fetch_impl = fetch
+    health._GH_CACHE_AVAILABLE = True
+
+    r = health._health_gh_fetch(
+        ["issue", "list", "--label=needs-human", "--state", "open", "--json", "number"],
+        with_source=True,
+    )
+    assert r == (1, "", "unverified"), r
+
+
+def test_seam_gates_label_short_form_separate_token():
+    """`-l <x>` (two argv tokens, gh's documented shorthand) must be
+    gated the same as the long form."""
+    health = _reimport_health()
+    fetch, _ = _router(
+        label_result=_FakeGhResult(json.dumps([]), "live"),
+        api_result=_FakeGhResult(_rest_page([1, 2]), "live"),
+    )
+    health._gh_fetch_impl = fetch
+    health._GH_CACHE_AVAILABLE = True
+
+    r = health._health_gh_fetch(
+        ["issue", "list", "-l", "needs-human", "--state", "open", "--json", "number"],
+        with_source=True,
+    )
+    assert r == (1, "", "unverified"), r
+
+
+def test_seam_gates_label_short_form_equals():
+    """`-l=<x>` (single argv token) -- verified live-accepted by `gh
+    issue list`."""
+    health = _reimport_health()
+    fetch, _ = _router(
+        label_result=_FakeGhResult(json.dumps([]), "live"),
+        api_result=_FakeGhResult(_rest_page([1, 2]), "live"),
+    )
+    health._gh_fetch_impl = fetch
+    health._GH_CACHE_AVAILABLE = True
+
+    r = health._health_gh_fetch(
+        ["issue", "list", "-l=needs-human", "--state", "open", "--json", "number"],
+        with_source=True,
+    )
+    assert r == (1, "", "unverified"), r
+
+
+def test_seam_gates_label_short_form_concatenated():
+    """`-l<x>` (single argv token, no separator) -- verified
+    live-accepted by `gh issue list`."""
+    health = _reimport_health()
+    fetch, _ = _router(
+        label_result=_FakeGhResult(json.dumps([]), "live"),
+        api_result=_FakeGhResult(_rest_page([1, 2]), "live"),
+    )
+    health._gh_fetch_impl = fetch
+    health._GH_CACHE_AVAILABLE = True
+
+    r = health._health_gh_fetch(
+        ["issue", "list", "-lneeds-human", "--state", "open", "--json", "number"],
+        with_source=True,
+    )
+    assert r == (1, "", "unverified"), r
+
+
+def test_seam_does_not_false_positive_on_uppercase_limit_shorthand():
+    """`-L100` is the unrelated `--limit` shorthand (case-sensitive) --
+    must NOT be mistaken for a label flag and gated. Uses a `pr list`
+    call (routes to `other`, distinct from the `issue`/`api` legs the
+    attestation itself queries) so a wrongly-gated call is visible as a
+    changed answer, not masked by the router's own `issue` route."""
+    health = _reimport_health()
+    fetch, _ = _router(
+        label_result=_FakeGhResult(json.dumps([]), "live"),   # would FAIL attestation
+        api_result=_FakeGhResult(_rest_page([1, 2]), "live"),
+        other=_FakeGhResult(json.dumps([{"number": 99}]), "live"),
+    )
+    health._gh_fetch_impl = fetch
+    health._GH_CACHE_AVAILABLE = True
+
+    r = health._health_gh_fetch(
+        ["pr", "list", "-L100", "--json", "number"], with_source=True,
+    )
+    assert r == (0, json.dumps([{"number": 99}]), "live"), r
+
+
 def test_attestation_own_label_query_bypasses_gate_no_recursion():
     """ADR-0087 D2: the canary's own label-path query must bypass its own
     attestation (else it recurses). Proven by breaking the seam
