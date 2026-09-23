@@ -143,9 +143,21 @@ def test_branch_topology_step5_confirmed_unparsable_payload_holds():
 def test_branch_topology_step5_confirmed_empty_list_still_passes():
     """Regression guard: a genuinely confirmed empty PR list is NOT
     unconfirmed — pr_base_ok stays True and the check reaches its normal
-    (real-git-state) verdict, unchanged from before this slice."""
+    (real-git-state) verdict, unchanged from before this slice.
+
+    Uses `_stub_router` (not the blanket `_stub_fixed`) because step 6
+    (#1525) now also gates on its OWN confirmed fetch, whose endpoint
+    ("branches/develop") needs a dict-shaped payload — a blanket "[]"
+    response for every call would (correctly) also read as unconfirmed
+    there, which is not this test's concern."""
     health = _reimport_health()
-    health._health_gh_fetch = _stub_fixed(0, "[]", "live")
+
+    def _route(args):
+        if args and any("branches/develop" in a for a in args):
+            return (0, '{"protected": true}', "live")
+        return (0, "[]", "live")
+
+    health._health_gh_fetch = _stub_router(_route)
     r = health.check_branch_topology()
     assert "unconfirmed" not in r["detail"], r["detail"]
     assert r["result"] in ("PASS", "WARN"), r
