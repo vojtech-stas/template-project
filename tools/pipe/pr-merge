@@ -96,7 +96,6 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _TOOLS_DIR = os.path.dirname(_THIS_DIR)
 _TRACE_PY = os.path.join(_TOOLS_DIR, "trace.py")
 _RECORD_GREEN = os.path.join(_THIS_DIR, "record-green")
-_PIPELINE_CONFIG_PY = os.path.join(_TOOLS_DIR, "pipeline_config.py")
 
 MAX_ATTEMPTS = 3
 BUDGET_S = float(os.environ.get("PR_MERGE_BUDGET_S", "90"))
@@ -105,17 +104,6 @@ POLL_INTERVAL_S = float(os.environ.get("PR_MERGE_POLL_INTERVAL_S", "5"))
 
 def _load_trace():
     spec = importlib.util.spec_from_file_location("trace_v3", _TRACE_PY)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-def _load_pipeline_config():
-    # S1-c: located relative to THIS file (_TOOLS_DIR above), never via
-    # $REPO_ROOT or `git rev-parse --show-toplevel` of the cwd repo.
-    spec = importlib.util.spec_from_file_location(
-        "pipeline_config", _PIPELINE_CONFIG_PY
-    )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -256,11 +244,13 @@ def _chain_record_green(deadline, sha=None):
     if result.returncode == 0:
         print("pr-merge: record-green chained -- develop_green recorded")
     else:
-        integration = _load_pipeline_config().integration_branch()
+        # Names the role, never the resolved branch: this runs after the
+        # merge, so a resolver read here could raise (malformed conf) and
+        # turn a completed merge into a non-zero exit (ADR-0089 D1).
         print(
             f"pr-merge: record-green chained -- evaluation FAILED "
-            f"(exit={result.returncode}); {integration} is NOT green (see "
-            "record-green output above)",
+            f"(exit={result.returncode}); the integration branch is NOT "
+            "green (see record-green output above)",
             file=sys.stderr,
         )
 

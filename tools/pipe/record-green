@@ -69,14 +69,14 @@ def _load_pipeline_config():
     return mod
 
 
-def _resolve_develop_sha():
+def _resolve_develop_sha(integration):
     """Fallback-only resolution (no explicit sha argument was given). Fetches
-    `origin <integration>` (the configured integration branch, ADR-0089 D1)
-    FIRST (#1188 / root-cause #1183) so a stale local remote-tracking ref can
-    never be certified — best-effort: a fetch failure (e.g. offline) does not
-    abort resolution, it just risks the same staleness the fetch is meant to
-    prevent, matching the pre-existing fallback's own resilience posture."""
-    integration = _load_pipeline_config().integration_branch()
+    `origin <integration>` (the configured integration branch, ADR-0089 D1,
+    resolved by main() before any side effect) FIRST (#1188 / root-cause
+    #1183) so a stale local remote-tracking ref can never be certified —
+    best-effort: a fetch failure (e.g. offline) does not abort resolution, it
+    just risks the same staleness the fetch is meant to prevent, matching the
+    pre-existing fallback's own resilience posture."""
     try:
         subprocess.run(
             ["git", "fetch", "origin", integration],
@@ -100,6 +100,17 @@ def main(argv=None):
     # own positional-argument parsing — see that script for the full contract).
     explicit_sha = next((a for a in argv if not a.startswith("--")), None)
 
+    # Resolve the integration role BEFORE record-green.sh runs: it writes the
+    # v2 event, and a resolver failure after that would exit non-zero on a
+    # half-record. record-green.sh refuses the same malformed conf itself, so
+    # refusing here first changes only the ordering, never the outcome.
+    pipeline_config = _load_pipeline_config()
+    try:
+        integration = pipeline_config.integration_branch()
+    except pipeline_config.PipelineConfigError as exc:
+        print(f"record-green: refusing, nothing recorded -- {exc}", file=sys.stderr)
+        return 1
+
     bash = shutil.which("bash") or "bash"
     result = subprocess.run([bash, _RECORD_GREEN_SH] + argv)
     # No capture_output — record-green.sh's own INFO/ERROR lines stream live,
@@ -118,7 +129,7 @@ def main(argv=None):
 
     # Same value certifies both the v2 event (written by record-green.sh
     # above) and this v3 span -- never two independent resolutions.
-    sha = explicit_sha or _resolve_develop_sha() or "unknown"
+    sha = explicit_sha or _resolve_develop_sha(integration) or "unknown"
     trace = _load_trace()
     trace.emit_span(trace_id=f"green-{sha}", kind="develop_green", attrs={"sha": sha})
     print(f"record-green: v3 develop_green span appended sha={sha}")
