@@ -11,7 +11,6 @@
 #   - In-flight assigned slices
 #   - Open PRs (recent 3)
 #   - Open captured-queue depth
-#   - Dashboard freshness (last /api/meta ping age in minutes)
 #   - jq / hooks warnings
 #
 # Graceful degradation: missing gh → one-line warning, never block.
@@ -131,7 +130,6 @@ NH_PRS="(gh/jq unavailable)"
 SL="(gh/jq unavailable)"
 PR="(gh/jq unavailable)"
 CAP="(gh/jq unavailable)"
-DASH_FRESH="(not checked)"
 
 if [ "$GH_OK" -eq 1 ]; then
   # Five independent gh queries run CONCURRENTLY as backgrounded jobs, each
@@ -179,37 +177,10 @@ if [ "$GH_OK" -eq 1 ]; then
   rm -f "$T_NH" "$T_SL" "$T_CAP" "$T_PR" "$T_NHPR" 2>/dev/null
 fi
 
-# ---- Dashboard freshness (no gh required) -----------------------------------
-# Identity-verifying (#1184 incident fix, slice #1189), repointed by #1204 to
-# the ONE shared probe contract (lib-root.sh's dashboard_probe_identity(),
-# curl --max-time) instead of duplicating an inline python socket-based
-# probe: the old inline probe's per-address-family timeout paid 4.14s on an
-# EMPTY port (2s IPv6 + 2s IPv4) -- worse than the squatted-port case. Same
-# three-way distinction as before: "no listener at all" vs "occupied by a
-# foreign listener" (something answered but failed identity) vs "up"
-# (verified).
-if command -v curl >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
-  DASH_PROBE=$(dashboard_probe_identity "python3" "http://localhost:8765" 2 2>/dev/null || echo "")
-  case "$DASH_PROBE" in
-    ok\ *)
-      DASH_FRESH="dashboard up (sha ${DASH_PROBE#ok })"
-      ;;
-    occupied\ *)
-      DASH_FRESH="dashboard OCCUPIED (foreign listener: ${DASH_PROBE#occupied })"
-      ;;
-    no-server)
-      DASH_FRESH="dashboard unreachable (no listener on 8765)"
-      ;;
-    *)
-      DASH_FRESH="(check failed)"
-      ;;
-  esac
-fi
-
 # ---- Build context string ---------------------------------------------------
-CTX=$(printf "Branch: %s | %s commit(s) behind origin/develop\n\nRecent commits:\n%s\n\nNeeds-human issues: %s\nNeeds-human PRs: %s\nOpen slices: %s\nOpen PRs: %s\nOpen captured: %s\nDashboard: %s%s%s%s\n" \
+CTX=$(printf "Branch: %s | %s commit(s) behind origin/develop\n\nRecent commits:\n%s\n\nNeeds-human issues: %s\nNeeds-human PRs: %s\nOpen slices: %s\nOpen PRs: %s\nOpen captured: %s%s%s%s\n" \
   "$BR" "$DIV" "$LOG" \
-  "$NH_ISSUES" "$NH_PRS" "$SL" "$PR" "$CAP" "$DASH_FRESH" \
+  "$NH_ISSUES" "$NH_PRS" "$SL" "$PR" "$CAP" \
   "$JQ_WARN" "$GH_WARN" "$DEPLOY_WARN" \
   | head -c 6144 | head -n 60)
 
