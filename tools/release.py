@@ -80,9 +80,16 @@ def _gh():
 
 
 def _run_gh(args):
-    return subprocess.run(
-        [_gh()] + args, capture_output=True, text=True, encoding="utf-8", errors="replace",
-    )
+    """Run gh, decoding UTF-8. A gh that cannot run at all (missing, not
+    executable) returns a failed result (rc 127) rather than raising, so
+    every caller reads it as the failed read it is, never as "none"."""
+    cmd = [_gh()] + args
+    try:
+        return subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+    except OSError as exc:
+        return subprocess.CompletedProcess(cmd, 127, "", f"could not run gh: {exc}")
 
 
 def _write_stdout_utf8(text):
