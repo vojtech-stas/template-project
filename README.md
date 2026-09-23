@@ -20,7 +20,7 @@ This repo is designed to be cloned under your own owner/name and run as-is — n
    ```bash
    gh auth login
    ```
-3. **Run bootstrap** — creates all required labels (including `needs-human-check`), installs git hooks via `core.hooksPath`, checks that `gh`, `git`, and `python3` are on your PATH, and applies branch protection R1+R2 to `develop`:
+3. **Run bootstrap** — creates all required labels (including `needs-human-check`), installs git hooks via `core.hooksPath`, checks that `gh`, `git`, and `python3` are on your PATH, creates the configured integration branch from the release branch's tip if your clone doesn't already have one, and applies branch protection R1+R2+R4 to both configured branches (per [ADR-0089](decisions/0089-per-repo-pipeline-identity.md) D1/D2 — this repo's configured pair is `develop`/`main`; a fresh template clone gets `develop`/`main` too unless you edit `.claude/pipeline.conf`):
    ```bash
    bash bootstrap.sh
    ```
@@ -292,7 +292,7 @@ cd my-new-project
 # open in Claude Code — CLAUDE.md auto-loads, the agents are oriented
 ```
 
-[`bootstrap.sh`](bootstrap.sh) is the canonical fresh-clone setup per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6: it creates the 6 repo labels (`prd`, `slice`, `backlog`, `captured`, `trivial`, `needs-human`), installs the pre-commit hook via `core.hooksPath`, detects the GitHub Project v2 board, and applies branch protection R1+R2 to `develop`. Every step is idempotent (safe to re-run) and best-effort (single-step failures warn-and-continue).
+[`bootstrap.sh`](bootstrap.sh) is the canonical fresh-clone setup per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6 (branch-role steps per [ADR-0089](decisions/0089-per-repo-pipeline-identity.md) D2): it creates the 6 repo labels (`prd`, `slice`, `backlog`, `captured`, `trivial`, `needs-human`), installs the pre-commit hook via `core.hooksPath`, detects the GitHub Project v2 board, creates the configured integration branch from the release branch's tip when your clone doesn't already have one, and applies branch protection R1+R2+R4 to both configured branches. Every step is idempotent (safe to re-run) and best-effort (single-step failures warn-and-continue).
 
 Then: `/grill-me` to start a new feature, `/ship` to hand off to the autonomous pipeline, `/qa-plan` to verify when the last slice merges.
 
@@ -358,7 +358,7 @@ Claude Code session hooks configured in `.claude/settings.json` (scripts in `.cl
 
 ### Architecture Decision Records
 
-[`decisions/`](decisions/) holds 84 ADR(s). See [`decisions/README.md`](decisions/README.md) for the full index.
+[`decisions/`](decisions/) holds 85 ADR(s). See [`decisions/README.md`](decisions/README.md) for the full index.
 
 ## Subagent-quality maintenance
 
@@ -378,7 +378,7 @@ To add a term, edit that section directly in a normal reviewer-gated PR, followi
 
 Walking-skeleton phase. The pipeline is being built incrementally **on the project itself** — dogfooding from day one. The autonomous loop now ships PRDs end-to-end with all five stages live: `/grill-me` → `to-prd`+critics → `to-issues`+slicer-critic → `implementer`+`reviewer` (per slice, DAG-batched) → `/qa-plan` at acceptance. All operational content lives in skills + subagents + CLAUDE.md + ADRs per [ADR-0032](decisions/0032-workflow-only-architecture.md).
 
-> **Auto-generated component counts** (as of last generator run): 6 skill(s), 6 critic(s) + 3 generator(s), 7 hook(s), 84 ADR(s).
+> **Auto-generated component counts** (as of last generator run): 6 skill(s), 6 critic(s) + 3 generator(s), 7 hook(s), 85 ADR(s).
 
 ## License
 

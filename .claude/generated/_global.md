@@ -115,6 +115,10 @@ Atomic rules for the `pipeline` scope, generated from non-superseded ADR frontma
 - **PIP-028:** Every drain run appends to `.claude/logs/drain/<run-id>.jsonl` at the git-common-dir root with the closed kind set {run_start, triaged, item_start, item_done, escalated, fix_queued, fixed_in_run, parked, resumed, run_end} and lane assignment as a field on `triaged`; trace-v3's enum is untouched; a park writes a `parked` record naming remaining items in resume order, including every still-unlanded `fix_queued`; the DRAIN-LEDGER health row enforces schema, kinds, recorded-escalation completeness, triage-precedence, the concurrency bound, and fix-queued parity — evaluated from the ledger alone, never from live GitHub state (ADR-0085 D4/D6).
 - **PIP-029:** Trivial-lane discoveries land inside the drain run as their own `hotfix/*` PRs recorded `fixed_in_run`; a drain run may not reach its terminal record with a `fix_queued` item that lacks a `fixed_in_run`, a `captured_ref`, or (on a park) a place in the remaining-items list; I3's definition, rule #13 root-cause captures, and the ADR-0067 regression rider are unchanged (ADR-0085 D5).
 
+#### Source: ADR-0089 (`decisions/0089-per-repo-pipeline-identity.md`)
+- **PIP-031:** Pipeline executables (`tools/`, `dashboard/`, `.claude/hooks/`, `.githooks/`, `bootstrap.sh`) and agent/skill prompt commands name the integration or release branch only through `tools/pipeline_config.py`, which reads the tracked `.claude/pipeline.conf` (defaults `develop`/`main`). Agents branch from, diff against, verify on and open PRs to the integration branch. CI CHECK 29 fails on a literal branch token in that defined subject set (ADR-0089 D1/D3).
+- **PIP-032:** A health-check grandfather anchor is an ISO-8601 UTC instant in `dashboard/_constants.py` `GRANDFATHER_UNTIL`, compared against merge time through `grandfathered()`. It is never a PR/issue number or commit sha of this repo. CI CHECK 29 fails on a numeric or sha-valued anchor constant (ADR-0089 D4).
+
 ### Regression rules
 Atomic rules for the `regression` scope, generated from non-superseded ADR frontmatter by `tools/gen_rules.py`.
 

@@ -3,7 +3,12 @@
 tools/pipe/pr-open — atomic wrapper: `gh pr create` + pr_opened v3 span.
 
 Usage: python tools/pipe/pr-open <passthrough gh pr create args...>
-  e.g. python tools/pipe/pr-open --title "..." --body-file /tmp/pr.md --base develop
+  e.g. python tools/pipe/pr-open --title "..." --body-file /tmp/pr.md
+
+Default base (ADR-0089 D3): when the caller passes neither --base nor -B,
+this wrapper appends --base <integration> itself, resolved via
+tools/pipeline_config.py for the repository the caller operates in. An
+explicit --base/-B always wins.
 
 Real-path repoint target for implementer.md step 7 (slice #1078 / PRD #1075
 criterion 1): the wrapper appends a pr_opened span to the canonical trace log
@@ -31,11 +36,23 @@ import time
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _TOOLS_DIR = os.path.dirname(_THIS_DIR)
 _TRACE_PY = os.path.join(_TOOLS_DIR, "trace.py")
+_PIPELINE_CONFIG_PY = os.path.join(_TOOLS_DIR, "pipeline_config.py")
 
 
 def _load_trace():
     # Loaded under a distinct module name — never "trace" (stdlib collision).
     spec = importlib.util.spec_from_file_location("trace_v3", _TRACE_PY)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _load_pipeline_config():
+    # S1-c: located relative to THIS file (_TOOLS_DIR above), never via
+    # $REPO_ROOT or `git rev-parse --show-toplevel` of the cwd repo.
+    spec = importlib.util.spec_from_file_location(
+        "pipeline_config", _PIPELINE_CONFIG_PY
+    )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -95,6 +112,12 @@ def main(argv=None):
     argv = list(argv if argv is not None else sys.argv[1:])
     trace = _load_trace()
     log_path = trace.trace_log_path()
+
+    # ADR-0089 D3: default the base to the configured integration branch
+    # when the caller passed neither --base nor -B. An explicit base wins.
+    if _extract_arg_value(argv, ["--base", "-B"]) is None:
+        pipeline_config = _load_pipeline_config()
+        argv = argv + ["--base", pipeline_config.integration_branch()]
 
     # 1. Validate log writability BEFORE running gh at all (atomic intent —
     #    gh is never executed if we can't record the side effect).
