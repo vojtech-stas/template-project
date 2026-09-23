@@ -89,7 +89,7 @@ class TestDiscoveryTelemetryRootWorktreeScenario(unittest.TestCase):
             tmp_path = Path(tmp)
 
             # "A" = worktree code root — settings.json + hooks/ present, NO
-            # .claude/logs/ (mirrors a worktree-run dashboard).
+            # .claude/logs/ (mirrors a dashboard/ command run from a worktree).
             root_a = tmp_path / "worktree_a"
             (root_a / ".claude" / "hooks").mkdir(parents=True)
             (root_a / ".claude" / "settings.json").write_text(SETTINGS_JSON, encoding="utf-8")

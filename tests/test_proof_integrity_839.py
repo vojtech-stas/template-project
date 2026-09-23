@@ -12,7 +12,7 @@ Three test groups (ADR-0067 D2 test-first ordering):
   3. PROOF-INTEGRITY WARNs honestly when there is no qualifying data.
 
 All assertions run the check via subprocess with env-var injection so we never
-need network access or a running dashboard — fully deterministic.
+need network access or a running server — fully deterministic.
 
 Runner: stdlib unittest + pytest compatible.
   python -m pytest tests/test_proof_integrity_839.py -v

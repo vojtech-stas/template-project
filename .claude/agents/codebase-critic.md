@@ -41,7 +41,7 @@ If `WHOLE_REPO: true` is present → execute the protocol below and return with 
 - `.claude/agents/reviewer.md` — sole merge gate; its rubric cites many ADRs
 - `.claude/agents/codebase-critic.md` (this file) — to check self-consistency
 - `dashboard/_constants.py` — the single-sourced `KNOWN_CRITICS` roster (ADR-0088 D4) — the roster-duplication seam the dashboard-re-impl class lives in
-- `tools/ci-checks.sh` — the deterministic CI gate; cross-references dashboard + decisions
+- `tools/ci-checks.sh` — the deterministic CI gate; cross-references the dashboard/ health registry + decisions
 
 You may read additional files if a specific cross-subsystem seam becomes visible during the map pass (e.g., a new agent that cites an ADR in a way that seems off). Keep total additional reads ≤5 files.
 

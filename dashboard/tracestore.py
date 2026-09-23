@@ -65,7 +65,7 @@ PR #1095's tracestore before this slice made it live):
      misses same-second rewrites on low-resolution filesystems (the
      "stale-tick" edge); the fingerprint is now `f"{mtime}:{size}"`.
 
-Python API (for dashboard reuse):
+Python API:
   db_path(override=None) -> str
   fold(log_path=None, db_path_=None, force=False) -> int  (spans folded)
   acid_path(pr_number, log_path=None, db_path_=None) -> list[dict] | None

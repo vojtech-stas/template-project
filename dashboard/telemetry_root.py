@@ -19,8 +19,8 @@ Usage (e.g. in discovery.py):
 
 Only the two shared log files (hook-fires.jsonl, workflow-events.jsonl) should
 use this.  Code/doc paths (agents/, skills/, decisions/) must remain relative
-to _TELEMETRY_CODE_ROOT so that a worktree-run dashboard still reads its own
-worktree's source artifacts.
+to _TELEMETRY_CODE_ROOT so that a dashboard/ command run from a worktree
+still reads its own worktree's source artifacts.
 
 Slice: #1021  Root-cause: ADR-0058 D3 / git-common-dir worktree pattern.
 """

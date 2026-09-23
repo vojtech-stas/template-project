@@ -1,5 +1,6 @@
 """
-dashboard/discovery.py — filesystem discovery helpers for the dashboard.
+dashboard/discovery.py — filesystem discovery helpers, consumed by
+dashboard/readme_gen.py and tools/gen_repo_map.py.
 
 Exports:
     discover_skills()

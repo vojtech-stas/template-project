@@ -138,7 +138,7 @@ Solution sketch enumerates work-units; stays within stated feature; implies walk
 PRD §2 criteria are EARS-shaped: numbered, each leading with a WHEN/WHERE trigger context and a SHALL-style single observable behavior.
 
 **Mechanic:** For each numbered criterion in §2 Goal / Success criteria:
-1. **Trigger context present:** The criterion must begin with `WHEN`, `WHERE`, or a clear contextual trigger (e.g. "WHEN `/api/comparison` is queried…", "WHERE the Health tab renders…"). A criterion with no trigger — e.g. "The file exists" or "Users can see…" — lacks the context a qa-plan writer needs to know when and where to verify.
+1. **Trigger context present:** The criterion must begin with `WHEN`, `WHERE`, or a clear contextual trigger (e.g. "WHEN the daily digest job runs…", "WHERE the status report lists open PRs…"). A criterion with no trigger — e.g. "The file exists" or "Users can see…" — lacks the context a qa-plan writer needs to know when and where to verify.
 2. **Single observable behavior:** The criterion names exactly one observable outcome after the trigger. Two distinct behaviors in one criterion → multi-behavior violation. The observable must be concrete enough that a qa-plan writer can write one bash check or one `AskUserQuestion` for it.
 3. **`Verifiable:` escape hatch:** Non-behavioral criteria (doc presence, parity, perf budgets, grep-count assertions) are exempt from the WHEN/SHALL grammar provided they carry an explicit `Verifiable:` annotation that names the check command (e.g. `Verifiable: grep -c 'PC-EARS' .claude/agents/prd-critic.md ≥ 1`). A non-behavioral criterion without a `Verifiable:` annotation → FAIL.
 4. **Multi-behavior outside the hatch:** A criterion with two or more behaviors AND no `Verifiable:` escape hatch → FAIL.
@@ -149,7 +149,7 @@ PRD §2 criteria are EARS-shaped: numbered, each leading with a WHEN/WHERE trigg
 
 **Rationale:** Free-prose PRD criteria produce `EXTRACT_FAILED` and `JUDGMENT` residuals in `/qa-plan` by construction (ADR-0020 D2). EARS-shaped criteria make the prose extractable structurally, shrinking both residual classes. The `Verifiable:` escape hatch avoids contorted grammar for legitimately non-behavioral criteria (ADR-0066 D1). Measurement: the `RESIDUAL-RATIO` registry row tracks (JUDGMENT + EXTRACT_FAILED) / total across QA-plan tables — if the ratio does not fall after adoption, the rule is theater and should be dropped (drop-criterion per ADR-0066 D1).
 
-**Examples:** `"WHEN /api/comparison is queried for a nonexistent PRD, the response SHALL carry run_pass != true and a non-null error field"` → PASS (trigger + single SHALL-behavior). `"The file exists and the parity alarm is green"` → FAIL (no trigger, two behaviors, no `Verifiable:`). `"Verifiable: grep -c 'PC-EARS' .claude/agents/prd-critic.md ≥ 1"` → PASS (escape hatch). `"WHEN the deploy runs, the binary is built and tests pass and docs are updated"` → FAIL (multi-behavior outside hatch).
+**Examples:** `"WHEN the daily digest job runs for a day with zero merged PRs, the digest SHALL report zero merges and a non-null generated_at field"` → PASS (trigger + single SHALL-behavior). `"The file exists and the parity alarm is green"` → FAIL (no trigger, two behaviors, no `Verifiable:`). `"Verifiable: grep -c 'PC-EARS' .claude/agents/prd-critic.md ≥ 1"` → PASS (escape hatch). `"WHEN the deploy runs, the binary is built and tests pass and docs are updated"` → FAIL (multi-behavior outside hatch).
 
 ---
 
@@ -185,7 +185,7 @@ PRD §2 contains an actionable "Production check:" line (per [ADR-0037](../../de
 Unacceptable (FAIL) forms:
 - `"Production check: TBD"` or `"Production check: N/A"` (without the static assertion) → `"PC-PRODUCTION-CHECK: 'Production check:' line is non-actionable — must name what to exercise + expected result, or 'N/A — docs-only, static: <assertion>' (ADR-0037 D4)"`.
 - An empty value after the colon → same FAIL.
-- A vague verb-free sentence (e.g. `"The dashboard should work"`) → same FAIL.
+- A vague verb-free sentence (e.g. `"The daily digest should work"`) → same FAIL.
 
 **Rationale:** The `qa-tester` production-verify gate reads this line verbatim to know what to exercise (ADR-0037 D2 + D4). A missing or non-actionable line either breaks the gate (INVALID_INPUT) or causes it to exercise the wrong thing — catching non-actionability at PRD time costs one revision round; a broken gate post-merge costs a re-ship loop.
 
@@ -208,7 +208,7 @@ A PRD whose feature consumes an upstream pipeline stage must declare a live-feed
 
 **Rationale:** A feature that consumes pipeline output cannot be meaningfully verified if that pipeline is silent. Routing a dead upstream feed to PROVISIONAL masks the failure — it appears as an environment quirk when it is actually evidence the feature is untestable. Forcing FAIL surfaces the gap immediately and either (a) triggers a pipeline fix upstream or (b) reveals the precondition was not met before verification started. Per [ADR-0054](../../decisions/0054-critic-output-contracts-and-trailer-standard.md) D6.
 
-**Examples:** Dashboard PRD reads hook-fires.jsonl; §2 Production check: does NOT mention live-feed precondition → FAIL. Same PRD; §2 states "precondition: hook fires at least one beacon in the last 5 min; if feed dead, production check FAILS" → PASS. PRD ships a pure doc change with no upstream dependency → not applicable, PASS.
+**Examples:** Daily-digest PRD reads hook-fires.jsonl; §2 Production check: does NOT mention live-feed precondition → FAIL. Same PRD; §2 states "precondition: hook fires at least one beacon in the last 5 min; if feed dead, production check FAILS" → PASS. PRD ships a pure doc change with no upstream dependency → not applicable, PASS.
 
 ---
 
