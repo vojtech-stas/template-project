@@ -92,6 +92,25 @@ def _load_trace():
     return mod
 
 
+def _load_release():
+    # Release-mode primitives (freeze/lanes/packet/verify), ADR-0090 D3.
+    release_py = os.path.join(_TOOLS_DIR, "release.py")
+    spec = importlib.util.spec_from_file_location("release_v1", release_py)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _load_pipeline_config():
+    # No literal branch names (C1) — the integration branch is resolved
+    # only through this module (ADR-0089 D1).
+    pc_py = os.path.join(_TOOLS_DIR, "pipeline_config.py")
+    spec = importlib.util.spec_from_file_location("pipeline_config_dispatch", pc_py)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def _gh():
     return shutil.which("gh") or "gh"
 
@@ -258,14 +277,154 @@ def _cmd_end(slice_num, result):
     return 0
 
 
+# ---------------------------------------------------------------------------
+# Release-mode lane forms (PRD #1501 slice #1506, ADR-0090 D3): `--lane`
+# and `--end --lane`. New branches in main() only — `dispatch <slice>` and
+# `--end <slice>` above are untouched (C2).
+# ---------------------------------------------------------------------------
+
+def _fetch_integration_sha():
+    """Resolve the configured integration branch (never a literal — C1),
+    fetch it, and return `(branch, sha)`, or `(branch, None)` on failure."""
+    pc = _load_pipeline_config()
+    branch = pc.integration_branch()
+    subprocess.run(["git", "fetch", "origin", branch], capture_output=True, text=True)
+    res = subprocess.run(
+        ["git", "rev-parse", f"origin/{branch}"], capture_output=True, text=True,
+    )
+    if res.returncode != 0:
+        return branch, None
+    return branch, res.stdout.strip()
+
+
+def _cmd_dispatch_lane(branch, milestone, model, issue_numbers):
+    """`dispatch --lane <branch> --milestone <V> --model <m> <n>...`
+    (criteria 19-21). Refuses, writing no span, on any issue that is
+    closed, lacks `bug`, carries `slice`/`prd`, or lies outside `<V>`."""
+    trace = _load_trace()
+    release = _load_release()
+
+    owner_repo = release._remote_owner_repo()
+    if not owner_repo:
+        print("dispatch: refused — could not resolve owner/repo from origin", file=sys.stderr)
+        return 1
+    owner, repo = owner_repo
+
+    bad = []
+    for num in issue_numbers:
+        issue = release._fetch_issue_json(owner, repo, num)
+        if issue is None:
+            bad.append(f"#{num} not-found")
+            continue
+        if issue.get("state") != "open":
+            bad.append(f"#{num} closed")
+            continue
+        labels = release._issue_labels(issue)
+        if "bug" not in labels:
+            bad.append(f"#{num} not-bug")
+            continue
+        if "slice" in labels or "prd" in labels:
+            bad.append(f"#{num} slice-or-prd")
+            continue
+        ms_title = (issue.get("milestone") or {}).get("title")
+        if ms_title != milestone:
+            bad.append(f"#{num} outside-milestone")
+            continue
+    if bad:
+        print(f"dispatch: refused — lane issue(s) invalid: {', '.join(bad)}", file=sys.stderr)
+        return 1
+
+    _int_branch, sha = _fetch_integration_sha()
+    if not sha:
+        print("dispatch: refused — could not resolve the integration branch's sha", file=sys.stderr)
+        return 1
+
+    packet_text = release.build_packet(owner, repo, issue_numbers, sha)
+
+    attrs = {
+        "lane": branch,
+        "issues": ",".join(issue_numbers),
+        "milestone": milestone,
+        "model": model,
+        "sha": sha,
+    }
+    trace.emit_span(trace_id=f"lane-{branch}", kind="dispatch", attrs=attrs)
+    sys.stdout.write(packet_text)
+    return 0
+
+
+def _cmd_dispatch_end_lane(branch, result):
+    """`dispatch --end --lane <branch> --result <r>` (criterion 20)."""
+    trace = _load_trace()
+    attrs = {"lane": branch, "result": result}
+    trace.emit_span(trace_id=f"lane-{branch}", kind="dispatch_end", attrs=attrs)
+    print(f"dispatch: recorded dispatch_end lane={branch} result={result}")
+    return 0
+
+
+def _parse_lane_args(rest):
+    """`<branch> --milestone <V> --model <m> <n>...` -> (branch, milestone,
+    model, issue_numbers), or None on a malformed argument list."""
+    if not rest:
+        return None
+    branch = rest[0]
+    tail = rest[1:]
+    milestone = None
+    model = None
+    issues = []
+    i = 0
+    while i < len(tail):
+        if tail[i] == "--milestone" and i + 1 < len(tail):
+            milestone = tail[i + 1]
+            i += 2
+            continue
+        if tail[i] == "--model" and i + 1 < len(tail):
+            model = tail[i + 1]
+            i += 2
+            continue
+        issues.append(tail[i])
+        i += 1
+    if not milestone or not model or not issues:
+        return None
+    return branch, milestone, model, issues
+
+
 def main(argv=None):
     argv = list(argv if argv is not None else sys.argv[1:])
     if not argv:
         print("usage: dispatch <slice> | dispatch --end <slice> --result <r>", file=sys.stderr)
         return 64
 
+    if argv[0] == "--lane":
+        parsed = _parse_lane_args(argv[1:])
+        if parsed is None:
+            print(
+                "usage: dispatch --lane <branch> --milestone <V> --model <m> <n>...",
+                file=sys.stderr,
+            )
+            return 64
+        branch, milestone, model, issues = parsed
+        return _cmd_dispatch_lane(branch, milestone, model, issues)
+
     if argv[0] == "--end":
         rest = argv[1:]
+        if rest and rest[0] == "--lane":
+            lane_rest = rest[1:]
+            if not lane_rest:
+                print("usage: dispatch --end --lane <branch> --result <r>", file=sys.stderr)
+                return 64
+            branch = lane_rest[0]
+            lane_tail = lane_rest[1:]
+            result = None
+            if "--result" in lane_tail:
+                idx = lane_tail.index("--result")
+                if idx + 1 < len(lane_tail):
+                    result = lane_tail[idx + 1]
+            if not result:
+                print("usage: dispatch --end --lane <branch> --result <r>", file=sys.stderr)
+                return 64
+            return _cmd_dispatch_end_lane(branch, result)
+
         if not rest:
             print("usage: dispatch --end <slice> --result <r>", file=sys.stderr)
             return 64
