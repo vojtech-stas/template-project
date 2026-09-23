@@ -17,6 +17,17 @@ set -uo pipefail
 
 FAIL_COUNT=0
 
+# Resolve the configured integration branch once (ADR-0089 D1), located
+# relative to THIS script's own path (S1-c) — never via $REPO_ROOT or
+# `git rev-parse --show-toplevel` of the cwd repo. `pwd -W` (falls back to
+# plain `pwd` where unsupported) gives a native-form path so the python3
+# call below resolves correctly even under MSYS_NO_PATHCONV=1.
+_CI_TOOLS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -W 2>/dev/null || pwd)"
+INTEGRATION_BRANCH="$(python3 "$_CI_TOOLS_DIR/pipeline_config.py" integration)" || {
+    echo "FAIL: cannot resolve the integration branch (tools/pipeline_config.py failed)" >&2
+    exit 1
+}
+
 fail() {
     echo "FAIL: $*" >&2
     FAIL_COUNT=$((FAIL_COUNT + 1))
@@ -40,35 +51,43 @@ fi
 # CHECK 2: README regen-clean
 # ---------------------------------------------------------------------------
 echo "--- CHECK 2: README regen-clean ---"
-if command -v python3 > /dev/null 2>&1 && [ -f "dashboard/server.py" ]; then
+if ! command -v python3 > /dev/null 2>&1; then
+    # python3 itself missing is the one soft-degrade every check shares
+    # (ADR-0088 D3 — unchanged).
+    echo "SKIP: CHECK 2 — python3 not available (soft-degrade)"
+elif [ ! -f "dashboard/readme_gen.py" ]; then
+    # ADR-0088 D3: the missing-generator branch fails CLOSED, not SKIP — a
+    # moved/deleted generator must never turn the README gate into a silent
+    # green SKIP.
+    fail "CHECK 2 — dashboard/readme_gen.py not found; README currency cannot be verified"
+else
     # Stash the current README into a temp file so we can restore it without
     # clobbering pre-existing uncommitted edits (issue #727: git checkout --
     # README.md is destructive; cp/mv is safe).
     _readme_tmp=$(mktemp)
     cp README.md "$_readme_tmp"
-    python3 dashboard/server.py --generate-readme > /dev/null 2>&1
+    python3 dashboard/readme_gen.py > /dev/null 2>&1
     if git diff --exit-code README.md > /dev/null 2>&1; then
         pass "README.md is up-to-date with regen output"
     else
-        fail "README.md is stale — run 'python3 dashboard/server.py --generate-readme' and commit"
+        fail "README.md is stale — run 'python3 dashboard/readme_gen.py' and commit"
     fi
     # Always restore to pre-check state (avoids polluting diff for other checks
     # and preserves any pre-existing uncommitted edits).
     cp "$_readme_tmp" README.md
     rm -f "$_readme_tmp"
-else
-    echo "SKIP: CHECK 2 — python3 or dashboard/server.py not available (soft-degrade)"
 fi
 
 # ---------------------------------------------------------------------------
 # CHECK 3: Commit subjects — ≤72 chars + Conventional Commits format
 # ---------------------------------------------------------------------------
-echo "--- CHECK 3: commit subjects over origin/develop..HEAD ---"
-# Fetch origin/develop so the range is available in CI (ADR-0070 D1).
-git fetch origin develop --quiet 2>/dev/null || true
+echo "--- CHECK 3: commit subjects over origin/${INTEGRATION_BRANCH}..HEAD ---"
+# Fetch origin/<integration> so the range is available in CI (ADR-0070 D1,
+# as amended by ADR-0089 D1).
+git fetch origin "$INTEGRATION_BRANCH" --quiet 2>/dev/null || true
 
 CONV_RE='^(feat|fix|chore|refactor|docs|test|perf|style|build|ci)(\(.+\))?: .+'
-RANGE_COMMITS=$(git log --no-merges --format='%s' origin/develop..HEAD 2>/dev/null || true)
+RANGE_COMMITS=$(git log --no-merges --format='%s' "origin/${INTEGRATION_BRANCH}..HEAD" 2>/dev/null || true)
 
 if [ -z "$RANGE_COMMITS" ]; then
     echo "CHECK 3 VACUOUS — no commits in range; subject-format not verified"
@@ -304,7 +323,7 @@ import re, os, sys, glob
 
 REPO_ROOT = os.getcwd()
 AGENTS_DIR = os.path.join(REPO_ROOT, '.claude', 'agents')
-SERVER_PY  = os.path.join(REPO_ROOT, 'dashboard', 'server.py')
+CONSTANTS_PY = os.path.join(REPO_ROOT, 'dashboard', '_constants.py')
 CLAUDE_MD  = os.path.join(REPO_ROOT, 'CLAUDE.md')
 README_MD  = os.path.join(REPO_ROOT, 'README.md')
 
@@ -322,17 +341,18 @@ def read_file(path):
         return ''
 
 # ------------------------------------------------ (a) source ↔ reality ------
-# Parse KNOWN_CRITICS from dashboard/server.py (set literal, one name per line).
-spec_text = read_file(SERVER_PY)
+# Parse KNOWN_CRITICS from dashboard/_constants.py (set literal, one name per
+# line) — the single-sourced home since ADR-0088 D4 retired the HTTP server module.
+spec_text = read_file(CONSTANTS_PY)
 if not spec_text:
-    fail('CHECK 7(a) — could not read dashboard/server.py')
+    fail('CHECK 7(a) — could not read dashboard/_constants.py')
 else:
     # Extract the KNOWN_CRITICS set: lines like: "    \"reviewer\","
     kc_block = re.search(
         r'KNOWN_CRITICS\s*=\s*\{([^}]+)\}', spec_text, re.DOTALL
     )
     if not kc_block:
-        fail('CHECK 7(a) — KNOWN_CRITICS not found in dashboard/server.py')
+        fail('CHECK 7(a) — KNOWN_CRITICS not found in dashboard/_constants.py')
     else:
         spec_critics = set(re.findall(r'"([^"]+)"', kc_block.group(1)))
         # Discover agent file stems from .claude/agents/*.md
@@ -357,6 +377,29 @@ else:
                     f'CHECK 7(a) — .claude/agents/{stem}.md exists but '
                     f'"{stem}" is not in KNOWN_CRITICS spec'
                 )
+
+# ------------------------------------------- (a2) single-definition assertion
+# ADR-0088 D4: KNOWN_CRITICS must be defined exactly once across dashboard/
+# and tools/ — dashboard/_constants.py is the sole canonical home. A second
+# definition anywhere under those two trees is a FAIL naming that file.
+_kc_def_re = re.compile(r'^\s*_?KNOWN_CRITICS\s*=', re.MULTILINE)
+_kc_def_files = []
+for _tree in ('dashboard', 'tools'):
+    _tree_dir = os.path.join(REPO_ROOT, _tree)
+    if not os.path.isdir(_tree_dir):
+        continue
+    for _f in glob.glob(os.path.join(_tree_dir, '**', '*.py'), recursive=True):
+        _text = read_file(_f)
+        if _kc_def_re.search(_text):
+            _kc_def_files.append(os.path.relpath(_f, REPO_ROOT).replace(os.sep, '/'))
+if len(_kc_def_files) > 1:
+    fail(
+        'CHECK 7(a) — multiple KNOWN_CRITICS definitions found: '
+        + ', '.join(sorted(_kc_def_files))
+        + ' (expected exactly one, in dashboard/_constants.py)'
+    )
+elif len(_kc_def_files) == 0:
+    fail('CHECK 7(a) — no KNOWN_CRITICS definition found under dashboard/ or tools/')
 
 # ------------------------------------------------ (b) artifact ↔ source -----
 # README "Adversarial critics" section lists critics — each must have an agent file.
@@ -511,7 +554,7 @@ fi
 #   automatically as new checks are added to the registry, so no manual
 #   update is needed here (ADR-0064 D3 single-source model).
 #
-#   Prior design imported server.py directly (DOCS-1..10 hard-coded list);
+#   Prior design imported the HTTP server module directly (DOCS-1..10 hard-coded list);
 #   that approach silently omitted DOCS-11 (check_docs11_dead_citations) and
 #   any future DOCS-N — a regression-class risk per codebase-critic CC-REF-CURRENCY.
 #   The registry-CLI approach eliminates the static enumeration entirely.
@@ -1081,7 +1124,7 @@ fi
 # (CHECK-19 precedent); soft-degrades to SKIP when gh is unavailable/
 # unauthenticated for local dev runs without a token.
 # ---------------------------------------------------------------------------
-echo "--- CHECK 23: verdict-presence — merged develop PRs carry VERDICT: APPROVE ---"
+echo "--- CHECK 23: verdict-presence — merged ${INTEGRATION_BRANCH} PRs carry VERDICT: APPROVE ---"
 if ! command -v python3 > /dev/null 2>&1 || [ ! -f "tools/check-verdict-presence.py" ]; then
     echo "SKIP: CHECK 23 — python3 or tools/check-verdict-presence.py not available (soft-degrade)"
 else
@@ -1655,6 +1698,31 @@ if [ "$CHECK27_EXIT" -ne 0 ]; then
     FAIL_COUNT=$((FAIL_COUNT + 1))
 fi
 fi  # end python3 availability check
+
+# ---------------------------------------------------------------------------
+# CHECK 28: QUARANTINE-SLA — tests/quarantine.txt entries within the 30-day
+# SLA (ADR-0067 D4; PRD #1462 / slice #1463)
+#
+#   Delegates to the health.py registry (ADR-0064 D3 single-source model),
+#   mirroring CHECK 9's WARN-allowed/FAIL-blocks pattern: health.py's own
+#   `--check` CLI exits 0 on PASS/WARN and 1 on FAIL, so a WARN-worthy
+#   register (entries present but none breaching) still passes this check;
+#   only a FAIL (>30-day breach) trips it.
+# ---------------------------------------------------------------------------
+echo "--- CHECK 28: QUARANTINE-SLA — quarantine register 30-day SLA ---"
+if ! command -v python3 > /dev/null 2>&1; then
+    echo "SKIP: CHECK 28 — python3 not available (soft-degrade)"
+elif [ ! -f "dashboard/health.py" ]; then
+    echo "SKIP: CHECK 28 — dashboard/health.py not found (soft-degrade)"
+else
+    CHECK28_OUTPUT=$(python3 dashboard/health.py --check QUARANTINE-SLA 2>&1)
+    CHECK28_EXIT=$?
+    if [ "$CHECK28_EXIT" -eq 0 ]; then
+        pass "CHECK 28 — $CHECK28_OUTPUT"
+    else
+        fail "CHECK 28 — $CHECK28_OUTPUT"
+    fi
+fi
 
 # ---------------------------------------------------------------------------
 # Summary

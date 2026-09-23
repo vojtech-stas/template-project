@@ -12,7 +12,7 @@ Three test groups (ADR-0067 D2 test-first ordering):
   3. PROOF-INTEGRITY WARNs honestly when there is no qualifying data.
 
 All assertions run the check via subprocess with env-var injection so we never
-need network access or a running dashboard — fully deterministic.
+need network access or a running server — fully deterministic.
 
 Runner: stdlib unittest + pytest compatible.
   python -m pytest tests/test_proof_integrity_839.py -v
@@ -147,7 +147,7 @@ def _make_browser_pr(
         "number": number,
         "headRefName": f"feat/{number}-some-feature",
         "labels": [],
-        "files": [{"path": "dashboard/health.py"}],
+        "files": [{"path": "site/preview.html"}],
         "body": body,
         "comments": [],
     }
@@ -253,7 +253,7 @@ class TestProofIntegrityPassesOnDomAttestedProof(unittest.TestCase):
             "number": 920,
             "headRefName": "feat/920-dashboard-feature",
             "labels": [],
-            "files": [{"path": "dashboard/server.py"}],
+            "files": [{"path": "site/preview.html"}],
             "body": (
                 "## Verification\n"
                 "screenshot: /qa-proof/920/health.png\n"

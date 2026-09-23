@@ -10,8 +10,11 @@ This test FAILs on develop before the fix and PASSes after.
 
 The former front-end facet (loadHealth()'s _isCold logic) is retired per
 ADR-0080 D1: loadHealth() and the entire old Health-tab render pipeline
-were deleted with the Health tab; the new thin health strip (fetched once
-per page load, not polled) has no equivalent fast-retry/_isCold concern.
+were deleted with the Health tab; the thin health strip that replaced it
+(fetched once per page load, not polled) had no equivalent fast-retry/
+_isCold concern, and was itself retired along with the rest of the served
+dashboard per ADR-0088 D1. `serve_health()` and its TTL cache survive as
+a library shim (captured: #1491) that this test still exercises directly.
 
 NO top-level `import pytest` — stdlib unittest only.
 

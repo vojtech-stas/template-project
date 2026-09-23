@@ -6,7 +6,7 @@ PRD #956 §2 AC #7:
       set in the observe() return dict (comparison.py threads it to the UI banner).
 
 Trimmed by PRD #1214 slice #1218 (module deletion): groups 1/2/3/5/6, which
-exercised runtime_observer.py directly, were deleted with their subject.
+exercised the runtime observer module directly, were deleted with their subject.
 Only ComparisonThread survives — it exercises comparison.py (a kept module).
 
 Post-deletion, comparison.py's `_apply_runtime_observation()` line-74
@@ -58,7 +58,7 @@ def _make_prd_trail(
 
 class TestComparisonThread(unittest.TestCase):
     """comparison._apply_runtime_observation() takes the dark-shape branch
-    now that runtime_observer.py is permanently deleted (AC #7 / PRD #1214
+    now that the runtime observer module is permanently deleted (AC #7 / PRD #1214
     §2 1e's named exception: capture_liveness/capture_unavailable/
     _observer_error take the capture-unavailable dark shape permanently).
     """
@@ -89,7 +89,7 @@ class TestComparisonThread(unittest.TestCase):
         }
 
     def test_runtime_observer_import_unconditionally_raises(self):
-        """Precondition: runtime_observer.py is deleted, so the exact import
+        """Precondition: the runtime observer module is deleted, so the exact import
         comparison.py's try/except performs (line 74: `from runtime_observer
         import observe`) raises with a non-empty message — the value that
         gets stored in the try/except's local `_observer_error`.

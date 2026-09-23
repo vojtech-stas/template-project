@@ -106,8 +106,9 @@ class TestRunboardStaleness1173(unittest.TestCase):
         self.assertTrue(board["now"][0]["stale"])
 
     def test_stale_threshold_seconds_echoed_in_payload(self):
-        """The board response echoes the configured threshold — the UI
-        must never hardcode it (ADR-0078 D1 provenance intent)."""
+        """The board response echoes the configured threshold — the caller
+        must never hardcode it (a run-board-era provenance intent; ADR-0078
+        D1 history, superseded by ADR-0088)."""
         board = self._build([])
         self.assertEqual(
             board["stale_threshold_seconds"],

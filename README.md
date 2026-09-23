@@ -20,7 +20,7 @@ This repo is designed to be cloned under your own owner/name and run as-is — n
    ```bash
    gh auth login
    ```
-3. **Run bootstrap** — creates all required labels (including `needs-human-check`), installs git hooks via `core.hooksPath`, checks that `gh`, `git`, and `python3` are on your PATH, and applies branch protection R1+R2 to `develop`:
+3. **Run bootstrap** — creates all required labels (including `needs-human-check`), installs git hooks via `core.hooksPath`, checks that `gh`, `git`, and `python3` are on your PATH, creates the configured integration branch from the release branch's tip if your clone doesn't already have one, and applies branch protection R1+R2+R4 to both configured branches (per [ADR-0089](decisions/0089-per-repo-pipeline-identity.md) D1/D2 — this repo's configured pair is `develop`/`main`; a fresh template clone gets `develop`/`main` too unless you edit `.claude/pipeline.conf`):
    ```bash
    bash bootstrap.sh
    ```
@@ -238,9 +238,9 @@ Per [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D1, the unit-
 
 - **PRD** — GitHub Issue (label `prd`). One feature per PRD.
 - **Slice** — GitHub sub-issue under the PRD (label `slice`). One INVEST-shaped vertical, fits in one PR.
-- **PR** — one merged change, closes one slice via `Closes #<slice-issue>` in the PR body.
+- **PR** — one merged change, closes one slice via `Closes #<slice-issue>` in the PR body. A release-mode lane PR (ADR-0090 D3/D4) closes `bug` issues instead, never a slice.
 
-No `feature` label, no `slice-N-foo` branch names. Branches use Conventional Commits prefixes — `<type>/<issue-number>-<kebab-summary>`. See [CLAUDE.md](CLAUDE.md) "Hierarchy" and "Operational git workflow" for the full operational logic.
+`bug`/`feature`/`lane` are release-mode class/lane labels (ADR-0090 D1/D3), not hierarchy tiers; no `slice-N-foo` branch names. Branches use Conventional Commits prefixes — `<type>/<issue-number>-<kebab-summary>`. See [CLAUDE.md](CLAUDE.md) "Hierarchy" and "Operational git workflow" for the full operational logic.
 
 ## Adversarial critics
 
@@ -267,7 +267,7 @@ The workflow is no longer "discipline-only convention" — these three layers en
 
 Per [ADR-0046](decisions/0046-codebase-critic-and-parsimony-reframe.md), a fourth layer is the **`codebase-critic`** — an adversarial post-PRD critic dispatched by `/ship` once per PRD at the last slice. It judges semantic reference currency, CLAUDE.md rule consistency, and structural drift that mechanical checks cannot see (supersedes the per-PR reviewer rule from ADR-0018).
 
-The pipeline is complemented at the Claude Code session level by **hooks** ([`.claude/settings.json`](.claude/settings.json)) configured per [ADR-0015](decisions/0015-claude-code-hooks-adoption.md) for logging / validation / notification (no skill auto-invocation; that requires session interaction). Current count (derived from `.claude/settings.json`): **8 outer hook entries** (2 SessionStart + 1 UserPromptSubmit + 3 PreToolUse + 1 PostToolUse + 1 Stop) → **8 inner hook commands** → **7 scripts** (`session-start.sh`, `dashboard-autostart.sh`, `user-prompt-submit.sh`, `pre-tool-edit.sh`, `pre-tool-bash.sh`, `log-tool-event.sh`, `stop-reviewer-gate.sh` per [ADR-0029](decisions/0029-stop-reviewer-signoff-gate.md)).
+The pipeline is complemented at the Claude Code session level by **hooks** ([`.claude/settings.json`](.claude/settings.json)) configured per [ADR-0015](decisions/0015-claude-code-hooks-adoption.md) for logging / validation / notification (no skill auto-invocation; that requires session interaction). Current count (derived from `.claude/settings.json`): **7 outer hook entries** (1 SessionStart + 1 UserPromptSubmit + 3 PreToolUse + 1 PostToolUse + 1 Stop) → **7 inner hook commands** → **6 scripts** (`session-start.sh`, `user-prompt-submit.sh`, `pre-tool-edit.sh`, `pre-tool-bash.sh`, `log-tool-event.sh`, `stop-reviewer-gate.sh` per [ADR-0029](decisions/0029-stop-reviewer-signoff-gate.md)).
 
 **Layer 4 — Claude Code session hooks** (per [ADR-0023](decisions/0023-validation-and-notification-hooks-extension.md), extending [ADR-0015](decisions/0015-claude-code-hooks-adoption.md) D6; 5 hooks across the full ADR-0015 → ADR-0023 → ADR-0028 → ADR-0029 → ADR-0030 wave):
 
@@ -298,7 +298,7 @@ cd my-new-project
 # open in Claude Code — CLAUDE.md auto-loads, the agents are oriented
 ```
 
-[`bootstrap.sh`](bootstrap.sh) is the canonical fresh-clone setup per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6: it creates the 6 repo labels (`prd`, `slice`, `backlog`, `captured`, `trivial`, `needs-human`), installs the pre-commit hook via `core.hooksPath`, detects the GitHub Project v2 board, and applies branch protection R1+R2 to `develop`. Every step is idempotent (safe to re-run) and best-effort (single-step failures warn-and-continue).
+[`bootstrap.sh`](bootstrap.sh) is the canonical fresh-clone setup per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6 (branch-role steps per [ADR-0089](decisions/0089-per-repo-pipeline-identity.md) D2): it creates the 6 repo labels (`prd`, `slice`, `backlog`, `captured`, `trivial`, `needs-human`), installs the pre-commit hook via `core.hooksPath`, detects the GitHub Project v2 board, creates the configured integration branch from the release branch's tip when your clone doesn't already have one, and applies branch protection R1+R2+R4 to both configured branches. Every step is idempotent (safe to re-run) and best-effort (single-step failures warn-and-continue).
 
 Then: `/grill-me` to start a new feature, `/ship` to hand off to the autonomous pipeline, `/qa-plan` to verify when the last slice merges.
 
@@ -314,9 +314,9 @@ All operational content lives in skills + subagents + CLAUDE.md + ADRs; no separ
 - **[`.githooks/`](.githooks/)** — workflow-enforcement pre-commit hook.
 - This README.
 
-### Dashboard
+### Observability
 
-Dashboard auto-starts on session start via the `dashboard-autostart.sh` SessionStart hook (per [ADR-0033](decisions/0033-tooling-spawn-hook-scope.md)). Visit `http://localhost:8765` — **Run-board** is the ONLY tab (PRD #1170 / [ADR-0078](decisions/0078-run-board-landing-view.md) D1, reduced from five tabs to one by PRD #1214 / [ADR-0080](decisions/0080-frontend-reduced-run-board-batch-plan-retired.md) D1): now/recent read strictly from the recorded v3 trace ledger via `/api/runboard` (the `next` panel retired per ADR-0080 D2), plus a recorded-pipeline-chains panel (`/api/trace-runs`, relocated from the deleted Firing tab) and a thin health strip (PASS/WARN/FAIL counts + FAIL names from `/api/health`, fetched once per page load with a manual Refresh). The former Architecture, Live, and Health tabs and their fifteen UI-only routes are deleted — topology lives in the CI-gated [`_repo-map.md`](.claude/generated/_repo-map.md) instead. Python stdlib only — no `pip install` needed. Manual start: `python dashboard/server.py`. See [`dashboard/README.md`](dashboard/README.md) for configuration and cross-platform notes.
+There is no served dashboard. Observability is the append-only logs under [`.claude/logs/`](.claude/logs/), read on demand by an LLM session — see [`docs/observability.md`](docs/observability.md) for the index of logs, their writers, and query helpers (`python3 tools/trace.py path --pr <n>`, `python3 dashboard/tracestore.py running|runboard`, `python3 dashboard/health.py --check <id>`). The remaining `dashboard/` modules are CLI-only pipeline tooling (health checks, the trace read-model, the README generator) — see [`dashboard/README.md`](dashboard/README.md) for the module inventory. Per [ADR-0088](decisions/0088-dashboard-frontend-retired.md).
 
 ## Component map
 
@@ -355,7 +355,6 @@ Specialist agents under `.claude/agents/`:
 Claude Code session hooks configured in `.claude/settings.json` (scripts in `.claude/hooks/`):
 
 - **[`session-start`](.claude/hooks/session-start.sh)** (`SessionStart`) — session-start.sh — deterministic read-only session context injection.
-- **[`dashboard-autostart`](.claude/hooks/dashboard-autostart.sh)** (`SessionStart`) — .claude/hooks/dashboard-autostart.sh — SessionStart tooling-spawn hook
 - **[`user-prompt-submit`](.claude/hooks/user-prompt-submit.sh)** (`UserPromptSubmit`) — UserPromptSubmit hook — nudge feature-request prompts toward /grill-me per ADR-0023 D5.
 - **[`pre-tool-edit`](.claude/hooks/pre-tool-edit.sh)** (`PreToolUse · Edit|MultiEdit|Write`) — PreToolUse(Edit|MultiEdit|Write) hook — extended per ADR-0028 with spec-gate;
 - **[`pre-tool-bash`](.claude/hooks/pre-tool-bash.sh)** (`PreToolUse · Bash`) — PreToolUse(Bash) hook — deny-guard for dangerous git ops and incident-backed pipeline bypasses.
@@ -365,7 +364,7 @@ Claude Code session hooks configured in `.claude/settings.json` (scripts in `.cl
 
 ### Architecture Decision Records
 
-[`decisions/`](decisions/) holds 83 ADR(s). See [`decisions/README.md`](decisions/README.md) for the full index.
+[`decisions/`](decisions/) holds 87 ADR(s). See [`decisions/README.md`](decisions/README.md) for the full index.
 
 ## Subagent-quality maintenance
 
@@ -385,7 +384,7 @@ To add a term, edit that section directly in a normal reviewer-gated PR, followi
 
 Walking-skeleton phase. The pipeline is being built incrementally **on the project itself** — dogfooding from day one. The autonomous loop now ships PRDs end-to-end with all five stages live: `/grill-me` → `to-prd`+critics → `to-issues`+slicer-critic → `implementer`+`reviewer` (per slice, DAG-batched) → `/qa-plan` at acceptance. All operational content lives in skills + subagents + CLAUDE.md + ADRs per [ADR-0032](decisions/0032-workflow-only-architecture.md).
 
-> **Auto-generated component counts** (as of last generator run): 6 skill(s), 6 critic(s) + 3 generator(s), 8 hook(s), 83 ADR(s).
+> **Auto-generated component counts** (as of last generator run): 6 skill(s), 6 critic(s) + 3 generator(s), 7 hook(s), 87 ADR(s).
 
 ## License
 

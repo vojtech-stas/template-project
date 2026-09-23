@@ -146,8 +146,8 @@ class TestPartialUnionNamesUnsatisfiedClass(unittest.TestCase):
             "headRefName": "feat/1230-something",
             "labels": [],
             "files": [
-                {"path": "dashboard/health.py"},  # -> browser
-                {"path": "tools/foo.py"},          # -> command-run
+                {"path": "site/preview.html"},  # -> browser
+                {"path": "tools/foo.py"},        # -> command-run
             ],
             "body": "ran it, exit=0",
             "comments": [],

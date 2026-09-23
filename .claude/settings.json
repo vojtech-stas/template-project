@@ -9,15 +9,6 @@
             "command": "bash \"${CLAUDE_PROJECT_DIR:-$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)\")}/.claude/hooks/session-start.sh\""
           }
         ]
-      },
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash \"${CLAUDE_PROJECT_DIR:-$(dirname \"$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)\")}/.claude/hooks/dashboard-autostart.sh\""
-          }
-        ]
       }
     ],
     "UserPromptSubmit": [

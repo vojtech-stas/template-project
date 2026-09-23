@@ -204,11 +204,11 @@ class TestHookTrioComposite:
 
 
 # ---------------------------------------------------------------------------
-# AC4: --list count invariant (currently 51)
+# AC4: --list count invariant (currently 49)
 # ---------------------------------------------------------------------------
 class TestListCountInvariant:
-    def test_list_count_is_51(self):
-        """python dashboard/health.py --list | wc -l must stay 51.
+    def test_list_count_is_49(self):
+        """python dashboard/health.py --list | wc -l must stay 49.
 
         Bumped from 47 to 50 by slice #1085 (PRD #1075 criteria 8/10c/10d),
         which legitimately registers THREE new checks: STREAM-LIVENESS,
@@ -222,10 +222,16 @@ class TestListCountInvariant:
         three checks: EVAL-REVIEWER, EVAL-PRD-CRITIC, EVAL-SLICER-CRITIC,
         retired together with the golden-set eval harness. Bumped from 50 to
         51 by slice #1329 (PRD #1326 §2 criterion 14 / ADR-0085 D6), which
-        registers ONE new check: DRAIN-LEDGER. This invariant guards against
-        ACCIDENTAL registry drift (duplicate/dropped IDs) — deliberate
-        additions and removals bump the literal in the same PR that adds or
-        deletes the check, per the established pattern for this test.
+        registers ONE new check: DRAIN-LEDGER. Moved from 51 to 49 by slice
+        #1483 (PRD #1480 §2 criterion 13 / ADR-0088 D6), which deliberately
+        REMOVES two checks: STALE-SERVER and DEAD-ROUTES, retired together
+        with the dashboard frontend they depended on. Bumped from 49 to 50
+        by slice #1498 (PRD #1496 §2 criterion 4 / ADR-0087 D2), which
+        registers ONE new check: QUERY-HONESTY. This invariant guards
+        against ACCIDENTAL registry drift (duplicate/dropped IDs) —
+        deliberate additions and removals bump the literal in the same PR
+        that adds or deletes the check, per the established pattern for
+        this test.
         """
         result = subprocess.run(
             [sys.executable, os.path.join(HEALTH_DIR, "health.py"), "--list"],
@@ -235,10 +241,11 @@ class TestListCountInvariant:
         assert result.returncode == 0, f"health.py --list failed: {result.stderr}"
         lines = [l for l in result.stdout.strip().splitlines() if l.strip()]
         count = len(lines)
-        assert count == 51, (
-            f"--list count changed! Expected 51, got {count}. "
+        assert count == 50, (
+            f"--list count changed! Expected 50, got {count}. "
             "Conservation violated (slice #968 §2 #8 / bumped by slice #1085, "
-            "#1136; moved to 50 by slice #1240; moved to 51 by slice #1329)."
+            "#1136; moved to 50 by slice #1240; moved to 51 by slice #1329; "
+            "moved to 49 by slice #1483; moved to 50 by slice #1498)."
         )
 
 

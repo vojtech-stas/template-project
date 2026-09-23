@@ -49,7 +49,7 @@ _(Rule #14 RETIRED per [ADR-0032](decisions/0032-workflow-only-architecture.md) 
 
 ## 2. Naming
 
-**Commits and branches:** follow Conventional Commits (rule #5 above). Branch names: `<type>/<N>-<kebab-summary>` for slices; `hotfix/<short-summary>` for trivial lane (I3).
+**Commits and branches:** follow Conventional Commits (rule #5 above). Branch names: `<type>/<N>-<kebab-summary>` for slices; `hotfix/<issue#>-<kebab-summary>` for trivial lane (I3) — same `<type>/<N>-<kebab-slug>` shape, since `hotfix` is just another `<type>`.
 
 OpenAI branches add `codex/<type>/<N>-<kebab-summary>` with the same closed type
 set and issue requirement. `tools/workflow_branch.py` supplies kind/issue/validity;
@@ -68,14 +68,14 @@ Per [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D1, the unit-
 
 - **PRD** — GitHub Issue, label `prd`. One feature-sized deliverable per PRD. Multi-feature PRDs are a smell.
 - **Slice** — GitHub sub-issue under the PRD (linked via the native sub-issue mechanism), label `slice`. One INVEST-shaped vertical, fits in one PR.
-- **PR** — one merged change, closes exactly one slice via `Closes #<slice-issue>` in the PR body.
+- **PR** — one merged change, closes exactly one slice via `Closes #<slice-issue>` in the PR body. A release-mode **lane PR** (ADR-0090 D3/D4) is the exception: it closes one or more `bug` issues and no slice.
 
 **Labels:**
-- Use `prd` and `slice` exclusively for hierarchy. **There is no `feature` label** — the PRD plays that role.
+- Use `prd` and `slice` exclusively for hierarchy. `bug`, `feature` and `lane` are release-mode **class**/lane labels (ADR-0090 D1/D3), not hierarchy tiers — the PRD still plays the hierarchy role.
 - `trivial` for the trivial lane (see I3 below).
 - `needs-human` is applied by the reviewer on round-3 BLOCK escalation (see I5 below).
 
-**Milestones** are reserved for **Releases** (groups of merged PRDs). Not in use yet — left empty until the first release ships.
+**Milestones** are versions: a milestone titled `v<major>.<minor>[.<patch>]` holds a frozen version's scope — every open `bug` plus the owner's named `feature`s — per `tools/release.py freeze` (ADR-0090 D1).
 
 ### Workflow improvements I1–I6
 
@@ -83,7 +83,7 @@ These are load-bearing conventions that supplement the cross-cutting rules. Per 
 
 - **I1 — Skills know the hierarchy.** `/to-prd` and `/to-issues` produce/consume the 3-tier hierarchy and the `prd`/`slice` labels (delivered by PRD #3 slices 2 and 3).
 - **I2 — Slice-grabbing protocol.** The first agent to run `gh issue edit <slice> --add-assignee @me` owns the slice. The reviewer enforces "one assignee per open slice" — if a second agent grabs an already-assigned slice, reviewer BLOCKs the resulting PR.
-- **I3 — Trivial lane.** PRs ≤10 LoC of runtime-artifact diff with no behavior change MAY skip PRD/slice ceremony. Branch: `hotfix/<short-summary>`. Add the `trivial` label to the PR; the reviewer fast-paths it.
+- **I3 — Trivial lane.** PRs ≤10 LoC of runtime-artifact diff with no behavior change MAY skip PRD/slice *ceremony* — but the branch still hangs off a tracked issue, typically one filed with the `captured` label specifically so the branch has a number, since `.githooks/pre-commit` requires one for every branch type. Branch: `hotfix/<issue#>-<short-summary>`. Add the `trivial` label to the PR; the reviewer fast-paths it.
 - **I4 — Slice size cap & staleness.** Slice PRs cap at **≤600 LoC of runtime-artifact diff** (raised from 300 per [ADR-0077](decisions/0077-ceremony-overhead-reduction.md) D1, operator-directed 2026-08-03). The canonical definition of "runtime artifact" lives in [`.claude/agents/reviewer.md`](.claude/agents/reviewer.md) (rule R-LOC) — do not restate it here. A slice issue open >7 days is marked stale by the reviewer.
 - **I4a — Subagent dispatch isolation.** Every `implementer` and `reviewer` dispatch MUST pass `isolation: "worktree"` (ADR-0036). A dispatch result missing `worktreePath` is a dispatch failure — re-dispatch (ADR-0058 D1). After each dispatch run `bash tools/worktree-guard.sh branch-restore <expected>`; after a merge run `root-sync` then `prune` (ADR-0058 D3). The guard is ff-only and loud: diverged branches and unrepaired violations exit non-zero.
 
@@ -107,7 +107,7 @@ The canonical delivery flow for every feature is:
 
 The slicer step is **mandatory and non-bypassable**. Slices are NEVER hand-created via raw `gh issue create` outside `/to-issues` — doing so bypasses the slicer-critic gate and violates rule #16. This flow is enforced by the slicer-provenance guard: every slice issue from `/to-issues` carries a `Slicer-provenance:` trailer; `tools/check-slicer-provenance.py` (CI CHECK 19) flags any open slice lacking it. This convention ships with its enforcement in the same PR (rule #23).
 
-**Second entry point — the queue drain.** `/ship`'s **Queue-drain entry mode** enters this same flow from the other end: instead of one feature, it assembles the whole open queue, triages each item, and feeds each one into the flow above at its correct stage (`captured` → the captured→backlog autopilot; `backlog` → `/to-prd`; `slice` → implement), escalating the operator-owed minority by label-and-continue rather than stopping. It adds no stage and bypasses no gate — the slicer stays mandatory for every slice it produces. Per [ADR-0085](decisions/0085-queue-drain-mode.md) D1/D2; mechanized by the `DRAIN-LEDGER` health row + CI CHECK 24.
+**Second entry point — the queue drain.** `/ship`'s **Queue-drain entry mode** enters this same flow from the other end: instead of one feature, it assembles the whole open queue, triages each item, and feeds each one into the flow above at its correct stage (`captured` → the captured→backlog autopilot; `backlog` → `/to-prd`; `slice` → implement), escalating the operator-owed minority by label-and-continue rather than stopping. It adds no stage and bypasses no gate — the slicer stays mandatory for every slice it produces. Per [ADR-0085](decisions/0085-queue-drain-mode.md) D1/D2; mechanized by the `DRAIN-LEDGER` health row + CI CHECK 24. `/ship release <version> lanes <N>` is a third, version-scoped sub-form: it drains one milestone's bugs through script-briefed file lanes instead of the plain per-item lane model (ADR-0090 D2/D3).
 
 ### Meta-rule: critic parsimony
 
@@ -129,8 +129,8 @@ _Note: Each skill and subagent embodies its own practice in its own body file (f
 | Settings + Claude Code hooks | `.claude/settings.json`, `.claude/hooks/` | per [ADR-0015](decisions/0015-claude-code-hooks-adoption.md); canonical logger `log-tool-event.sh` |
 | Workflow event log | `.claude/logs/workflow-events.jsonl` (gitignored) | v2 JSONL workflow events per [ADR-0016](decisions/0016-workflow-event-log-jsonl.md) |
 | Pipeline trace ledger | `.claude/logs/trace-v3.jsonl` (gitignored) | canonical v3 spans. `tools/trace.py` appends + queries (`path --pr <n>`); `dashboard/tracestore.py` folds a disposable SQLite read-model — refoldable from the log, never a second source of truth. Closed kind enum: an unknown kind hard-errors. [ADR-0075](decisions/0075-trace-core-fork-decisions.md) D2/D3 |
-| Queue-drain run ledger | `.claude/logs/drain/<run-id>.jsonl` (gitignored) | one append-only JSONL per `/ship` queue-drain run, at the git-common-dir root so worktrees share it. Closed record-kind set (`run_start`/`triaged`/`item_start`/`item_done`/`escalated`/`fix_queued`/`fixed_in_run`/`parked`/`resumed`/`run_end`); durable state across session death and quota parks. Validated offline by `python dashboard/health.py --check DRAIN-LEDGER`. Deliberately separate from trace-v3, which stays the independent dispatch witness. [ADR-0085](decisions/0085-queue-drain-mode.md) D4/D6 |
-| Guarded pipeline verbs | `tools/pipe/`, `tools/promote.sh` | the ONLY sanctioned path for mechanical transitions (`dispatch`, `pr-open`, `pr-merge`, `qa-verify`, `prd-close`, `record-green`): precondition check → side effect → atomic span; a refused transition exits non-zero and never half-succeeds. Raw `gh pr merge` is denied by hook. PIP-014..018 |
+| Queue-drain run ledger | `.claude/logs/drain/<run-id>.jsonl` (gitignored) | one append-only JSONL per `/ship` queue-drain run, at the git-common-dir root so worktrees share it. Closed record-kind set (`run_start`/`triaged`/`item_start`/`item_done`/`escalated`/`fix_queued`/`fixed_in_run`/`parked`/`resumed`/`run_end`); durable state across session death and quota parks. Validated offline by `python dashboard/health.py --check DRAIN-LEDGER`. Deliberately separate from trace-v3, which stays the independent dispatch witness. In release mode (`run_start.mode == "release"`), `run_start` also carries `version`, `triaged.lane` is a non-empty string, and concurrency counts distinct lanes capped at 15 (plain mode keeps distinct items capped at 3). [ADR-0085](decisions/0085-queue-drain-mode.md) D4/D6; release-mode gating [ADR-0090](decisions/0090-release-mode.md) D3 |
+| Guarded pipeline verbs | `tools/pipe/`, `tools/promote.sh` | the ONLY sanctioned path for mechanical transitions (`dispatch`, `pr-open`, `pr-merge`, `qa-verify`, `prd-close`, `record-green`): precondition check → side effect → atomic span; a refused transition exits non-zero and never half-succeeds. Raw `gh pr merge` is denied by hook. PIP-014..018. Release-mode lane forms: `dispatch --lane <branch> --milestone <V> --model <m> <n>…` / `--end --lane` dispatch a file-lane bug fix and print its packet; `pr-merge` gates a `lane`-labeled PR on a `MODEL:` naming a Claude Opus model (allow-list; Sonnet, Haiku and placeholders refuse) and every commit landing inside its dispatch window, then closes its bugs on merge ([ADR-0090](decisions/0090-release-mode.md) D3/D4) |
 | Two-tier promotion gate | `tools/promote.sh` | ff `main` to `develop` HEAD; requires RELEASE-READY `verdict="true"` AND the `.claude/PROMOTE_OK` human-ack sentinel (create it manually; the script removes it after success). [ADR-0070](decisions/0070-two-tier-autonomous-delivery.md) D2/D3 |
 | CI gate | `.github/workflows/ci.yml` → `tools/ci-checks.sh` | job name `ci` is the required status-check context on `develop`; run the script locally before pushing. Several checks delegate to the health registry — e.g. CHECK 22 runs RECORD-VS-GH, CHECK 23 the verdict-presence guard; CHECK 27 enforces the closed hook beacon-status schema (HOK-008, ADR-0083 D1/D2), resolving both literal emit sites and `beacon()` helper call graphs. [ADR-0042](decisions/0042-github-actions-ci-gate-r4.md) D1 |
 | Health check registry | `python dashboard/health.py --check <id>` / `--list` | headless run of any registered check; exit 0 on PASS/WARN, 1 on FAIL. `ci-checks.sh` delegates several checks to it, per ADR-0064 D3 |
@@ -140,8 +140,8 @@ _Note: Each skill and subagent embodies its own practice in its own body file (f
 | Operator decision log | `docs/decision-log/` | dated per-problem records of operator decisions, append-only |
 | In-flight work | GitHub Issues + branches | `gh issue list` ; `git branch` |
 | Backlog / captured | `gh issue list --label backlog` / `--label captured` | project board #2; `backlog-critic` filters `captured` → `backlog` |
-| Workflow dashboard | `dashboard/` | local visualizer; the Run-board is the ONLY tab, served strictly from recorded v3 spans, plus a thin health strip. [ADR-0078](decisions/0078-run-board-landing-view.md) D1 as amended by [ADR-0080](decisions/0080-frontend-reduced-run-board-batch-plan-retired.md) D1 |
-| README | `README.template.md` → `dashboard/server.py --generate-readme` | `README.md` is a build artifact — never hand-edit, always regenerate (DOC-001, ADR-0034 D4/D7) |
+| Observability | `docs/observability.md` | index of the append-only logs under `.claude/logs/`, read on demand by an LLM session — the served dashboard's replacement. [ADR-0088](decisions/0088-dashboard-frontend-retired.md) D2 |
+| README | `README.template.md` → `dashboard/readme_gen.py` | `README.md` is a build artifact — never hand-edit, always regenerate (DOC-001, ADR-0034 D4/D7, entrypoint relocated by ADR-0088 D3) |
 | Regression tests | `tests/`, `tests/quarantine.txt` | pytest, wired into CI; flaky tests quarantined within 24 h with a 30-day SLA. [ADR-0067](decisions/0067-regression-memory.md) |
 | Fresh-clone setup | `bootstrap.sh` | per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6 |
 
@@ -163,15 +163,16 @@ Auto-loaded project vocabulary. Soft cap ~35 entries per [ADR-0012](decisions/00
 - **INVEST** — Bill Wake's six-property check (Independent, Negotiable, Valuable, Estimable, Small, Testable) used here as the gate criterion for slice shape; a slice that fails any letter requires a SPIDR split before implementation.
 - **joint-APPROVE gate** — when a PRD ships with a macro-ADR draft, BOTH `prd-critic` AND `adr-critic` must APPROVE before `/to-prd` posts the PRD issue and slice issues; either BLOCK halts the pipeline.
 - **label-and-continue** — the queue-drain escalation protocol: an item needing the operator is labeled (`needs-human-check` at triage, `needs-human` only at a round-3 strict-stop), recorded in the run ledger, and the run moves on without waiting for an answer (ADR-0085 D2).
+- **lane PR** — a release-mode PR (label `lane`) that fixes one or more `bug` issues in a disjoint file lane, briefed by a script-built packet and reviewed by a strong model; it closes only `bug` issues, never a slice or PRD (ADR-0090 D3/D4).
 - **PRD** — feature-sized Product Requirements Document captured as a GitHub Issue labeled `prd`; top tier of the PRD→Slice→PR hierarchy; one feature-sized deliverable per PRD.
-- **R-CLOSES** — reviewer rule 10: every slice PR body must contain `Closes #<n>` pointing to a valid `slice`-labeled open issue; PRs without it are BLOCKed (trivial-lane and prd-only PRs are exempted).
+- **R-CLOSES** — reviewer rule 10: every slice PR body must contain `Closes #<n>` pointing to a valid `slice`-labeled open issue; PRs without it are BLOCKed (trivial-lane and prd-only PRs are exempted); a lane PR is held to the same rule but must close only `bug`-labeled issues (ADR-0090 D4).
 - **R-LOC** — reviewer rule 9: caps slice PR diff at ≤600 LoC of runtime-artifact changes (raised from 300 per ADR-0077 D1; canonical "runtime artifact" definition lives in `.claude/agents/reviewer.md` under R-LOC).
 - **R-META** — reviewer rule 11: NEW ADR files added in a PR must show subagent provenance via `Closes #N` to a slice/prd issue OR a `Co-Authored-By: Claude` commit trailer.
 - **session** — a single Claude Code conversation window; cross-session continuity is maintained via live state reconstruction from GitHub Issues and git log, not via a formal handoff artifact.
 - **slice** — INVEST-shaped vertical sub-issue under a PRD (labeled `slice`), delivered in one PR capped at ≤600 runtime LoC; middle tier of the PRD→Slice→PR hierarchy.
 - **SPIDR** — Mike Cohn's 5 slice-split fallbacks (**S**pike, **P**ath, **I**nterface, **D**ata, **R**ules); S (spike/research), I (interface split), and R (rules split) are dominant in this project.
 - **subagent** — specialist Claude agent invoked via the `Agent` tool with its own system prompt, restricted tool set, and isolated context window; runs as a sub-process of the main agent.
-- **trivial lane** — fast-path workflow (I3) for PRs ≤10 LoC with no behavior change; uses `hotfix/<short-summary>` branch + `trivial` label; skips PRD/slice ceremony and gets a fast-path reviewer check.
+- **trivial lane** — fast-path workflow (I3) for PRs ≤10 LoC with no behavior change; uses `hotfix/<issue#>-<short-summary>` branch + `trivial` label; skips PRD/slice ceremony and gets a fast-path reviewer check.
 - **walking-skeleton** — practice of shipping the smallest end-to-end version of the whole pipeline first, then iterating on the weakest stage; slice 1 of every multi-slice PRD must be a walking-skeleton per SC-WALKING-SKELETON.
 
 - **YAGNI** — "You Aren't Gonna Need It"; rule #1 — never add code or content outside the current slice's scope; the reviewer's first job is to enforce this on every PR.

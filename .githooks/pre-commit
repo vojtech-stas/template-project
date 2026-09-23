@@ -44,8 +44,17 @@ if [ -z "$branch" ]; then
     exit 0
 fi
 
-if [ "$branch" = "main" ]; then
-    echo "pre-commit: ERROR: direct commits to 'main' are not allowed." >&2
+# Resolve the configured release branch (ADR-0089 D1), located relative to
+# THIS script's own path (S1-c: `.githooks/` scripts use `$(dirname "$0")`).
+# A resolver failure takes this hook's existing warn-and-allow fail-open
+# path (ADR-0004 D3 layer 1) — never a fallback literal.
+_pc_dir=$(dirname "$0")
+release=$(python3 "$_pc_dir/../tools/pipeline_config.py" release 2>/dev/null) || release=""
+
+if [ -z "$release" ]; then
+    echo "pre-commit: warning: could not resolve the release branch (tools/pipeline_config.py failed); allowing commit per fail-open policy. See ADR-0004 D3." >&2
+elif [ "$branch" = "$release" ]; then
+    echo "pre-commit: ERROR: direct commits to '$release' are not allowed." >&2
     echo "pre-commit: Use a feature branch matching <type>/<issue#>-<slug> instead, e.g.:" >&2
     echo "pre-commit:   git checkout -b feat/42-add-something" >&2
     echo "pre-commit: See CLAUDE.md cross-cutting rule #4 and ADR-0004 D3." >&2
@@ -97,7 +106,7 @@ if [ -z "$REPO_ROOT" ]; then
     exit 0
 fi
 
-GENERATOR="$REPO_ROOT/dashboard/server.py"
+GENERATOR="$REPO_ROOT/dashboard/readme_gen.py"
 
 if [ ! -f "$GENERATOR" ]; then
     echo "pre-commit: warning: generator not found at '$GENERATOR'; skipping README currency check (fail-open). See ADR-0034 D6." >&2
@@ -105,7 +114,7 @@ if [ ! -f "$GENERATOR" ]; then
 fi
 
 # Run the generator. Capture stderr; on non-zero exit, fail-open with warning.
-if ! "$PYTHON" "$GENERATOR" --generate-readme >/dev/null 2>&1; then
+if ! "$PYTHON" "$GENERATOR" >/dev/null 2>&1; then
     echo "pre-commit: warning: README generator exited non-zero; skipping README currency check (fail-open). See ADR-0034 D6." >&2
     exit 0
 fi
@@ -114,7 +123,7 @@ fi
 # Use `git diff --exit-code` on the worktree state (not staged vs HEAD, but
 # worktree vs HEAD — generator wrote to the worktree file).
 if ! git -C "$REPO_ROOT" diff --exit-code README.md >/dev/null 2>&1; then
-    echo "pre-commit: ERROR: README out of sync — run \`python dashboard/server.py --generate-readme\` and re-stage README.md before committing." >&2
+    echo "pre-commit: ERROR: README out of sync — run \`python dashboard/readme_gen.py\` and re-stage README.md before committing." >&2
     echo "pre-commit: (ADR-0034 D6 — defense-in-depth pre-commit doc-generation gate)" >&2
     # Restore README.md so the working tree is clean after blocking.
     git -C "$REPO_ROOT" checkout README.md >/dev/null 2>&1 || true

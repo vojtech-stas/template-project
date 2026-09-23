@@ -84,6 +84,8 @@ Enter this mode on the normative trigger set — **"drain the queue"**, **"/ship
 
 Absent either qualifier, the drain is unbounded and runs to queue exhaustion or a park.
 
+A third, **release**, sub-form — **`/ship release <version> lanes <N>`** — enters **QD11** instead: a version-scoped drain over one milestone's bugs, file-lane dispatched, never the plain per-item lane model above (ADR-0090 D2).
+
 ### QD2. Queue assembly
 
 Re-count the queue **live at every run start** — never carry a figure over from a previous run or from a document. Assemble from open `prd`-, `slice`-, `backlog`- and `captured`-labeled issues plus open **non-draft** PRs. Write the `run_start` record with the resulting snapshot before anything else happens; that record is what makes the run's own claims about its queue checkable afterwards.
@@ -121,6 +123,8 @@ Both write an `escalated` record carrying `label` and `label_applied: true` **at
 
 Predict file overlap coarsely from the paths named in issue bodies and titles. Overlapping items **serialize into one lane**; independent lanes run in parallel in isolated worktrees (I4a / [ADR-0036](../../../decisions/0036-worktree-isolation-all-dispatches.md) D1). **Unknown overlap serializes** — a wrong independence guess costs a merge conflict; a wrong serialization guess costs only time. **At most 3 items are in flight concurrently** (open `item_start` records minus their `item_done`); the DRAIN-LEDGER row FAILs a ledger that exceeds it. Merges stay serialized through the PR gate ([ADR-0062](../../../decisions/0062-merge-integrity-green-main.md) D2). Pace GitHub mutations across the run.
 
+A **release** run (QD11) counts differently: concurrency is **distinct file lanes**, capped at **15** in flight, not items — DRAIN-LEDGER applies this cap only when `run_start.mode == "release"` (ADR-0090 D3).
+
 ### QD7. Fix-in-run
 
 A discovery made mid-run whose remedy fits the trivial lane is **appended to this run's queue**, not filed and forgotten. This protocol changes only **where** a trivial fix lands, never **what** qualifies as one: I3's definition is untouched.
@@ -141,7 +145,7 @@ Append one JSON object per line to `.claude/logs/drain/<run-id>.jsonl`, resolved
 
 | Kind | Required fields beyond `kind` | Written when |
 |---|---|---|
-| `run_start` | `counts` (`prd`/`slice`/`backlog`/`captured`), `open_prs` | first, before any other action |
+| `run_start` | `counts` (`prd`/`slice`/`backlog`/`captured`), `open_prs` (+ `mode`, `version` in release mode) | first, before any other action |
 | `triaged` | `item`, `bucket`, `lane` | once per queue item |
 | `item_start` / `item_done` | `item` | item enters / leaves flight |
 | `escalated` | `item`, `label`, `label_applied` | at the moment the label is applied |
@@ -177,6 +181,23 @@ The ledger supplies **intent, never truth**. It says which items this run had an
 ### QD10. Invariants the drain never overrides
 
 No triage verdict relaxes any of these: the drain **never** creates `.claude/PROMOTE_OK` ([ADR-0070](../../../decisions/0070-two-tier-autonomous-delivery.md) D4 — guardrail promotions wait for the human); a round-3 BLOCK strict-stops that item; destructive or irreversible operations confirm with the operator first; every dispatch passes `isolation: "worktree"` and a result without `worktreePath` is a dispatch failure ([ADR-0058](../../../decisions/0058-worktree-isolation-as-asserted-interface.md) D1/D2); slice issues are created only through the slicer flow.
+
+### QD11. Release mode
+
+Per [ADR-0090](../../../decisions/0090-release-mode.md) D1–D4. `/ship release <version> lanes <N>` is a queue-drain sub-form whose work set is one milestone's bugs and admitted features — never the plain per-item lane model QD6 describes. This slice ships the `lanes N` bounded form only (no unbounded release drain yet).
+
+**Interim, until #1529's mechanical fix lands in slice #1507:** only orchestrator-supervised lanes run. The orchestrator watches every builder and reviewer round of a lane itself; no lane runs unattended, because until then `pr-merge` cannot tell a builder's self-posted verdict or self-opened dispatch window from the real ones.
+
+1. **Classify.** Every issue carries exactly one class label at creation — `bug` (anything that breaks the system's own promise, docs/rules/ADRs/doc drift included) or `feature` — applied by the creating skill; a slice takes its PRD's class.
+2. **Freeze.** `tools/release.py freeze <V> --next <W> --features <list>` admits every open bug and the owner's listed features (with their slices) to `<V>`, moves every other feature to `<W>`, and refuses on any unclassified issue.
+3. **Route (ADR-0090 D2), first match wins:** admitted features and every `slice`/`prd` issue ride the ordinary PRD → slicer flow (rule #16 — a feature never rides a lane); `captured` bugs pass the captured→backlog autopilot first; a bug needing a design decision takes the PRD path; every other bug rides a lane PR, with no PRD and no slicer.
+4. **`lanes N`.** `tools/release.py lanes <V> [--evidence <sweep.json>] [--priority <file>]` groups the lane-bound bugs into disjoint file groups by cited path and orders them; a bug with no cited path runs exclusively, with no other lane in flight (ADR-0085 D3's serialize-on-unknown default).
+5. **The dispatch bracket.** For each lane round: `tools/pipe/dispatch --lane <branch> --milestone <V> --model sonnet <n>…` immediately before the builder's `Agent` call (it prints the packet — sha, per-bug `path:line` refs and excerpt, `Check:` line — the builder's brief), then `tools/pipe/dispatch --end --lane <branch> --result <r>` immediately after that dispatch returns. Each round is a **fresh** `implementer` dispatch (`model: "sonnet"`, `isolation: "worktree"`) briefed with the packet and `implementer.md`'s Lane mode — never a resumed transcript.
+6. **Review.** Every round gets a fresh reviewer, dispatched with `model: "opus"`, `isolation: "worktree"` and only the `BLIND-REVIEW <PR>` message (ADR-0060 D1) — it never sees the packet and re-derives each fix.
+7. **Merge.** `tools/pipe/pr-merge` on the reviewer's APPROVE — its lane legs (MODEL: refusal, window refusal, close-on-merge) are described in `pr-merge`'s own docstring, not repeated here.
+8. **Verify.** `tools/release.py verify <n>…` runs each bug's check against the integration branch HEAD after merge. `UNCONFIRMED #<n>` means a gh read failed, not that the check is missing: re-run it.
+9. **Ledger fields.** Write exactly one `item_start`/`item_done` pair per **bug** (never per lane — a lane can hold many bugs), and `triaged.lane` carries the lane branch name as a non-empty string (DRAIN-LEDGER release mode, [`dashboard/health.py`](../../../dashboard/health.py) `check_drain_ledger`).
+10. **Exclusive lanes run alone.** A bug with no cited path (an exclusive lane) never runs concurrently with any other lane — it is the one case release mode still serializes.
 
 ## Whole-repo macro audit — session-scoped background spawn (ADR-0051 D1–D4)
 
@@ -263,16 +284,6 @@ evidence for this run; note it explicitly in the step 7 final report.
 
 **If count > 0:** log "capture alive: N fresh events" and proceed.
 
-### Pre-step — Ensure dashboard running (idempotent)
-
-Invoke `.claude/hooks/dashboard-autostart.sh` as a subprocess so the human can watch the build live:
-
-```bash
-bash "${CLAUDE_PROJECT_DIR}/.claude/hooks/dashboard-autostart.sh"
-```
-
-This checks `localhost:8765`; spawns the dashboard if absent; no-ops if already up. Authorized by ADR-0033 D1 (tooling-spawn carveout). If the script fails or is missing, emit a one-line warning and continue — the dashboard is observability-only; its absence does not block the build.
-
 1. **Confirm grilled context.** Scan history for a settled design (typically a recent `/grill-me` session). If context is thin, design with sensible defaults and record every defaulted decision in the PRD draft — `prd-critic` and `adr-critic` are the safety net that audits those decisions before the PRD posts. Proceed without stopping unless a fork is genuinely user-only (i.e. a design choice where a wrong guess would require rework that cannot be corrected by later slices — name the specific fork and stop only for that decision).
 
    **Assess + grill (conditional, ADR-0034 D3 — rehosted from `/build` step 2 per [ADR-0081](../../../decisions/0081-post-audit-dead-weight-retirements.md) D4).**
@@ -347,35 +358,33 @@ This checks `localhost:8765`; spawns the dashboard if absent; no-ops if already 
 
 **Concurrent reviewer dispatch (ADR-0077 D2 — reworks the strictly-serialized CI-then-review sequencing of the former pre-review CI gate; the #869 recurring-format-BLOCK-class protection from PRD #1075 criterion 6 is preserved, relocated).** Dispatch the reviewer immediately — right after `codebase-critic` clears above, or immediately after implementer `SUCCESS` when no `codebase-critic` dispatch applies. Do NOT wait for the PR's `ci` check to reach a terminal state first: the reviewer's read/verify rubric is independent of CI status, and `ci` runs concurrently in GitHub Actions while the reviewer reads the diff. The reviewer itself owns the terminal-`ci` poll and the CHECK-3 format-fail intercept immediately before any merge attempt (see [`.claude/agents/reviewer.md`](../../agents/reviewer.md) "Pre-merge CI-terminal gate") — on a format-class CI failure the reviewer's own verdict flips to `BLOCK` with the same corrective message as before, and the standard 5d / implementer-fix-loop round-trip handles it via the reviewer's own round-cap (no separate orchestrator-tracked counter is needed). If `gh` is unavailable/unauthenticated, the reviewer soft-degrades the same as before.
 
-→ reviewer takes over per [ADR-0002](../../../decisions/0002-autonomous-merge-policy.md) (auto-merge on APPROVE via `python tools/pipe/pr-merge <PR>`, internally `gh pr merge --squash --auto` — no `--delete-branch`, that flag was removed from the wrapper per PR #1104; round-3 BLOCK applies `needs-human` and forward-blocks per 5d). **Merge-collection serialization (ADR-0062 D2):** When multiple sibling PRs in the same batch are simultaneously APPROVE-ready, reviewer dispatches run in parallel BUT the merge step itself MUST serialize — do not trigger two concurrent `gh pr merge` calls. Merges execute one at a time in completion order (first APPROVE received merges first; the next waits until the preceding merge + CI loop finishes). This guarantees every squash lands on the exact main it was CI-tested against (the not-rocket-science invariant) without hosted merge-queue infrastructure. On reviewer APPROVE+merge → `merged`; run `bash tools/worktree-guard.sh root-sync` to ff-sync the root repo to `origin/develop` so the dashboard reflects live state (per [ADR-0041](../../../decisions/0041-origin-main-source-of-truth.md) D3); then run `bash tools/worktree-guard.sh prune` to remove any local worktrees whose remote branch has been deleted (squash-merged; `worktree-guard prune` — not a `gh pr merge --delete-branch` flag — owns this cleanup), keeping the tree list clean across waves. **Post-merge green-develop step (ADR-0062 D3, narrowed by [ADR-0079](../../../decisions/0079-recorded-ci-trust-and-hook-diet.md) D1):** After each merge + root-sync, run the post-merge verification on actual merged develop:
-   1. `/api/meta` SHA smoke: `curl -s http://localhost:8765/api/meta | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('sha') else 1)"` — confirms dashboard reflects merged sha.
-   2. `develop_green` recording is chained automatically from `tools/pipe/pr-merge`'s own confirmed-merge success path (PRD #1127 criterion 4 / slice #1134, ADR-0076 D1) — internally `tools/pipe/record-green` trusts the recorded GitHub `ci` conclusion for the exact merged sha instead of re-running the local suite (ADR-0079 D1 supersedes the standalone always-run `bash tools/ci-checks.sh` mandate previously run as a separate step here); its stdout/stderr names the outcome (recorded / evaluation failed / budget exhausted); no separate invocation is needed here.
-   3. On failure: the suspect set = squash commits since the last `develop_green` event (≤600 LoC slices make bisect degenerate); revert via the trivial lane (`hotfix/<short-desc>` branch); do NOT mark the PRD done until green.
+→ reviewer takes over per [ADR-0002](../../../decisions/0002-autonomous-merge-policy.md) (auto-merge on APPROVE via `python tools/pipe/pr-merge <PR>`, internally `gh pr merge --squash --auto` — no `--delete-branch`, that flag was removed from the wrapper per PR #1104; round-3 BLOCK applies `needs-human` and forward-blocks per 5d). **Merge-collection serialization (ADR-0062 D2):** When multiple sibling PRs in the same batch are simultaneously APPROVE-ready, reviewer dispatches run in parallel BUT the merge step itself MUST serialize — do not trigger two concurrent `gh pr merge` calls. Merges execute one at a time in completion order (first APPROVE received merges first; the next waits until the preceding merge + CI loop finishes). This guarantees every squash lands on the exact main it was CI-tested against (the not-rocket-science invariant) without hosted merge-queue infrastructure. On reviewer APPROVE+merge → `merged`; run `bash tools/worktree-guard.sh root-sync` to ff-sync the root repo to `origin/develop` so the main checkout — whose hooks, settings, and logs every session uses — reflects `develop` (per [ADR-0041](../../../decisions/0041-origin-main-source-of-truth.md) D3); then run `bash tools/worktree-guard.sh prune` to remove any local worktrees whose remote branch has been deleted (squash-merged; `worktree-guard prune` — not a `gh pr merge --delete-branch` flag — owns this cleanup), keeping the tree list clean across waves. **Post-merge green-develop step (ADR-0062 D3, narrowed by [ADR-0079](../../../decisions/0079-recorded-ci-trust-and-hook-diet.md) D1):** After each merge + root-sync, run the post-merge verification on actual merged develop:
+   1. `develop_green` recording is chained automatically from `tools/pipe/pr-merge`'s own confirmed-merge success path (PRD #1127 criterion 4 / slice #1134, ADR-0076 D1) — internally `tools/pipe/record-green` trusts the recorded GitHub `ci` conclusion for the exact merged sha instead of re-running the local suite (ADR-0079 D1 supersedes the standalone always-run `bash tools/ci-checks.sh` mandate previously run as a separate step here); its stdout/stderr names the outcome (recorded / evaluation failed / budget exhausted); no separate invocation is needed here.
+   2. On failure: the suspect set = squash commits since the last `develop_green` event (≤600 LoC slices make bisect degenerate); revert via the trivial lane (`hotfix/<short-desc>` branch); do NOT mark the PRD done until green.
    Per [ADR-0062](../../../decisions/0062-merge-integrity-green-main.md) D3 (bootstrap-mode: binds forward from this ship-skill merge) and [ADR-0079](../../../decisions/0079-recorded-ci-trust-and-hook-diet.md) D1 (recorded-CI trust; the redundant standalone local re-run is deleted). On reviewer round-3 BLOCK or implementer `RESULT: BLOCKED` / `RESULT: INVALID_INPUT` → forward-block per 5d. **`RESULT: CONFUSION` from implementer or qa-tester (per ADR-0059 D3):** do NOT guess or pick an option on the agent's behalf. Route: (A) if the conflict can be resolved from the grilled context or PRD body, re-dispatch with an explicit resolution and record `"CONFUSION resolved: <option chosen> — reason: <one sentence>"` in the dispatch trail; (B) if it requires user judgment, apply `needs-human` to the slice, post the CONFUSION reason + options on the slice issue, and forward-block per 5d with `REASON: CONFUSION — needs design clarification`. Never silently pick an option without recording the choice; resolution route A or B must be logged in the dispatch trail.
    - **5d. Forward-block** (per [ADR-0010](../../../decisions/0010-implementer-subagent-auto-pipeline.md) D4). Apply `needs-human` to the failed slice; move transitive-downstream slices from `pending` → `blocked`; post one summary comment per failure event on the parent PRD (mirrors reviewer's I5 surface). **In-flight parallel siblings finish normally** — do NOT cancel. **Slices with other unmet deps proceed normally** through their natural batches; failure is locally contained to the failed slice's downstream cone.
    - **5e. Terminal-state collection.** Capture each `PR_URL` from SUCCESS slices (merged or under-review), the `blocked` set, and the snapshot of `in_flight` at the moment the FIRST failure was observed.
 
    - **5f. Green-develop checkpoint → RELEASE-READY → auto-promote (ADR-0070 D2/D3, slice #838; ADR-0079 D1 narrows the standalone-ci-checks step below).** After all slices in the current batch are in `merged`, run the post-merge green-develop verification step (mirrors the green-main step at step 5c-4, with target `develop`):
-     1. `/api/meta` SHA smoke: `curl -s http://localhost:8765/api/meta | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('sha') else 1)"` — confirms dashboard reflects merged sha.
-     2. Evaluate the RELEASE-READY gate — its own condition (a)/(b) already trust the recorded GitHub `ci` conclusion for this exact sha instead of re-running the local suite (per [ADR-0079](../../../decisions/0079-recorded-ci-trust-and-hook-diet.md) D1, superseding the standalone `bash tools/ci-checks.sh` mandate previously run as a separate step here):
+     1. Evaluate the RELEASE-READY gate — its own condition (a)/(b) already trust the recorded GitHub `ci` conclusion for this exact sha instead of re-running the local suite (per [ADR-0079](../../../decisions/0079-recorded-ci-trust-and-hook-diet.md) D1, superseding the standalone `bash tools/ci-checks.sh` mandate previously run as a separate step here):
         ```bash
         python3 dashboard/health.py --check RELEASE-READY
         ```
         Parse the `verdict` field from the JSON output.
-     3. **If `verdict == "true"`** (all six conditions hold):
+     2. **If `verdict == "true"`** (all six conditions hold):
         - **PROMOTE_OK sentinel check:** Before calling `promote.sh`, verify that the current promotion batch does NOT touch guardrail-machinery paths (`.github/workflows/**`, `.claude/settings.json`, `.claude/hooks/**`, `tools/ci-checks.sh`, `.githooks/**`, `*-critic.md`, or `tools/promote.sh` itself). If it does, `promote.sh` requires `.claude/PROMOTE_OK` to exist (human-ack sentinel per ADR-0070 D4). If the file is absent and guardrail paths are touched, log `"RELEASE-READY true but PROMOTE_OK sentinel absent — human ack required for guardrail-machinery promotion"` and skip promotion; do NOT run `promote.sh`. The human creates `.claude/PROMOTE_OK` (via `touch .claude/PROMOTE_OK`) to unblock; `promote.sh` removes it after successful promotion.
         - Run `bash tools/promote.sh` to fast-forward `main` to `develop` HEAD and append the `promotion` event. The script performs its own RELEASE-READY pre-flight guard and emits: `INFO: promotion event appended — sha=<sha>`.
         - Log: `"green-develop checkpoint PASS + RELEASE-READY true → auto-promoted main to <sha>"`.
-     4. **If `verdict != "true"`** (gate held):
+     3. **If `verdict != "true"`** (gate held):
         - Log: `"green-develop checkpoint PASS but RELEASE-READY held: <first_failing_condition>. Main NOT advanced. Develop continues independently."`.
         - Do NOT run `promote.sh`. Continue to step 6.
-     5. On SHA-smoke failure or a RELEASE-READY evaluation error (green-develop step fails): revert via trivial lane; do NOT mark PRD done until green-develop is clean.
+     4. On a RELEASE-READY evaluation error (green-develop step fails): revert via trivial lane; do NOT mark PRD done until green-develop is clean.
      **Note on condition (e):** `needs-human` open items commonly hold the gate (e.g. during a wave's own slices). This is correct and honest — the gate reports the true state; promotion waits. The develop integration branch continues to accept PRs normally while the gate is held.
 
    - **5g. Regenerate docs (rehosted from `/build` step 4 per [ADR-0081](../../../decisions/0081-post-audit-dead-weight-retirements.md) D4).** Run the doc-generator as a subprocess so the PRs arrive doc-current:
 
      ```bash
-     python "${CLAUDE_PROJECT_DIR}/dashboard/server.py" --generate-readme
+     python "${CLAUDE_PROJECT_DIR}/dashboard/readme_gen.py"
      ```
 
      If the generator exits non-zero, emit a warning with the error output and continue — doc-regeneration failure is a soft error at this step (the reviewer's `R-DOCS-CURRENT` rule is the hard gate). If it exits zero, confirm `README.md` updated (note byte count).
@@ -408,10 +417,10 @@ This checks `localhost:8765`; spawns the dashboard if absent; no-ops if already 
      2. Assert `sid` exists in `.claude/logs/workflow-events.jsonl` (grep for the sid in the event window).
      3. Assert `sid` is NOT fixture-patterned: must not match `sess-test-*`, `fixture-*`, or `synthetic-*`.
      4. If validation fails → verdict invalid → treat as FAIL, re-dispatch.
-   - **ENV validation for browser routes (ADR-0061 D2):** when `ROUTE: browser`, validate `ENV: <sha>@<started_at>`:
-     1. Extract `sha` from `ENV:` field.
-     2. Fetch `/api/meta` and assert `sha` matches the dashboard's reported sha.
-     3. If `sha` mismatches or `/api/meta` reports `stale: true` → verdict invalid → treat as FAIL, re-dispatch.
+   - **ENV validation for browser routes (ADR-0061 D2, host-generic — this template no longer serves an `/api/meta`-style identity endpoint per ADR-0088 D1/D5):** when `ROUTE: browser`, validate `ENV: <sha>@<started_at>`:
+     1. Extract `sha` from `ENV:` field and confirm it equals the merged HEAD sha for this PR.
+     2. Confirm by a host-appropriate mechanism that the served app is running the merged code (e.g. an app-specific version/health endpoint or build-info banner the host project exposes) — this template itself serves nothing to check against; a host project that adds a browser-reachable UI supplies its own freshness signal here.
+     3. If `sha` mismatches, or the host-appropriate freshness signal reports stale/absent, → verdict invalid → treat as FAIL, re-dispatch.
    - **Block-on-missing-proof check (per ADR-0037 D3 — orchestrator-enforced blocking):** assert `PROOF:` is non-empty for the routed change type. If `PRODUCTION_VERIFY: PASS` but `PROOF:` is empty or absent, the feature is **NOT done** — treat this as a gate failure and block:
      - `browser` route: `PROOF:` MUST contain a screenshot path (`.png` or `.jpg`) AND an `inner_text:` excerpt. A UI/browser change with no screenshot proof is not 'done'. Block with: `"PRODUCTION_VERIFY claimed PASS but PROOF: absent for browser route — screenshot proof required; not marking done."`
      - `hook-fire` route: `PROOF:` MUST contain `exit=` AND a `log:` field whose content IS a pasted verbatim beacon line matching `"status":\s*"(ok|ERROR)"` (or "log: N/A" if not declared) — a description of the beacon does not satisfy this (ADR-0083 D4(a)). A hook change with no pasted-beacon-line proof is not 'done'.
@@ -488,7 +497,8 @@ This checks `localhost:8765`; spawns the dashboard if absent; no-ops if already 
 - [ADR-0037](../../../decisions/0037-production-verification-gate.md) — D1 (mandatory blocking gate per feature), D3 (orchestrator-enforced; qa-tester is the generator, /ship is the enforcer), D5 (failure loop ≤3 rounds + needs-human escalation), D6 (bootstrap-mode).
 - [ADR-0002](../../../decisions/0002-autonomous-merge-policy.md) — reviewer auto-merge on APPROVE; the handoff target after implementer SUCCESS.
 - [ADR-0076](../../../decisions/0076-guarded-verb-pipeline-engine.md) — D1 (verbs are the sole sanctioned path for mechanical pipeline transitions); step 5b/5c's `python tools/pipe/dispatch <slice>` / `--end` calls are the walking-skeleton repoint (slice #1129).
-- [ADR-0085](../../../decisions/0085-queue-drain-mode.md) — D1 (queue-drain is an entry mode on `/ship`, never a second orchestrator; plan-only and bounded sub-forms), D2 (reasonable-engineer triage litmus; label-and-continue escalation on `needs-human-check`), D4 (a durable per-run drain ledger, separate from trace-v3), D5 (fix-in-run: trivial-lane discoveries land inside the drain run).
+- [ADR-0085](../../../decisions/0085-queue-drain-mode.md) — D1 (queue-drain is an entry mode on `/ship`, never a second orchestrator; plan-only and bounded sub-forms — superseded in part by [ADR-0090](../../../decisions/0090-release-mode.md) D2's release work-set/routing), D2 (reasonable-engineer triage litmus; label-and-continue escalation on `needs-human-check`), D4 (a durable per-run drain ledger, separate from trace-v3), D5 (fix-in-run: trivial-lane discoveries land inside the drain run — superseded in part by [ADR-0090](../../../decisions/0090-release-mode.md) D5's in-run-fix rider, slice 4).
+- [ADR-0090](../../../decisions/0090-release-mode.md) — D1 (a version is a frozen milestone of every open bug plus the owner's named features; `freeze`), D2 (`/ship release <version>` is a queue-drain sub-form; QD11), D3 (disjoint file lanes, script-built packets, ≤15 lanes in flight), D4 (a lane PR is gated like a slice PR, reviewed by a strong model, verified by script).
 - [ADR-0051](../../../decisions/0051-whole-repo-macro-audit-cadence.md) — D1 (whole-repo macro-audit cadence: auto-launches at `/ship` start, once per session, non-blocking), D2 (mechanism is `codebase-critic` whole-repo mode — no new critic), D3 (background dispatch + harvest-on-completion), D4 (once-per-session marker guard).
 - Sibling skills the chain calls: [`.claude/skills/to-prd/SKILL.md`](../to-prd/SKILL.md), [`.claude/skills/to-issues/SKILL.md`](../to-issues/SKILL.md). Subagent dispatched at stage 4: [`.claude/agents/implementer.md`](../../agents/implementer.md). Subagent dispatched at step 6: [`.claude/agents/qa-tester.md`](../../agents/qa-tester.md) in production-verify mode.
 

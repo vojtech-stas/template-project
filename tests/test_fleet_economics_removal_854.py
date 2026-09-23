@@ -11,7 +11,9 @@ Tests assert:
 2. REASSURANCE-RERUN is NOT in CHECK_REGISTRY
 3. DECLARED-PARITY is NOT in CHECK_REGISTRY
 4. DORA-PANEL is NOT in CHECK_REGISTRY
-5. /api/dora is NOT a registered route in server.py
+
+(Former item 5, "/api/dora is NOT a registered route in the HTTP server
+module", was retired along with that module per ADR-0088 D1 — slice #1481.)
 """
 
 import re
@@ -70,22 +72,6 @@ class TestFleetEconomicsRemoved(unittest.TestCase):
             "DORA-PANEL",
             registry,
             "DORA-PANEL should have been removed from CHECK_REGISTRY (slice #854)",
-        )
-
-
-class TestDoraRouteRemoved(unittest.TestCase):
-    """Assert /api/dora is not a registered route in server.py."""
-
-    def test_dora_route_not_in_server_py(self):
-        """server.py must not contain the /api/dora route handler after removal."""
-        server_py = _REPO_ROOT / "dashboard" / "server.py"
-        self.assertTrue(server_py.exists(), "dashboard/server.py must exist")
-        content = server_py.read_text(encoding="utf-8", errors="replace")
-        # Look for the path == "/api/dora" pattern used in do_GET
-        self.assertNotIn(
-            '"/api/dora"',
-            content,
-            'server.py should not contain /api/dora route after removal (slice #854)',
         )
 
 

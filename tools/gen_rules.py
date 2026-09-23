@@ -2,8 +2,8 @@
 """
 tools/gen_rules.py — generate .claude/rules/<scope>.md from ADR frontmatter.
 
-Mirrors the dashboard/server.py --generate-readme pattern (stdlib-only, no
-third-party YAML parser needed — frontmatter is simple key: value syntax).
+Mirrors the dashboard/readme_gen.py pattern (stdlib-only, no third-party
+YAML parser needed — frontmatter is simple key: value syntax).
 
 Rule ID scheme: <SCOPE3>-NNN where SCOPE3 is the first 3 characters of the
 scope name uppercased (e.g. scope "capture" → "CAP"), and NNN is a zero-padded
@@ -63,7 +63,7 @@ def _resolve_repo_root() -> Path:
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--show-toplevel"],
-            capture_output=True, text=True, timeout=5, cwd=os.getcwd(),
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=5, cwd=os.getcwd(),
         )
         if result.returncode == 0:
             root = Path(result.stdout.strip())
@@ -149,10 +149,39 @@ SCOPE_PATHS: dict[str, str] = {
 # supersession of ADR-0057 D2 above — ADR-0049 is not edited and keeps
 # `superseded_by: []` (immutable), so nothing leaves the active set: the
 # delta is +2.
+# Issue #1464 (fix, no new ADR): ADR-0013's frontmatter `superseded_by: []`
+# was stale — decisions/README.md and ADR-0044 both already document
+# ADR-0013 D1-D4 as superseded by ADR-0044 (D5/D6 unaffected), but the
+# frontmatter never caught up, so `_is_superseded()` (whole-ADR) kept
+# rendering ADR-0013's rules. Populating `superseded_by: ["ADR-0044"]`
+# correctly drops ADR-0013's SLI-004 and SLI-005 (the retired N=1-vs-N=3
+# degenerate-decomposition machinery ADR-0044 D2 replaced) — no other ADR's
+# rule_ids are affected: the delta is -2.
+# ADR-0088 (slice #1481) fully supersedes ADR-0078 (`status: "superseded"`,
+# `superseded_by: ["ADR-0088"]`), so ADR-0078 leaves the active frontmatter
+# set entirely and its sole rule_id, PIP-022, drops: -1. ADR-0088 itself
+# declares `rule_ids: []` — its D2 observability-doc obligation is
+# (advisory) and D3-D6 extend existing checks rather than minting new
+# rule ids — so it adds nothing back: the net delta is -1, measured from
+# the baseline on `develop` at the commit this slice branched from (92).
+# ADR-0089 (slice #1511) adds 2 new PIP-* ids (PIP-031, PIP-032). Its four
+# supersessions (ADR-0070 D1, ADR-0004 D3, ADR-0041 D2, ADR-0045 D3) are all
+# per-decision partial, so `superseded_by: []` stays on every one of them and
+# no rule_id drops: the delta is +2, measured from the baseline on `develop`
+# at the commit this slice branched from (91).
+# ADR-0090 (slice #1506) adds 2 new PIP-* ids (PIP-033, PIP-034). Its eight
+# supersessions (ADR-0003 D1, ADR-0024 D1/D2, ADR-0063 D1, ADR-0085 D1/D3/D5/
+# D6) are all per-decision partial, so `superseded_by: []` stays on every one
+# of them and no rule_id drops: the delta is +2, measured from the baseline
+# on the integration branch at the commit this slice branched from (93).
+# ADR-0086 (slice #1440) adds 1 new PIP-* id (PIP-030). Its five supersessions
+# (ADR-0004 D3, ADR-0027 D1/D2/D3, ADR-0036 D1/D2, ADR-0058 D1, ADR-0061 D2)
+# are all per-decision partial, so `superseded_by` stays empty on each source
+# ADR and no rule_id drops: the delta is +1, measured from the baseline on
+# `develop` at the commit this merge reconciles against (95).
 # Breakdown: CAP(8) + COM(2) + CRI(5) + DOC(6) + GLO(4) + HOK(9) +
-#            ISO(6) + OUT(5) + PIP(30) + REG(3) + SLI(5) + VER(12) = 95
-# ADR-0086 adds PIP-030; partial supersessions remove no historical ADR.
-RULE_IDS_BASELINE: int = 95
+#            ISO(6) + OUT(5) + PIP(33) + REG(3) + SLI(3) + VER(12) = 96
+RULE_IDS_BASELINE: int = 96
 
 # ---------------------------------------------------------------------------
 # Frontmatter parser (stdlib, no PyYAML)
@@ -333,7 +362,8 @@ _RULE_STATEMENTS: dict[str, str] = {
     # ADR-0003: autonomous pipeline + critics
     "PIP-002": (
         "The unit-of-delivery hierarchy is exactly three tiers: PRD (prd-labeled issue) "
-        "→ Slice (slice-labeled sub-issue) → PR (closes one slice)."
+        "→ Slice (slice-labeled sub-issue) → PR (closes one slice); as amended by "
+        "ADR-0090 D4: a release-mode lane PR closes one or more `bug` issues and no slice."
     ),
     "PIP-003": (
         "The pipeline has five stages: grill-me → to-prd+prd-critic → slicer+slicer-critic "
@@ -472,12 +502,11 @@ _RULE_STATEMENTS: dict[str, str] = {
     "PIP-024": (
         "`tools/pipe/batch-plan` is retired and `batch_planned` leaves "
         "`tools/trace.py`'s closed kind enum (zero recorded spans, "
-        "verified); the Run-board's `next` panel and `next_source` marker "
-        "are removed — the board shows only `now` and `recent`, both "
-        "backed by spans that verifiably occur; the verb returns only via "
-        "a new ADR gated on two `captured` issues from distinct PRDs each "
-        "documenting a concrete mis-dispatch or planning failure caused by "
-        "absent recorded batch state (ADR-0080 D2)."
+        "verified); the verb returns only via a new ADR gated on two "
+        "`captured` issues from distinct PRDs each documenting a concrete "
+        "mis-dispatch or planning failure caused by absent recorded batch "
+        "state (ADR-0080 D2; its board-panel clause lapsed when ADR-0088 "
+        "retired the board)."
     ),
     # ADR-0081: post-audit dead-weight retirements (4 mechanisms, duties rehomed)
     "PIP-025": (
@@ -508,14 +537,18 @@ _RULE_STATEMENTS: dict[str, str] = {
         "answer; hard invariants (no agent-created PROMOTE_OK per ADR-0070 "
         "D4, round-3 strict-stop, destructive-op confirmation, worktree "
         "isolation, slicer-only slice creation) are absolute and not "
-        "triage-overridable (ADR-0085 D1/D2)."
+        "triage-overridable (ADR-0085 D1/D2); as amended by ADR-0090 D2: a "
+        "release run's work set is its version's bugs and admitted features; "
+        "bugs without a design fork ride lane PRs, and admitted features the "
+        "PRD → slicer flow."
     ),
     "PIP-027": (
         "Drain parallelism lifts the slice model to queue level: file-overlap "
         "lanes, independent lanes parallel in isolated worktrees, at most 3 "
         "items concurrently in flight (enforced by DRAIN-LEDGER), unknown "
         "overlap serializes, merges serialize through the PR gate per "
-        "ADR-0062 D2 (ADR-0085 D3)."
+        "ADR-0062 D2 (ADR-0085 D3); as amended by ADR-0090 D3: a release run "
+        "allows 15 lanes in flight."
     ),
     "PIP-028": (
         "Every drain run appends to `.claude/logs/drain/<run-id>.jsonl` at the "
@@ -536,6 +569,57 @@ _RULE_STATEMENTS: dict[str, str] = {
         "a `captured_ref`, or (on a park) a place in the remaining-items list; "
         "I3's definition, rule #13 root-cause captures, and the ADR-0067 "
         "regression rider are unchanged (ADR-0085 D5)."
+    ),
+    # ADR-0089: per-repo pipeline identity — configured branch roles (D1/D3)
+    # + repo-agnostic history anchors (D4)
+    "PIP-031": (
+        "Pipeline executables (`tools/`, `dashboard/`, `.claude/hooks/`, "
+        "`.githooks/`, `bootstrap.sh`) and agent/skill prompt commands name "
+        "the integration or release branch only through "
+        "`tools/pipeline_config.py`, which reads the tracked "
+        "`.claude/pipeline.conf` (defaults `develop`/`main`). Agents branch "
+        "from, diff against, verify on and open PRs to the integration "
+        "branch. CI CHECK 29 fails on a literal branch token in that "
+        "defined subject set (ADR-0089 D1/D3)."
+    ),
+    "PIP-032": (
+        "A health-check grandfather anchor is an ISO-8601 UTC instant in "
+        "`dashboard/_constants.py` `GRANDFATHER_UNTIL`, compared against "
+        "merge time through `grandfathered()`. It is never a PR/issue "
+        "number or commit sha of this repo. CI CHECK 29 fails on a numeric "
+        "or sha-valued anchor constant (ADR-0089 D4)."
+    ),
+    # ADR-0090: release mode for /ship (freeze a version, drain bugs through
+    # script-briefed file lanes)
+    "PIP-033": (
+        "Every issue carries exactly one class label at creation: `bug` "
+        "(anything that breaks the system's own promise, docs, rules, ADRs "
+        "and doc drift included) or `feature`; residuals (`needs-human-check` "
+        "issues without `bug`: QA residuals and pure policy questions) are "
+        "exempt and never admitted to a milestone. `/ship release <version>` "
+        "is a queue-drain sub-form: `tools/release.py freeze <V> --next <W> "
+        "--features <list>` refuses on an unclassified issue, admits every "
+        "open bug and the owner's listed features with their slices to "
+        "`<V>`, and moves every other feature to `<W>`; bugs without a "
+        "design fork ride lane PRs, not the PRD pipeline, and admitted "
+        "features ride the PRD → slicer flow. A version is done when "
+        "`RELEASE-GATE` PASSes (zero open non-residual issues in its "
+        "milestone, zero open non-residual bugs in none, zero unclassified "
+        "open issues), so a bug escalated to the owner holds it; only the "
+        "owner promotes and tags (ADR-0090 D1/D2)."
+    ),
+    "PIP-034": (
+        "Release-mode bugs are fixed in lane PRs: one fresh Sonnet builder "
+        "per disjoint file lane, dispatched only through `tools/pipe/"
+        "dispatch --lane`, whose packet (evidence, excerpts from "
+        "`origin/develop` at dispatch, check) is the builder's brief; "
+        "branch `fix/<n>-lane-<slug>`, label `lane`, closing only `bug` "
+        "issues and never slice or PRD issues; R-LOC 600 applies. "
+        "`tools/pipe/pr-merge` merges a lane PR only on an APPROVE whose "
+        "`MODEL:` is not Sonnet or Haiku, with every commit inside a "
+        "dispatch window of its lane, then closes its bugs. DRAIN-LEDGER "
+        "caps a release run at 15 lanes in flight, and `tools/release.py "
+        "verify` checks each bug after merge (ADR-0090 D3/D4)."
     ),
     # -----------------------------------------------------------------------
     # hooks scope (ADR-0015, ADR-0023, ADR-0033, ADR-0057)
@@ -641,9 +725,9 @@ _RULE_STATEMENTS: dict[str, str] = {
     ),
     "VER-002": (
         "`qa-tester` in production-verify mode auto-routes by change type: "
-        "browser UI (`dashboard/*`) → headless Playwright; hooks/settings → synthetic-payload "
-        "fire + log assertion; skills/tools → command run + output assertion; "
-        "docs/ADRs → static grep (ADR-0037 D2)."
+        "browser-reachable UI → browser route; hooks/settings → synthetic-payload "
+        "fire + log assertion; skills/tools → command run + output "
+        "assertion; docs/ADRs → static grep (ADR-0037 D2, as amended by ADR-0088 D5)."
     ),
     "VER-003": (
         "Every PRD §2 must include a 'Production check:' line stating what to exercise and "
@@ -814,9 +898,10 @@ _RULE_STATEMENTS: dict[str, str] = {
     # -----------------------------------------------------------------------
     # ADR-0034: generated-docs currency — D4 (generated README) + D5 (R-DOCS-CURRENT)
     "DOC-001": (
-        "`README.md` is a build artifact: `dashboard/server.py --generate-readme` reads "
+        "`README.md` is a build artifact: `python3 dashboard/readme_gen.py` reads "
         "`README.template.md` + filesystem, writes `README.md`; the file MUST NOT be "
-        "hand-edited — always regenerate (ADR-0034 D4)."
+        "hand-edited — always regenerate (ADR-0034 D4; generator entrypoint relocated "
+        "by ADR-0088 D3)."
     ),
     "DOC-002": (
         "The reviewer enforces `R-DOCS-CURRENT`: any PR that changes a template placeholder "

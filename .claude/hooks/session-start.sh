@@ -11,7 +11,6 @@
 #   - In-flight assigned slices
 #   - Open PRs (recent 3)
 #   - Open captured-queue depth
-#   - Dashboard freshness (last /api/meta ping age in minutes)
 #   - jq / hooks warnings
 #
 # Graceful degradation: missing gh → one-line warning, never block.
@@ -44,9 +43,31 @@ printf '{"hook":"session-start","status":"python3_selftest","result":"%s","ts":"
   >> "$LOG_DIR/hook-fires.jsonl" 2>/dev/null || true
 
 # ---- git state (always available) ------------------------------------------
+# Resolve the configured integration branch (ADR-0089 D1), located relative
+# to THIS script's own path (S1-c), same convention as HANDSHAKE_SH below.
+# S2-d: a resolver failure takes this hook's existing degrade-not-exit
+# posture -- DIV becomes a visible placeholder naming the failure; no
+# fallback literal, no new beacon status, and the script still continues
+# through the GH_OK block to its single terminal beacon.
+# #1535: `pwd -W` (else `pwd`; braced so a failed cd never yields the cwd) for
+# MSYS_NO_PATHCONV=1. Stdout names the branch; a failure re-runs it for stderr.
+_SS_TOOLS_DIR="$(cd "$SCRIPT_DIR/../../tools" && { pwd -W 2>/dev/null || pwd; })"
+PIPELINE_CONFIG_PY="$_SS_TOOLS_DIR/pipeline_config.py"
+INTEGRATION_BRANCH=""
+_PC_ERR=""
+if _pc_out=$(python3 "$PIPELINE_CONFIG_PY" integration); then
+  INTEGRATION_BRANCH="$_pc_out"
+else
+  _PC_ERR=$(python3 "$PIPELINE_CONFIG_PY" integration 2>&1 >/dev/null)
+fi
+
 BR=$(git symbolic-ref --short HEAD 2>/dev/null || echo "(detached)")
 DIV="(fetch failed)"
-git fetch origin develop 2>/dev/null && DIV=$(git rev-list --count HEAD..origin/develop 2>/dev/null || echo "?")
+if [ -n "$INTEGRATION_BRANCH" ]; then
+  git fetch origin "$INTEGRATION_BRANCH" 2>/dev/null && DIV=$(git rev-list --count "HEAD..origin/$INTEGRATION_BRANCH" 2>/dev/null || echo "?")
+else
+  DIV="(resolver failed: ${_PC_ERR:-tools/pipeline_config.py unavailable})"
+fi
 LOG=$(git log --oneline -5 2>/dev/null || echo "(no log)")
 
 # ---- deploy-gap handshake (PRD #1075 criterion 4 / slice #1079) --------------
@@ -131,7 +152,6 @@ NH_PRS="(gh/jq unavailable)"
 SL="(gh/jq unavailable)"
 PR="(gh/jq unavailable)"
 CAP="(gh/jq unavailable)"
-DASH_FRESH="(not checked)"
 
 if [ "$GH_OK" -eq 1 ]; then
   # Five independent gh queries run CONCURRENTLY as backgrounded jobs, each
@@ -179,37 +199,10 @@ if [ "$GH_OK" -eq 1 ]; then
   rm -f "$T_NH" "$T_SL" "$T_CAP" "$T_PR" "$T_NHPR" 2>/dev/null
 fi
 
-# ---- Dashboard freshness (no gh required) -----------------------------------
-# Identity-verifying (#1184 incident fix, slice #1189), repointed by #1204 to
-# the ONE shared probe contract (lib-root.sh's dashboard_probe_identity(),
-# curl --max-time) instead of duplicating an inline python socket-based
-# probe: the old inline probe's per-address-family timeout paid 4.14s on an
-# EMPTY port (2s IPv6 + 2s IPv4) -- worse than the squatted-port case. Same
-# three-way distinction as before: "no listener at all" vs "occupied by a
-# foreign listener" (something answered but failed identity) vs "up"
-# (verified).
-if command -v curl >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
-  DASH_PROBE=$(dashboard_probe_identity "python3" "http://localhost:8765" 2 2>/dev/null || echo "")
-  case "$DASH_PROBE" in
-    ok\ *)
-      DASH_FRESH="dashboard up (sha ${DASH_PROBE#ok })"
-      ;;
-    occupied\ *)
-      DASH_FRESH="dashboard OCCUPIED (foreign listener: ${DASH_PROBE#occupied })"
-      ;;
-    no-server)
-      DASH_FRESH="dashboard unreachable (no listener on 8765)"
-      ;;
-    *)
-      DASH_FRESH="(check failed)"
-      ;;
-  esac
-fi
-
 # ---- Build context string ---------------------------------------------------
-CTX=$(printf "Branch: %s | %s commit(s) behind origin/develop\n\nRecent commits:\n%s\n\nNeeds-human issues: %s\nNeeds-human PRs: %s\nOpen slices: %s\nOpen PRs: %s\nOpen captured: %s\nDashboard: %s%s%s%s\n" \
-  "$BR" "$DIV" "$LOG" \
-  "$NH_ISSUES" "$NH_PRS" "$SL" "$PR" "$CAP" "$DASH_FRESH" \
+CTX=$(printf "Branch: %s | %s commit(s) behind origin/%s\n\nRecent commits:\n%s\n\nNeeds-human issues: %s\nNeeds-human PRs: %s\nOpen slices: %s\nOpen PRs: %s\nOpen captured: %s%s%s%s\n" \
+  "$BR" "$DIV" "${INTEGRATION_BRANCH:-?}" "$LOG" \
+  "$NH_ISSUES" "$NH_PRS" "$SL" "$PR" "$CAP" \
   "$JQ_WARN" "$GH_WARN" "$DEPLOY_WARN" \
   | head -c 6144 | head -n 60)
 

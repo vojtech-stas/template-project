@@ -2,7 +2,7 @@
 tests/test_gh_cache_health_firing_996.py — slice #996 acceptance tests.
 
 Verifies that:
-  cr.3  /api/health build path (affected check functions) returns in <10s
+  cr.3  the health-payload build path (affected check functions) returns in <10s
         under a simulated slow/failing gh.  No serial stall.
   cr.4  A health row whose gh data is unavailable within the timeout reports
         "computing"/last-known while other rows still return normally.
@@ -70,7 +70,7 @@ def _slow_gh_fetch(args, *, ttl, timeout):
 
 
 # ===========================================================================
-# cr.3 — /api/health build path returns <10s under slow gh
+# cr.3 — health-payload build path returns <10s under slow gh
 # ===========================================================================
 
 class TestCr3NoSerialStall(unittest.TestCase):
@@ -220,10 +220,15 @@ class TestCr4DegradeLabel(unittest.TestCase):
         self.assertIn(result["result"], ("PASS", "WARN", "FAIL"))
 
     def test_stale_value_returned_when_cached(self):
-        """When gh_fetch returns source='stale', _health_gh_fetch still returns rc=0.
+        """When gh_fetch returns source='stale', _health_gh_fetch returns rc=1.
 
-        This verifies that a previously-cached (stale) value is served rather than
-        the computing sentinel — the row renders with last-known data.
+        ADR-0087 D1 reverses the prior stale-as-success mapping: a 'stale'
+        answer means gh failed on THIS call and the value served is a
+        last-known one. Every surviving caller of this seam runs as a
+        one-shot CLI process (ADR-0088 D1 deleted the served-dashboard row
+        that was 'stale's only reason to read as success — PRD #993), so a
+        'stale' answer proves nothing about the present and is no longer
+        read as success.
         """
         health = _reimport("health")
 
@@ -243,8 +248,31 @@ class TestCr4DegradeLabel(unittest.TestCase):
         rc, out = health._health_gh_fetch(
             ["label", "list"], ttl=60.0, timeout=5.0
         )
-        self.assertEqual(rc, 0, "stale result should yield rc=0 (serve the value)")
-        self.assertIn("stale-label", out)
+        self.assertEqual(rc, 1, "stale result should yield rc=1 (unconfirmed)")
+        self.assertEqual(out, "", "unconfirmed answer must carry an empty payload")
+
+    def test_stale_value_with_source_labels_stale(self):
+        """with_source=True surfaces 'stale' as the third tuple element."""
+        health = _reimport("health")
+
+        stale_result = _GhResult(
+            value='[{"name": "stale-label"}]',
+            fetched_at="2026-01-01T00:00:00+00:00",
+            source="stale",
+        )
+
+        def _stale_gh_fetch(args, *, ttl, timeout):
+            return stale_result
+
+        health._gh_fetch_impl = _stale_gh_fetch
+        health._GH_CACHE_AVAILABLE = True
+
+        rc, out, source = health._health_gh_fetch(
+            ["label", "list"], ttl=60.0, timeout=5.0, with_source=True
+        )
+        self.assertEqual(rc, 1)
+        self.assertEqual(out, "")
+        self.assertEqual(source, "stale")
 
     def test_computing_sentinel_yields_rc1(self):
         """When gh_fetch returns source='computing', _health_gh_fetch returns rc=1."""

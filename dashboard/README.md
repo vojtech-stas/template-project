@@ -1,91 +1,78 @@
-# project-claude workflow dashboard
+# project-claude pipeline tooling
 
-Local web visualizer for the project's autonomous pipeline.
+CLI-only home for the project's control-plane tooling: health checks, the
+trace read-model, the README generator, and PRD-run comparison. There is no
+served UI and no process to start — see [`docs/observability.md`](../docs/observability.md)
+for the append-only-log observability surface that replaced the served
+dashboard (ADR-0088).
 
-## Backend modules
-
-The backend is split into flat sibling modules under `dashboard/`; `server.py` is a thin HTTP facade that re-exports everything:
+## Modules
 
 | Module | Responsibility |
 |---|---|
-| `server.py` | HTTP request handler, named re-exports for all `/api/*` routes, module-level globals (caches, locks, `KNOWN_CRITICS`) |
-| `discovery.py` | Skill/agent/hook/ADR filesystem discovery for `/api/pipeline` and the component graph |
-| `health.py` | `check_docs1`–`check_docs11` docs-currency checks + STRUCT-1..10 structure checks (formerly `/audit-meta`, absorbed PRD #919 slice #920) + AS-AUDIT aggregate subagent-prompt check (formerly `/audit-subagents`, registered PRD #919 slice #921) + substrate checks (`check_capture_slo`, `check_hook_integrity`, `check_isolation_group`, `check_rule_coverage`, `check_critic_health`, `check_spec_coverage`) + verification-integrity checks (`check_blind_dispatch_rate`, `check_residual_ratio`, `check_proof_presence`, `check_merge_integrity`, `check_capture_shape`, `check_green_main`, `check_silent_drift`) + registry-integrity check (`check_parity`) + two-tier promotion checks (`check_release_ready`, `check_branch_topology`) + hygiene/session-start checks (`check_untracked_size`, `check_log_rotation`, `check_stale_branches`, `check_required_labels`, `check_dead_routes`, `check_session_injection`, `check_r_sensitive_detector`) + liveness/integrity checks (`check_stale_server`, `check_promotion_lag`, `check_hook_liveness`, `check_proof_integrity`, `check_meta_tripwire`), TTL-cached `/api/health`. **Check registry CLI:** `python dashboard/health.py --check <ID>` runs a single check headlessly (exit 0 = PASS/WARN, exit 1 = FAIL, exit 2 = unknown ID); `python dashboard/health.py --list` prints all registered IDs. Per ADR-0064 D3. |
-| `events.py` | Workflow-event log reading (`/api/runs`), byte-cursor incremental poll, session grouping |
-| `workitems.py` | GitHub Issues fetch via `fetch_workitems()` — used server-side by `/api/status` open_work counts |
-| `readme_gen.py` | README regeneration logic (`--generate-readme` CLI flag) |
-| `pipeline_spec.py` | Pipeline topology spec (SPEC v2 nodes + edges) for `/api/pipeline` |
-| `gh_cache.py` | Shared in-memory TTL+timeout wrapper for all `gh` CLI calls (PRD #993): `gh_fetch(args, *, ttl, timeout)` runs `gh` via `subprocess.run(timeout=...)`, caches stdout by normalized command key, degrades to last-known "stale" value (or "computing" sentinel) on timeout/failure. Thread-safe; `GhResult` carries `fetched_at`+`source` for honest "as of" display. Timeout default 5s; TTL per-call-site. Prevents any single slow `gh` call from blocking the request path. |
-| `_gitfiles.py` | Git-tree file enumeration: `git_ls_files()` lists tracked files via `git ls-files` so discovery functions use the git index rather than `os.walk` or `glob`, avoiding false positives from untracked/generated files and working correctly in worktree-isolated sessions. Used by `discovery.py` and `health.py` for reliable path enumeration. |
-| `collector.py` | PRD-run artifact collection from GitHub API; `--compare` golden-run mode |
-| `comparison.py` | Run-vs-spec edge comparison, `run_pass` verdict, downloadable JSON report; violation detectors include `merged_without_ci` (non-trivial PR merged without SUCCESS `ci` statusCheckRollup — bootstrap-mode: PRs predating ADR-0042 are grandfathered); failed/not-found collection returns `run_pass: false` plus an explicit `error` (and `not_found: true`) field — never a vacuous PASS |
-| `tracestore.py` | Trace store SQLite read-model (PRD #1075 slice #1080, hardened slice #1082/#1101): folds the canonical `tools/trace.py` v3 span log (`trace-v3.jsonl`) into a disposable, gitignored SQLite read-model (`.claude/state/trace.db`) via `fold()` — the ONLY write path (refoldable-from-log, never a second source of truth, per ADR-0075 D2); `fold()` builds each generation into a scratch table and atomically swaps it in under one transaction (WAL + busy_timeout + INSERT OR IGNORE + `ORDER BY ts, rowid` tie-break + size+mtime composite freshness — closes the #1101 concurrency defects); `acid_path(pr)` is an indexed causal-chain query returning the same ordered answer as `tools/trace.py`'s linear scan (kept as the fallback/cross-check); `span_tree(trace_id)` returns one trace's ordered spans; `serve_trace_runs()` is the background-warmed `/api/trace-runs` payload builder (the Run-board's recorded-runs panel, relocated from the deleted Firing tab per ADR-0080 D1); `TRACE_DB_OVERRIDE` env test seam; CLI: `python dashboard/tracestore.py path --pr <n>` / `fold` |
+| `_constants.py` | Single-sourced project-wide constants: the closed `KNOWN_CRITICS` roster (ADR-0088 D4). Imports nothing, so no sibling module can ever form an import cycle through it. |
+| `discovery.py` | Skill/agent/hook/ADR filesystem discovery — powers the repo-map generator, the README generator, and the health registry's structural checks. |
+| `health.py` | `check_docs1`–`check_docs11` docs-currency checks + STRUCT-1..10 structure checks (formerly `/audit-meta`, absorbed PRD #919 slice #920) + AS-AUDIT aggregate subagent-prompt check (formerly `/audit-subagents`, registered PRD #919 slice #921) + substrate checks (`check_capture_slo`, `check_hook_integrity`, `check_isolation_group`, `check_rule_coverage`, `check_critic_health`, `check_spec_coverage`) + verification-integrity checks (`check_blind_dispatch_rate`, `check_residual_ratio`, `check_proof_presence`, `check_merge_integrity`, `check_capture_shape`, `check_green_main`, `check_silent_drift`, `check_query_honesty` — REST-attested canary gating every confirmed `--label`-filtered `gh` answer through the seam, ADR-0087 D2) + registry-integrity check (`check_parity`) + two-tier promotion checks (`check_release_ready`, `check_branch_topology`) + hygiene/session-start checks (`check_untracked_size`, `check_log_rotation`, `check_stale_branches`, `check_required_labels`, `check_session_injection`, `check_r_sensitive_detector`) + liveness/integrity checks (`check_promotion_lag`, `check_hook_liveness`, `check_proof_integrity`, `check_meta_tripwire`), TTL-cached. **CLI:** `python dashboard/health.py --check <ID>` runs a single check headlessly (exit 0 = PASS/WARN, exit 1 = FAIL, exit 2 = unknown ID); `python dashboard/health.py --list` prints all registered IDs. Per ADR-0064 D3. |
+| `readme_gen.py` | README regeneration logic. **CLI:** `python3 dashboard/readme_gen.py` reads `README.template.md` + filesystem and writes `README.md` — no flag (entrypoint relocated here by ADR-0088 D3). |
+| `pipeline_spec.py` | Pipeline topology spec (SPEC v2 nodes + edges) consumed by the README's generated mermaid diagram. |
+| `gh_cache.py` | Shared in-memory TTL+timeout wrapper for all `gh` CLI calls (PRD #993): `gh_fetch(args, *, ttl, timeout)` runs `gh` via `subprocess.run(timeout=...)`, caches stdout by normalized command key, degrades to last-known "stale" value (or "computing" sentinel) on timeout/failure. Thread-safe; `GhResult` carries `fetched_at`+`source` for honest "as of" display. Timeout default 5s; TTL per-call-site. Prevents any single slow `gh` call from blocking the caller. Its `GhResult.source` labels are correct as-is — provenance is enforced one layer up, at `health.py`'s `_health_gh_fetch()` seam, not here (ADR-0087 D1/D3: `gh_cache.py` itself is unchanged). |
+| `_gitfiles.py` | Git-tree file enumeration: `git_ls_files()` lists tracked files via `git ls-files` so discovery functions use the git index rather than `os.walk` or `glob`, avoiding false positives from untracked/generated files and working correctly in worktree-isolated sessions. Used by `discovery.py` and `health.py`. |
+| `collector.py` | PRD-run artifact collection from GitHub API; `--compare` golden-run mode. |
+| `comparison.py` | Run-vs-spec edge comparison, `run_pass` verdict, downloadable JSON report; violation detectors include `merged_without_ci` (non-trivial PR merged without SUCCESS `ci` statusCheckRollup — bootstrap-mode: PRs predating ADR-0042 are grandfathered); failed/not-found collection returns `run_pass: false` plus an explicit `error` (and `not_found: true`) field — never a vacuous PASS. |
+| `tracestore.py` | Trace store SQLite read-model (PRD #1075 slice #1080, hardened slice #1082/#1101): folds the canonical `tools/trace.py` v3 span log (`trace-v3.jsonl`) into a disposable, gitignored SQLite read-model (`.claude/state/trace.db`) via `fold()` — the ONLY write path (refoldable-from-log, never a second source of truth, per ADR-0075 D2); `fold()` builds each generation into a scratch table and atomically swaps it in under one transaction (WAL + busy_timeout + INSERT OR IGNORE + `ORDER BY ts, rowid` tie-break + size+mtime composite freshness — closes the #1101 concurrency defects); `acid_path(pr)` is an indexed causal-chain query returning the same ordered answer as `tools/trace.py`'s linear scan (kept as the fallback/cross-check); `span_tree(trace_id)` returns one trace's ordered spans; `serve_trace_runs()` / `serve_runboard()` are background-warmed payload builders kept as library shims for their surviving test consumers, with no HTTP caller after ADR-0088 D1's server deletion; `TRACE_DB_OVERRIDE` env test seam. **CLI:** `python dashboard/tracestore.py path --pr <n>` / `fold` / `running` / `runboard`. |
+| `telemetry_root.py` | Shared repo-root resolution used by `health.py` and other modules so they compute the correct root across linked worktrees. |
+| `events.py` | Workflow-event log reading. No non-test importer remains after ADR-0088 D1's server deletion; slated for removal alongside its own test suite. |
+| `workitems.py` | GitHub Issues fetch via `fetch_workitems()`. No non-test importer remains after ADR-0088 D1's server deletion; slated for removal alongside its own test suite. |
 
 ## Usage
 
-Run from the **project root**:
+Every module is invoked directly via its own CLI entrypoint — there is no
+server process to start or restart:
 
 ```bash
-python dashboard/server.py
+python3 dashboard/health.py --check RELEASE-READY
+python3 dashboard/health.py --list
+python3 dashboard/tracestore.py runboard
+python3 dashboard/readme_gen.py
 ```
-
-Then open `http://localhost:8765` in any modern browser.
-
-## Tabs
-
-- **Run-board** — the ONLY tab (PRD #1170 / [ADR-0078](../decisions/0078-run-board-landing-view.md) D1, reduced from five tabs to one by PRD #1214 / [ADR-0080](../decisions/0080-frontend-reduced-run-board-batch-plan-retired.md) D1): now/recent read strictly from the recorded v3 trace ledger via `/api/runboard`. **Now** — dispatch spans with no terminal `dispatch_end` (slice, prd, session_id, elapsed seconds); doubles as the duplicate-dispatch mutex's display surface. A dispatch open longer than `RUNBOARD_STALE_THRESHOLD_SECONDS` (5400s / 90min — chosen as meaningfully above the ~58min median duration observed across the canonical ledger's recorded dispatch/dispatch_end pairs, slice #1173) carries `stale: true` and a red **STALE** badge; the threshold itself is echoed by the API (`stale_threshold_seconds`) and rendered live in the Now panel's header (never hidden in code, per D1's provenance intent). **Recent** — at most the 20 most-recently-terminated chains (`dispatch_end`/`pr_merged`), newest first, with outcome and duration. **Row-level provenance** (slice #1173, §2 #2c): every rendered row across both columns states its own data source (`dispatch span`, `dispatch_end span`, or `pr_merged span`) and the ledger read time, so no derived value is shown as live truth without saying where it came from. **Honest empty state** (slice #1173, §2 #2d): when `now` and `recent` are both empty, the two per-column filler messages are replaced by one banner naming the ledger file it read (`.claude/logs/trace-v3.jsonl`) plus the read time — never a blank-looking panel. **Recorded pipeline chains** (relocated from the deleted Firing tab, ADR-0080 D1) — `/api/trace-runs`-driven pr_opened→pr_merged chains with real timestamps/durations, zero gh calls. **Health strip** (replaces the deleted Health tab, ADR-0080 D1) — PASS/WARN/FAIL verdict counts + FAIL check names from the existing `/api/health` summary payload; fetched once per page load, not polled — a Refresh button re-fetches on demand. Never infers state the ledger does not hold.
-
-## API reference
-
-Reduced to five routes by ADR-0080 D1 (fifteen UI-only routes deleted alongside the Architecture/Live/Health/Firing tabs — see `decisions/0080-frontend-reduced-run-board-batch-plan-retired.md` for the full list):
-
-| Endpoint | Description |
-|---|---|
-| `/api/health` | All health check results (TTL-cached); powers the Run-board's health strip |
-| `/api/status` | Aggregated liveness snapshot: sha/branch, hooks_live, last_event, main_green, health_summary, open_work (slice #859); powers the always-visible status bar |
-| `/api/meta` | Server sha + session handshake (banner freshness gate per slice #773) |
-| `/api/trace-runs` | Recorded pipeline-span chains from the v3 trace store (slice #1082, PRD #1075 criterion 9): the Run-board's recorded-runs panel (relocated from the deleted Firing tab, ADR-0080 D1) — `runs` is a list of `{trace_id, pr, opened_ts, merged_ts, dur_ms, spans}` PR-shaped chains, newest-opened-first, folded from `tools/trace.py`'s canonical JSONL via `tracestore.py` (zero gh calls). Background-warmed stale-while-revalidate serve: `{"status":"computing"}` on cold start. The gh-derived cross-check panel that used to sit beside this one is retired (superseded ADR-0075 D6) — the RECORD-VS-GH reconciler + a HOSTED-CI-REAL CI check are its mechanized replacement. |
-| `/api/runboard` | `{now, recent, stale_threshold_seconds, ledger, fetched_at}` from the v3 trace store (PRD #1170 walking skeleton slice #1172; staleness flag + row-level provenance slice #1173): the Run-board tab's landing-view renderer — `tracestore.serve_runboard()`, background-warmed stale-while-revalidate serve mirroring `/api/trace-runs`'s house pattern (zero gh calls). Every `now`/`recent` entry carries its own `source` label; `now` entries also carry `stale` (elapsed >= `stale_threshold_seconds`, default 5400s). Strictly a reader over recorded spans (ADR-0078 D1). |
 
 ## Configuration
 
 | Variable | Default | Description |
 |---|---|---|
-| `DASH_PORT` | `8765` | Port the server listens on |
-| `DASH_NO_BROWSER` | _(unset)_ | Set to any non-empty value to suppress auto-opening the browser on startup (useful in CI, headless, or automated contexts) |
 | `DASH_REPO_SLUG` | _(derived)_ | Override the runtime-derived GitHub repo slug (`owner/name`). Normally derived automatically via `gh repo view` → `git remote get-url origin` parse. Set this only when both derivation paths fail (e.g. detached HEAD, no `origin` remote). Must be in `owner/name` form. Single github.com origin assumed (multi-remote / GHE out of scope — see PRD #753 §3). |
-
-Example with custom port:
-
-```bash
-DASH_PORT=9876 python dashboard/server.py
-```
-
-On Windows Git Bash:
-
-```bash
-DASH_PORT=9876 python dashboard/server.py
-```
 
 ## Cross-platform notes
 
 - Uses Python 3 stdlib only — no `pip install` required.
 - Uses `pathlib` throughout; works on Windows Git Bash, Linux, macOS.
-- Binds to `localhost` only; not accessible from other machines (per PRD non-goals).
 
 ## Intended audience
 
-Solo developer (you). Observation tool; advisory only. The former `/audit-meta` structure+docs-currency checks now run automatically inside the `codebase-critic` per-PRD pass (PRD #919 slice #920). The former `/audit-subagents` subagent-prompt quality checks now run automatically in CI via CHECK 18 (`python3 dashboard/health.py --check AS-AUDIT`, per PRD #919 slice #921).
+Solo developer (you), plus the pipeline's own CI and hooks. Observation and
+control-plane tooling; advisory unless a specific check is wired into a gate
+(e.g. `RELEASE-READY` gates `tools/promote.sh`). The former `/audit-meta`
+structure+docs-currency checks run automatically inside the `codebase-critic`
+per-PRD pass (PRD #919 slice #920). The former `/audit-subagents`
+subagent-prompt quality checks run automatically in CI via CHECK 18
+(`python3 dashboard/health.py --check AS-AUDIT`, per PRD #919 slice #921).
 
 ## Two-tier delivery model (PRD #836 / ADR-0070 D1)
 
-The project uses a `develop`/`main` two-tier model (wave 5 of workflow v2). Agents merge slices to `develop`; `main` advances only via the deterministic promotion gate (`tools/promote.sh` + `RELEASE-READY`). These checks are queryable via the health check registry (`python dashboard/health.py --check <ID>`) and surface as FAIL names in the Run-board's health strip when they fail (no dedicated promotion panel since ADR-0080 D1's Health-tab deletion):
+The project uses a configurable two-tier model (wave 5 of workflow v2): an
+**integration branch** and a **release branch**, named in the tracked
+`.claude/pipeline.conf` and resolved by `tools/pipeline_config.py`
+(ADR-0089 D1). This repo's configured values are `develop`/`main`. Agents
+merge slices to the integration branch; the release branch advances only
+via the deterministic promotion gate (`tools/promote.sh` + `RELEASE-READY`).
+These checks are queryable via the health check registry
+(`python dashboard/health.py --check <ID>`):
 
 **Promotion gates** (`RELEASE-READY` + `BRANCH-TOPOLOGY` health-registry checks):
-- **RELEASE-READY** — evaluates all six conditions from ADR-0070 D2: (a) CI green on `develop` HEAD; (b) full test suite passes; (c) latest production-verify PASS with DOM-attested proof; (d) green-develop streak intact; (e) zero open `needs-human` items; (f) unpromoted batch touches no guardrail-machinery path. A `verdict="true"` means `tools/promote.sh` may advance `main`. Details report the first failing condition when held. Per ADR-0070 D2 / ADR-0072 D1.
-- **BRANCH-TOPOLOGY** — confirms slice PRs target `develop` (not `main`) and that `main` advances only via recorded `promotion` events. Dormant until slice #843 wires full branch-protection. Per ADR-0070 D1 / ADR-0072 D3.
+- **RELEASE-READY** — evaluates all six conditions from ADR-0070 D2: (a) CI green on the integration branch's HEAD; (b) full test suite passes; (c) latest production-verify PASS with route-appropriate proof; (d) green-develop streak intact; (e) zero open `needs-human` items; (f) unpromoted batch touches no guardrail-machinery path. A `verdict="true"` means `tools/promote.sh` may advance the release branch. Details report the first failing condition when held. Per ADR-0070 D2 / ADR-0072 D1.
+- **BRANCH-TOPOLOGY** — confirms slice PRs target the integration branch (not the release branch) and that the release branch advances only via recorded `promotion` events. Dormant until slice #843 wires full branch-protection. Per ADR-0070 D1 / ADR-0072 D3, as amended by ADR-0089 D1.
 
-**Promotion event log:** each promotion appends a `{"v":2,"event":"promotion","from":"develop","to":"main","sha":"..."}` event to `.claude/logs/workflow-events.jsonl` (recorded, CLI-queryable; no longer rendered by a dedicated UI panel since ADR-0080 D1's Live-tab deletion); the Green-develop check shows `main`↔`develop` lag (commits-behind + age) and the last promotion sha.
+**Promotion event log:** each promotion appends a `{"v":2,"event":"promotion","from":"<integration>","to":"<release>","sha":"..."}` event to `.claude/logs/workflow-events.jsonl` (recorded, CLI-queryable; this repo's configured values render as `"from":"develop","to":"main"`).
 
 The sole human-blocking role in this model is acking guardrail-machinery promotions (batches touching `.github/workflows/**`, `.claude/settings.json`, `.claude/hooks/**`, `tools/ci-checks.sh`, `.githooks/**`, `*-critic.md`, or the promotion gate itself). The `R-SENSITIVE-DETECTOR` health row tallies these and their ack status. Per ADR-0070 D4.
 

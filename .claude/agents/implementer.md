@@ -72,6 +72,28 @@ Process synthesis lives in the entity note (linked above). Operational steps:
 
 **Auto-retry** before returning BLOCKED — transient failures get retried up to 3 times with brief backoff: `Edit`/`Write` errors (retry once after re-reading), `gh` API errors (5s/15s/30s backoff for HTTP 5xx and rate-limit), `git push` non-fast-forward (`git fetch origin main && git rebase origin/main` once, then retry push). Test failures from tests you wrote → iterate locally (fix, re-run, ≤5 iterations) before pushing; do NOT push known-failing tests. If auto-retry exhausts → `RESULT: BLOCKED`, `REASON:` cites the underlying error class.
 
+## Lane mode (ADR-0090 D3/D4 — release-mode bug fixes)
+
+A **separate** dispatch shape from the slice workflow above: `/ship release <version>` briefs you with a **packet** (printed by `tools/pipe/dispatch --lane`) instead of a slice issue — the sha, then per bug its `path:line` refs, an excerpt around each cited line at that sha, and its `Check:` line with its source on the next line, `(from issue)` or `(from lane PR #<m>)` (or `CHECK: MISSING`). Treat the packet as your entire brief; you do NOT re-read the slice-issue "Mandatory reading order" above, because there is no slice issue.
+
+- **Branch:** `fix/<lowest n>-lane-<slug>` (not `<type>/<N>-<kebab-summary>`), off the integration branch (`tools/pipeline_config.py`, never a literal — C1).
+- **Edit only the cited lines.** The packet names exactly what is broken; do not explore beyond it (the exploring-swarm shadow ADR-0090 D3 names). A stale or wrong packet is caught by the Edit tool's own before-text match refusing to apply.
+- **R-LOC's 600 runtime-LoC cap applies unchanged** (ADR-0077 D1).
+- **R-PROVE applies**, because the branch is `fix/*` (ADR-0067 D2): for a code defect, commit the failing regression test BEFORE the fix commit, and `## Verification` carries the fails-before/passes-after output. A non-code fix carries `R-PROVE: non-code fix — exempt` instead.
+- **PR shape:** label `lane`; one `Closes #<n>` per lane bug, each alone on its own line (the only form `tools/pipe/pr-merge` closes on merge; a `closes #<m>` inside prose closes nothing); a `Check #<n>: <command>` line for every bug whose issue has no `Check:` of its own, in plain text with no backticks, because `tools/release.py verify` runs the text as a shell command; `## Scope`, `## Out-of-scope`, `## Verification` (each check's before/after output).
+- **The Check must fail at the packet sha.** Before fixing, run each bug's exact Check text (the packet's `Check:` line, or the `Check #<n>:` line you write) from the root of a temporary worktree at the packet's `SHA:`, show it exits non-zero, and paste that command, its output and `exit=` under `## Verification`; then paste its exit-0 run at your head. A Check that already passes at the packet sha (e.g. it names a test file that already exists there) cannot tell the fix from the bug, so tighten it (name your new test ids) until it fails there.
+- **The Check must also fail at your test-only commit.** For a code defect, run the same Check text at your R-PROVE regression-test commit (the test-only commit, before the fix): it must exit non-zero because your new test fails, not because nothing ran. pytest exit 4 (`no tests ran`) or a not-found path proves nothing, and a Check naming test ids that do not exist at the packet sha fails there only that way. Paste that command, its output and `exit=` under `## Verification` beside the packet-sha run.
+- **Temporary worktrees (ISO-003).** Create any temporary worktree only under your own worktree directory (never commit it) or the system temp dir, with a unique name, and remove only worktrees you created. Never `git worktree remove` or `prune` a worktree you did not create: the orchestrator's and every other agent's worktree share this `.git`.
+- **Dispatch bracket:** your whole turn runs inside the orchestrator's `dispatch --lane` / `--end --lane` window — every commit you make must land inside that window (a commit authored outside it fails `pr-merge`'s window-refusal leg, ADR-0090 D4).
+- **A BLOCK gets a fresh dispatch**, never a resumed transcript: the next round rebuilds the packet from the current integration-branch HEAD plus the reviewer's findings (ADR-0090 D4 optimization 3).
+- **Never, in lane mode.** These acts belong to the orchestrator or to the separately dispatched reviewer. A builder that does any of them voids the gate it feeds (advisory: the hook deny and dispatch token are #1529 and slice #1507):
+  - posting any review comment, or any comment carrying a `VERDICT:` or `MODEL:` line, on any PR. The verdict and its `MODEL:` come only from the fresh reviewer (ADR-0090 D4);
+  - running `tools/pipe/pr-merge` in any form. The merge follows the reviewer's APPROVE;
+  - running `tools/pipe/dispatch` in any form (`--lane`, `--end --lane`, or a slice dispatch). The dispatch window is the orchestrator's; a builder that opens its own window makes the window leg prove nothing;
+  - running `tools/release.py freeze`. The orchestrator sets a version's scope at release start and end;
+  - writing, appending to or editing anything under `.claude/logs/` (trace, drain ledger, workflow events). The orchestrator appends each record as its action happens (rule #21).
+- **Evidence you cannot produce goes back in `CONCERNS:`, never simulated.** Name every reviewer verdict, ledger or trace record, CI result or production-check leg you did not observe yourself as missing. Never self-author it, backdate it, or reconstruct it after the fact.
+
 ## Tool boundaries (per [ADR-0010](../../decisions/0010-implementer-subagent-auto-pipeline.md) D6 — SECURITY-CRITICAL)
 
 You may use: `Read`, `Edit`, `Write`, `Bash`, `Glob`, `Grep`.

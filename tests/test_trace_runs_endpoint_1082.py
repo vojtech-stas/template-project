@@ -2,7 +2,9 @@
 tests/test_trace_runs_endpoint_1082.py
 
 Test-first regressions for slice #1082 (PRD #1075 criterion 9) — the
-dashboard's PRIMARY-render read-model for /api/trace-runs:
+read-model that formerly fed the dashboard's PRIMARY-render `/api/trace-runs`
+endpoint (now retired, ADR-0088 D1; the functions below survive as
+library shims, captured: #1491):
 `dashboard/tracestore.py`'s `_build_recorded_runs()` (blocking builder) and
 `serve_trace_runs()` (background-warmed, stale-while-revalidate serve path,
 mirroring `prd_firing.py`'s serve_prd_firing() house pattern per issue

@@ -276,20 +276,12 @@ class TestTelemetryLogRootFallback(unittest.TestCase):
 
 class TestTelemetryLogRootServerUsage(unittest.TestCase):
     """
-    Verify that server.py and health.py import and use _telemetry_log_root
-    for the hook/event log paths (structural check — not a live-server test).
-    """
+    Verify that health.py imports and uses _telemetry_log_root for the
+    hook/event log paths (structural check — not a live-server test).
 
-    def test_server_py_imports_telemetry_root(self):
-        """server.py must import from telemetry_root (or define equivalent)."""
-        server_src = (DASHBOARD_DIR / "server.py").read_text(encoding="utf-8")
-        self.assertTrue(
-            "telemetry_root" in server_src or "_telemetry_log_root" in server_src,
-            msg=(
-                "server.py must import or call _telemetry_log_root to resolve "
-                "hook/event log paths via git-common-dir. Not found in source."
-            ),
-        )
+    (The parallel HTTP-server-module sub-check was retired along with that
+    module per ADR-0088 D1 — slice #1481.)
+    """
 
     def test_health_py_imports_telemetry_root(self):
         """health.py must import from telemetry_root (or define equivalent)."""

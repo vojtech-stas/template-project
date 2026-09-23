@@ -2,7 +2,8 @@
 Regression tests for issue #846 — measurement layer honesty.
 
 Three defects fixed in this slice:
-  1. dashboard-autostart.sh never checks for stale sha — it just checks HTTP 200.
+  1. the since-deleted SessionStart dashboard-spawn hook (ADR-0088 D1) never
+     checked for stale sha — it just checked HTTP 200.
   2. stop-reviewer-gate.sh emits attempt but no ok beacon on success paths.
   3. Hooks use local-time `date -Iseconds`; must be UTC `date -u -Iseconds`.
 
@@ -43,8 +44,9 @@ class TestUTCTimestamps(unittest.TestCase):
     # Hook files that must not contain bare `date -Iseconds`
     # Hook files that must not contain bare `date -Iseconds`
     # Note: log-event.sh removed from list (deleted per PRD #876 slice #877)
+    # Note: the former SessionStart dashboard-spawn hook was removed from
+    # this list (deleted per ADR-0088 D1)
     HOOK_FILES = [
-        "dashboard-autostart.sh",
         "user-prompt-submit.sh",
         "pre-tool-edit.sh",
         "log-tool-event.sh",
@@ -66,9 +68,6 @@ class TestUTCTimestamps(unittest.TestCase):
                 "All timestamp calls must use `date -u -Iseconds` (UTC)."
             ),
         )
-
-    def test_dashboard_autostart_utc(self):
-        self._assert_no_bare_date("dashboard-autostart.sh")
 
     def test_user_prompt_submit_utc(self):
         self._assert_no_bare_date("user-prompt-submit.sh")
@@ -151,73 +150,6 @@ class TestStopReviewerGateOkBeacon(unittest.TestCase):
             occurrences,
             3,
             "emit_ok_beacon should be called on multiple success paths (loop-guard, no-PRs, all-signed at minimum).",
-        )
-
-
-# ---------------------------------------------------------------------------
-# Defect 1 — dashboard-autostart stale-restart sha check
-# ---------------------------------------------------------------------------
-
-class TestDashboardAutostartStaleShaCheck(unittest.TestCase):
-    """dashboard-autostart.sh must compare running server sha to git HEAD."""
-
-    def _text(self) -> str:
-        return _read_hook("dashboard-autostart.sh")
-
-    def test_api_meta_endpoint_queried(self):
-        """The hook must query /api/meta to retrieve the running server's sha."""
-        text = self._text()
-        self.assertIn(
-            "/api/meta",
-            text,
-            "dashboard-autostart.sh must query /api/meta to check the running server's sha.",
-        )
-
-    def test_sha_comparison_present(self):
-        """The hook must compare the server sha to the current HEAD sha."""
-        text = self._text()
-        # The hook should reference 'sha' in the context of the comparison logic.
-        self.assertIn(
-            "sha",
-            text.lower(),
-            "dashboard-autostart.sh must perform a sha comparison for stale detection.",
-        )
-
-    def test_restart_helper_called_on_stale(self):
-        """On stale detection, the hook must call the restart helper script."""
-        text = self._text()
-        self.assertIn(
-            "restart-dashboard.sh",
-            text,
-            "dashboard-autostart.sh must call restart-dashboard.sh on the stale path.",
-        )
-
-    def test_restart_helper_exists(self):
-        """tools/restart-dashboard.sh must exist."""
-        tools_dir = Path(__file__).parent.parent / "tools"
-        restart_script = tools_dir / "restart-dashboard.sh"
-        self.assertTrue(
-            restart_script.exists(),
-            f"tools/restart-dashboard.sh not found at {restart_script}.",
-        )
-
-    def test_restart_helper_windows_compatible(self):
-        """restart-dashboard.sh must use a Windows-compatible kill mechanism (netstat/taskkill)."""
-        tools_dir = Path(__file__).parent.parent / "tools"
-        restart_script = tools_dir / "restart-dashboard.sh"
-        if not restart_script.exists():
-            self.skipTest("restart-dashboard.sh not yet created")
-        text = restart_script.read_text(encoding="utf-8")
-        # Must use netstat (Windows-compatible) to find PID; lsof is NOT available on Windows.
-        self.assertIn(
-            "netstat",
-            text,
-            "restart-dashboard.sh must use netstat (not lsof) to find the PID on Windows.",
-        )
-        self.assertIn(
-            "taskkill",
-            text,
-            "restart-dashboard.sh must use taskkill to kill the process on Windows.",
         )
 
 

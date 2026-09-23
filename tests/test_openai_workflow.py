@@ -100,8 +100,16 @@ class TestBranchGates(unittest.TestCase):
                              ("codex/hotfix/missing-issue", False),
                              ("codex/feat/42-example", False)):
             for labels in ([], [{"name": "trivial"}]):
+                # A *.html path, not dashboard/health.py: ADR-0088 D5 (merged
+                # to develop, reconciled here by the develop merge) retired
+                # dashboard/** -> browser, leaving *.html as the only
+                # remaining _ROUTE_TABLE row that classifies "browser" —
+                # PROOF-INTEGRITY only evaluates browser-route PRs, so a
+                # dashboard/health.py-only PR no longer qualifies at all
+                # (it is now command-run) and this fixture's non-skip case
+                # would otherwise assert a stale FAIL against an honest WARN.
                 pr = {"number": 1500, "headRefName": branch, "labels": labels,
-                      "files": [{"path": "dashboard/health.py"}], "body": "", "comments": []}
+                      "files": [{"path": "docs/example-ui.html"}], "body": "", "comments": []}
                 with patch.dict(os.environ, {"_PROOF_PRESENCE_PR_OVERRIDE": json.dumps([pr]),
                                              "_PROOF_INTEGRITY_PR_OVERRIDE": json.dumps([pr])}):
                     presence = health.check_proof_presence()
@@ -147,8 +155,12 @@ class TestInstructions(unittest.TestCase):
             self.assertEqual(workflow.routes(ROOT, paths), health._classify_route(paths))
         self.assertEqual(workflow.routes(ROOT, ["tools/ci-checks.sh"]),
                          {"command-run", "failing-canary"})
+        # dashboard/** routes command-run, not browser, since ADR-0088 D5
+        # retired the served dashboard as this repo's sole browser-reachable
+        # surface; this repo carries no *.html file for health.py's general
+        # "*.html -> browser" fallback to match either.
         self.assertEqual(workflow.routes(ROOT, ["AGENTS.md", "dashboard/health.py"]),
-                         {"static", "command-run", "browser"})
+                         {"static", "command-run"})
 
     def test_environment_is_utf8_and_has_exactly_one_path_key(self):
         with patch.dict(os.environ, {"PATH": "first", "Path": "second"}, clear=True):
@@ -240,22 +252,18 @@ class ProofFixture(unittest.TestCase):
             ref = self.artifact(kind + ".txt", output)
             self.bundle["proofs"].append({"class": kind, "head": head, "artifacts": {"output": ref},
                                           "command": self.command("qa-tester", "verify " + kind, output)})
-        browser = {
-            "screenshot": self.artifact("screen.png", b"\x89PNG\r\n\x1a\nimage-fixture"),
-            "rendered": self.artifact("rendered.txt", "Run-board slice 42 PR 43\nHealth FAIL: unrelated"),
-            "console": self.artifact("console.json", "[]"),
-            "meta": self.artifact("meta.json", json.dumps(
-                {"sha": self.sha, "stale": False, "started_at": self.start}))}
-        manifest = {"tested_sha": self.sha, "interaction": "real-browser", "declared_behavior": "PASS",
-                    "actions": ["runboard-refresh", "health-strip-refresh"],
-                    "selectors": ["#health-strip-content"],
-                    "artifacts": {k: v["sha256"] for k, v in browser.items()}}
-        self.bundle["proofs"].append({"class": "browser", "head": head, "artifacts": browser,
-                                      "controller_witness": self.command(
-                                          "controller", "observe native browser artifacts/actions",
-                                          json.dumps(manifest)),
-                                      "command": self.command("qa-tester", "retain browser evidence",
-                                                              json.dumps(manifest))})
+        # No "browser" proof class is fixtured here: ADR-0088 D5 (merged to
+        # develop, reconciled into this branch codex/feat/1440-shared-workflow
+        # by the develop merge) retires dashboard/** -> browser as the sole
+        # in-repo glob that ever produced it, and this repo carries no
+        # tracked *.html file for the health.py _ROUTE_TABLE's general
+        # "*.html -> browser" fallback to match either. workflow.routes()
+        # (which reads the live .claude/agents/qa-tester.md table this
+        # fixture copies at setUp, above) can therefore never return
+        # "browser" for any real changed_paths against this repo today; the
+        # browser proof-validation branch in openai_workflow.py itself is
+        # untouched and stays live for host-project consumers who ship a
+        # real browser-reachable UI (ADR-0088 D5).
         review = "VERDICT: APPROVE\nROUND: 1\n"
         self.bundle["review"] = self.artifact("review.md", review)
         self.bundle["review_result"] = self.final("reviewer", review)
@@ -263,8 +271,8 @@ class ProofFixture(unittest.TestCase):
         fence = chr(96) * 3
         qa = "\n".join([fence, "RESULT: SUCCESS", "REASON: criteria exercised",
                         "ARTIFACTS: " + ", ".join(artifact_names), "PRODUCTION_VERIFY: PASS",
-                        "ROUTE: browser+command-run+static", "PROOF: captured assertions",
-                        "ASSERTIONS_CHECKED: renders=PASS, exit_code=PASS, static=PASS",
+                        "ROUTE: command-run+static", "PROOF: captured assertions",
+                        "ASSERTIONS_CHECKED: exit_code=PASS, static=PASS",
                         "PROOF_SOURCE: codex:" + self.ids["qa-tester"] + "@" + self.start,
                         "ENV: " + self.sha + "@" + self.start, "DIDNT_TOUCH: none", "CONCERNS: none",
                         fence, ""])
@@ -330,7 +338,7 @@ class ProofFixture(unittest.TestCase):
 class TestProofAndIsolation(ProofFixture):
     def test_valid_contract_and_positive_delegation(self):
         self.assertEqual(workflow.validate_proof(self.e, self.bundle),
-                         {"browser", "command-run", "static"})
+                         {"command-run", "static"})
         with patch.object(workflow, "snapshot", return_value=self.actual), patch.object(
                 workflow, "live_coordinates") as live, patch.object(
                 workflow.subprocess, "run", return_value=subprocess.CompletedProcess([], 7)) as call:
@@ -387,9 +395,23 @@ class TestProofAndIsolation(ProofFixture):
             with self.subTest(update=update), self.assertRaises(workflow.Refusal):
                 self.e.artifact({**ref, **update})
 
-    def test_browser_without_independent_controller_witness_refuses(self):
-        del self.bundle["proofs"][-1]["controller_witness"]
-        self.assert_refuses_without_downstream()
+    # test_browser_without_independent_controller_witness_refuses removed:
+    # it deleted the "controller_witness" key from the last fixtured proof,
+    # which was always the "browser" class (the only class that carries a
+    # controller_witness field). ADR-0088 D5 (merged to develop, reconciled
+    # into this branch by the develop merge) retired dashboard/** -> browser
+    # as the sole in-repo glob that ever produced a browser-required route,
+    # and no tracked *.html file exists for health.py's general
+    # "*.html -> browser" fallback to match either, so workflow.routes()
+    # can never return "browser" for this repo's own changed_paths today.
+    # With no browser proof fixtured, self.bundle["proofs"][-1] is now
+    # "command-run", which carries no "controller_witness" key at all, so
+    # the original del would raise KeyError rather than exercise a Refusal.
+    # The browser proof-validation branch itself (openai_workflow.py) is
+    # untouched and stays live for host-project consumers with a real
+    # browser-reachable UI; this template repo's own live route table can
+    # no longer construct a real "browser"-inclusive route without a second,
+    # test-only route authority, which ADR-0086 D3 forbids.
 
     def test_wrong_review_revision_refuses(self):
         self.bundle["reviewed_sha"] = "0" * 40
@@ -399,7 +421,7 @@ class TestProofAndIsolation(ProofFixture):
         for key, role in (("review_result", "reviewer"), ("qa_result", "qa-tester")):
             self.e.item(self.bundle[key], self.ids[role])["phase"] = "final_answer"
         self.assertEqual(workflow.validate_proof(self.e, self.bundle),
-                         {"browser", "command-run", "static"})
+                         {"command-run", "static"})
 
     def test_dirty_verified_checkout_refuses_even_if_controller_observed_it(self):
         self.actual["status"] = "M tracked.py"
@@ -414,7 +436,7 @@ class TestProofAndIsolation(ProofFixture):
         host = self.e.records[self.ids["controller"]]["turns"][0]
         host.update(status="inProgress", completedAt=None)
         self.assertEqual(workflow.validate_proof(self.e, self.bundle),
-                         {"browser", "command-run", "static"})
+                         {"command-run", "static"})
         host["items"][0]["status"] = "inProgress"
         self.assert_refuses_without_downstream()
 
@@ -432,21 +454,25 @@ class TestProofAndIsolation(ProofFixture):
                                   "output": {"text": self.start, "truncated": False}})
         for ref in self.e.data["git"].values():
             ref["clock_item_id"] = "clock"
-        self.bundle["proofs"][-1]["controller_witness"]["clock_item_id"] = "clock"
+        # Every controller-attributed git-query reference above (validated
+        # by e.isolation(), which validate_proof() calls first) already
+        # exercises the clock mechanism; no fixtured proof carries its own
+        # controller_witness to anchor a second application to (no "browser"
+        # proof is fixtured here — see setUp, ADR-0088 D5).
         self.assertEqual(workflow.validate_proof(self.e, self.bundle),
-                         {"browser", "command-run", "static"})
+                         {"command-run", "static"})
         host["items"].append(host["items"].pop(0))
         self.assert_refuses_without_downstream()
 
     def test_missing_each_required_proof_class_zero_downstream(self):
-        for kind in ("static", "command-run", "browser"):
+        for kind in ("static", "command-run"):
             candidate = copy.deepcopy(self.bundle)
             candidate["proofs"] = [p for p in candidate["proofs"] if p["class"] != kind]
             with self.subTest(kind=kind):
                 self.assert_refuses_without_downstream(candidate)
 
     def test_changed_artifact_zero_downstream(self):
-        (self.proof / "screen.png").write_bytes(b"changed")
+        (self.proof / "static.txt").write_bytes(b"changed")
         self.assert_refuses_without_downstream()
 
     def test_wrong_identity_revision_repository_zero_downstream(self):

@@ -49,10 +49,10 @@ git-common-dir resolution soft-degrades to that dir directly and LOG_DIR /
 hook-fires.jsonl / workflow-events.jsonl all resolve INSIDE the sandbox --
 never the real `.claude/logs/*` store -- and a fake `gh` binary shadows
 PATH, so no real GitHub network call is ever made. The harness also NEVER
-dials localhost:8765/8766: it truncates session-start.sh's execution at the
-closing `fi` of the `GH_OK` block -- the entire extent of code this slice
-touches -- which is BEFORE the (untouched, #1191) dashboard-liveness probe
-that owns that port.
+dials the retired dashboard ports: it truncates session-start.sh's execution
+at the closing `fi` of the `GH_OK` block -- the entire extent of code this
+slice touches -- which is BEFORE the (since-removed, #1191/ADR-0088 D1)
+dashboard-liveness probe that used to live there.
 
 Runner: stdlib unittest + pytest compatible.
   python -m pytest tests/test_session_start_concurrent_1199.py -v
@@ -230,11 +230,11 @@ def _write_fake_gh(dirpath: str) -> str:
 #
 # Executes session-start.sh's lines [1 .. closing 'fi' of the GH_OK block]
 # ONLY -- the entire extent of code this slice touches. This deliberately
-# excludes the (untouched, #1191) dashboard-liveness probe -- so the
-# harness NEVER dials localhost:8765/8766 -- and the later python3
-# event-emission heredoc (unaffected by this slice; its v2 event shape is
-# provably unchanged by inspection, not by execution, since this slice adds
-# no lines before it and does not touch it).
+# excludes the (since-removed, #1191/ADR-0088 D1) dashboard-liveness probe
+# -- so the harness NEVER dials the retired dashboard ports -- and the
+# later python3 event-emission heredoc (unaffected by this slice; its v2
+# event shape is provably unchanged by inspection, not by execution, since
+# this slice adds no lines before it and does not touch it).
 # ---------------------------------------------------------------------------
 
 _FIELD_TRAILER = (
@@ -451,7 +451,7 @@ class TestConcurrencyTiming(SessionStartHarnessTestBase):
     def test_five_delayed_queries_run_concurrently(self):
         session_start_text = SESSION_START_SH.read_text(encoding="utf-8")
         lib_root_text = LIB_ROOT_SH.read_text(encoding="utf-8")
-        delay = 0.6
+        delay = 1.0
         cfg = {
             k: {"items": [], "delay": delay, "fail": False}
             for k in ("needs-human", "slice", "captured", "pr_open", "pr_needs_human")
@@ -459,10 +459,16 @@ class TestConcurrencyTiming(SessionStartHarnessTestBase):
         fields, elapsed, hook_fires, result = _run_truncated_session_start(
             session_start_text, lib_root_text, fake_gh_config=cfg,
         )
-        # Serial would cost >= 5 * delay = 3.0s; concurrent should land near
-        # one delay-width plus process overhead. Generous CI-safe margin.
+        # The prior delay=0.6 / limit=delay*3=1.8s budget counted the hook's
+        # ~1.2s fixed serial overhead (bash startup, git fetch, branch-role
+        # resolver) against a margin of near-zero above a concurrent run --
+        # flaky on the dev host (#1541). Raising delay so the serial/
+        # concurrent gap dominates that fixed overhead: serial costs
+        # >= 5 * delay = 5.0s; concurrent lands near one delay-width plus
+        # process overhead (~2.2s measured). A limit of delay * 3.5 = 3.5s
+        # leaves >= 1s of margin on each side.
         self.assertLess(
-            elapsed, delay * 3,
+            elapsed, delay * 3.5,
             f"5 queries at {delay}s each took {elapsed:.2f}s -- looks serial, "
             f"not concurrent (stdout={result.stdout!r} stderr={result.stderr!r})",
         )

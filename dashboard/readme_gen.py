@@ -1,11 +1,11 @@
 """
-dashboard/readme_gen.py — README generator (--generate-readme CLI mode).
+dashboard/readme_gen.py — README generator; canonical CLI entrypoint (ADR-0088 D3).
+
+Run directly: python3 dashboard/readme_gen.py
 
 Exports:
     render_pipeline_mermaid(spec) -> str
     generate_readme() -> None
-
-Import direction: server <- readme_gen (this module must NOT import server).
 """
 
 import os
@@ -19,8 +19,8 @@ from pathlib import Path
 _READMEGEN_REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # sys.path injection so discovery is importable when readme_gen.py is run
-# from server.py (which has already done the same injection, but this guards
-# the standalone import case).
+# directly as a script (python3 dashboard/readme_gen.py) — the standalone
+# import case.
 _DASHBOARD_DIR_STR = str(Path(__file__).resolve().parent)
 if _DASHBOARD_DIR_STR not in sys.path:
     sys.path.insert(0, _DASHBOARD_DIR_STR)
@@ -32,9 +32,9 @@ from pipeline_spec import get_spec as _get_pipeline_spec  # noqa: E402
 def _resolve_invoking_repo_root() -> Path:
     """Resolve the repo root from the INVOKING worktree's cwd.
 
-    Used by --generate-readme so the generator writes into the worktree that
-    invoked it (not the worktree where server.py physically lives, which may be
-    a sibling worktree on a different branch).
+    Used when generating the README so the generator writes into the worktree
+    that invoked it (not the worktree where this script file happens to live,
+    if invoked via a path from a different worktree on a different branch).
 
     Resolution order:
       1. git rev-parse --show-toplevel (run from cwd — worktree-aware)
@@ -418,3 +418,7 @@ def generate_readme() -> None:
 
     readme_path.write_text(final, encoding="utf-8")
     print(f"README.md written ({len(final)} bytes)", flush=True)
+
+
+if __name__ == "__main__":
+    generate_readme()

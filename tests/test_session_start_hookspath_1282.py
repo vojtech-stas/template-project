@@ -30,9 +30,9 @@ incident): all fixtures are synthetic temp git repos (via Python's
 tempfile module) -- NEVER the live worktree set. The harness truncates
 session-start.sh's execution BEFORE the gh/jq-availability block (this
 issue's fix does not touch that code) so no `gh` call, no dashboard probe
-(ports 8765/8766), and no write to the real `.claude/logs/*` store ever
-occurs -- CLAUDE_PROJECT_DIR points at the fixture repo for the whole run,
-so lib-root.sh's LOG_DIR resolves INSIDE the fixture only.
+(the retired dashboard ports), and no write to the real `.claude/logs/*`
+store ever occurs -- CLAUDE_PROJECT_DIR points at the fixture repo for the
+whole run, so lib-root.sh's LOG_DIR resolves INSIDE the fixture only.
 
 Runner: stdlib unittest + pytest compatible.
   python -m pytest tests/test_session_start_hookspath_1282.py -v

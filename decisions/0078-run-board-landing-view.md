@@ -1,13 +1,14 @@
 ---
 id: "ADR-0078"
 title: "Run-board as the dashboard's landing view; desktop shell deferred"
-status: "accepted"
+status: "superseded"
 date: "2026-08-04"
 scope: "pipeline"
 rule_ids:
   - "PIP-022"
 supersedes: []
-superseded_by: []
+superseded_by:
+  - "ADR-0088"
 ---
 
 # 0078 — Run-board as the dashboard's landing view; desktop shell deferred

@@ -152,7 +152,7 @@ class TestOtherLiveReferences(unittest.TestCase):
 
     def test_readme_generated_states_600(self):
         # README.md is a build artifact (ADR-0034 D4) — regenerated from
-        # README.template.md via dashboard/server.py --generate-readme.
+        # README.template.md via dashboard/readme_gen.py (ADR-0088 D3).
         text = _read("README.md")
         self.assertIn("≤600 LoC diff", text)
         self.assertNotIn("≤300 LoC diff", text)
@@ -170,12 +170,30 @@ class TestGenRulesBaseline(unittest.TestCase):
         # ADR-0081's PIP-025 moved it 85 -> 86, slice #1238; ADR-0083's
         # VER-009/VER-010 moved it 86 -> 88, slice #1310; ADR-0085's
         # PIP-026..PIP-029 moved it 88 -> 92, slice #1329; ADR-0084's
-        # VER-011/VER-012 moved it 92 -> 94, slice #1402; ADR-0086's
-        # PIP-030 moved it 94 -> 95, slice #1440). This test's job
-        # is unchanged: confirm slice #1162's own PIP-020/021 rule_ids are
-        # still represented in the live baseline, not that the literal number
-        # stays frozen at 82.
-        self.assertIn("RULE_IDS_BASELINE: int = 95", self.text)
+        # VER-011/VER-012 moved it 92 -> 94, slice #1402; issue #1402's
+        # RULE_IDS_BASELINE was then corrected 94 -> 92 by issue #1464 —
+        # ADR-0013's stale `superseded_by: []` frontmatter was populated with
+        # `["ADR-0044"]`, which retires ADR-0013's SLI-004/SLI-005 from the
+        # active rule set; ADR-0088 then moved it 92 -> 91, slice #1481 —
+        # ADR-0088 fully supersedes ADR-0078, so PIP-022 leaves the active
+        # set and ADR-0088 itself adds no new rule_ids; ADR-0089's
+        # PIP-031/PIP-032 then moved it 91 -> 93, slice #1511 — ADR-0089's
+        # four supersessions (ADR-0070 D1, ADR-0004 D3, ADR-0041 D2,
+        # ADR-0045 D3) are each PARTIAL, so no existing rule_id drops out of
+        # the active set; the delta is a pure +2; ADR-0090's PIP-033/PIP-034
+        # then moved it 93 -> 95, slice #1506 — ADR-0090's eight
+        # supersessions (ADR-0003 D1, ADR-0024 D1/D2, ADR-0063 D1, ADR-0085
+        # D1/D3/D5/D6) are each PARTIAL, so no existing rule_id drops out of
+        # the active set; the delta is a pure +2; ADR-0086's PIP-030 then
+        # moved it 95 -> 96, slice #1440, reconciled against this baseline
+        # in the codex/feat/1440-shared-workflow merge — ADR-0086's five
+        # supersessions (ADR-0004 D3, ADR-0027 D1/D2/D3, ADR-0036 D1/D2,
+        # ADR-0058 D1, ADR-0061 D2) are each PARTIAL, so no existing rule_id
+        # drops out of the active set; the delta is a pure +1). This test's
+        # job is unchanged: confirm slice #1162's own PIP-020/021 rule_ids
+        # are still represented in the live baseline, not that the literal
+        # number stays frozen at 82.
+        self.assertIn("RULE_IDS_BASELINE: int = 96", self.text)
         self.assertIn('"PIP-030"', self.text)
 
     def test_new_rule_statements_present(self):

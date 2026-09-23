@@ -1,7 +1,8 @@
 """
 Regression test for slice #1052 — discovery.py reads hook-fires.jsonl via the
 canonical telemetry root, not the worktree code root (3rd instance of the
-#1021 class; #1021 fixed server.py + health.py, discovery.py was missed).
+#1021 class; #1021 fixed the HTTP server module + health.py, discovery.py
+was missed).
 
 Scenario:
   - discovery.py's CODE root points at worktree A (no .claude/logs/).
@@ -88,7 +89,7 @@ class TestDiscoveryTelemetryRootWorktreeScenario(unittest.TestCase):
             tmp_path = Path(tmp)
 
             # "A" = worktree code root — settings.json + hooks/ present, NO
-            # .claude/logs/ (mirrors a worktree-run dashboard).
+            # .claude/logs/ (mirrors a dashboard/ command run from a worktree).
             root_a = tmp_path / "worktree_a"
             (root_a / ".claude" / "hooks").mkdir(parents=True)
             (root_a / ".claude" / "settings.json").write_text(SETTINGS_JSON, encoding="utf-8")

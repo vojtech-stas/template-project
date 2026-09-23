@@ -1,5 +1,5 @@
 """
-dashboard/health.py — health check helpers + /api/health TTL cache.
+dashboard/health.py — health check helpers + aggregate-payload TTL cache.
 
 Exports:
     check_docs1_adr_index_forward() -> dict
@@ -24,7 +24,6 @@ Exports:
     check_capture_slo() -> dict          (slice #767: capture liveness SLO)
     check_hook_integrity() -> dict       (slice #767: hook attempt-vs-ok ratio)
     check_hook_liveness() -> dict        (slice #849: hook-layer dark detection via beacon lag)
-    check_stale_server() -> dict         (slice #907/ADR-0071 D5: server sha vs HEAD freshness check)
     check_isolation_group() -> dict      (slice #767: worktree orphan/drift check)
     check_rule_coverage() -> dict        (slice #768/ADR-0056 D3: rule coverage ratio)
     check_spec_coverage() -> dict        (slice #798/ADR-0066 D2: per-PRD criterion coverage)
@@ -39,6 +38,8 @@ Exports:
     check_slice_vs_pr() -> dict          (slice #1136/PRD #1127 cr.11b: merged slice PR vs dispatch+pr_opened spans)
     check_merged_without_verdict() -> dict  (slice #1136/PRD #1127 cr.11b: merged PR vs verdict span, ADR-0076 anchor)
     check_closed_prd_vs_qa() -> dict     (slice #1136/PRD #1127 cr.11b: closed PRD vs qa_verified PASS span)
+    check_query_honesty() -> dict   (slice #1498/ADR-0087 D2: REST-attested canary over the `prd`-label path;
+                                      gates every confirmed `--label` answer through the seam)
     serve_health() -> dict          (TTL-cached; <200ms on second call)
     _health_background() -> None    (background thread target)
     _health_cache, _health_lock, _health_computing, _HEALTH_TTL
@@ -46,6 +47,7 @@ Exports:
 Import direction: server <- health (this module must NOT import server).
 """
 
+import importlib.util
 import os
 import re
 import subprocess
@@ -57,6 +59,26 @@ from pathlib import Path
 if str(Path(__file__).resolve().parent.parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools.workflow_branch import classify as classify_branch
+
+# ---------------------------------------------------------------------------
+# Branch-role resolver (ADR-0089 D1) — pipeline_config.py is the one parser.
+# Located relative to THIS file's own path (S1-c), never via cwd or
+# `git rev-parse --show-toplevel` of the caller's cwd repo. Every site below
+# calls this fresh at CALL time (S2-ct) — never resolved at module-import
+# time, so a malformed conf can never break `import health` itself.
+# ---------------------------------------------------------------------------
+_HEALTH_PY_DIR = Path(__file__).resolve().parent
+_PIPELINE_CONFIG_PY = _HEALTH_PY_DIR.parent / "tools" / "pipeline_config.py"
+
+
+def _load_pipeline_config():
+    spec = importlib.util.spec_from_file_location(
+        "pipeline_config", _PIPELINE_CONFIG_PY
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
 
 # ---------------------------------------------------------------------------
 # gh_cache — shared TTL+timeout wrapper for gh CLI calls (slice #995/PRD #993).
@@ -71,33 +93,160 @@ except ImportError:
     _GH_CACHE_AVAILABLE = False
 
 
+_LABEL_FLAG_EXACT = ("--label", "-l")
+
+
+def _args_apply_label_filter(args: list) -> bool:
+    """True iff `args` carries any gh flag spelling that applies a label
+    filter (round-2 fix, reviewer R2). `gh issue list --help` / `gh pr
+    list --help` document `-l, --label strings`; `gh` (cobra/pflag)
+    accepts every one of `--label X`, `--label=X`, `-l X`, `-l=X`, and
+    the concatenated shorthand `-lX` — the last two verified live
+    against `gh issue list` (vojtech-stas/template-project, 2026-09-23).
+
+    Case-sensitive by design: `-L` is the unrelated `--limit` shorthand
+    and must NOT match.
+    """
+    for tok in args:
+        if not isinstance(tok, str):
+            continue
+        if tok in _LABEL_FLAG_EXACT:
+            return True
+        if tok.startswith("--label="):
+            return True
+        if tok.startswith("-l") and tok != "-l":
+            return True
+    return False
+
+
 def _health_gh_fetch(
     args: list,
     *,
     ttl: float = 60.0,
     timeout: float = 5.0,
+    with_source: bool = False,
 ) -> tuple:
-    """Route a gh call through gh_cache (degrade-not-block).
+    """The health-registry `gh` seam: provenance labels + QUERY-HONESTY gate.
 
-    Returns (returncode: int, stdout: str) matching the existing ``_sp.run``
-    pattern used inside each check's inner helper:
-      - rc=0, stdout=<output>  → gh succeeded (source live/cache/stale)
-      - rc=1, stdout=""        → gh timed out / unavailable (computing sentinel)
+    The only code in this file that spawns `gh` is `_health_gh_fetch_raw()`,
+    through `gh_cache.gh_fetch` or its bounded `subprocess.run(["gh", ...])`
+    fallback. Within this file, that function is called only by this seam
+    and by the QUERY-HONESTY canary's own two queries (see below). Child
+    processes this file starts (e.g. `bash tools/ci-checks.sh`) are outside
+    this description.
 
-    When gh_cache is unavailable (import failed), falls back to direct
-    subprocess.run with a hard ``timeout`` cap so the stall is still bounded.
+    This seam is NOT the only route by which a registered check reaches
+    `gh`. Four `CHECK_REGISTRY` checks call `dashboard/collector.py`
+    directly and one more reaches it indirectly; collector runs `gh`
+    itself, so these reads bypass both this seam's provenance labels and
+    the QUERY-HONESTY gate:
+      - `CRITIC-HEALTH` and `MERGE-INTEGRITY` call
+        `collector.get_closed_prd_numbers()` (a direct
+        `gh issue list --label prd`) and `collector.get_trail()` (a
+        cache-first reader backed by `gh`);
+      - `PROOF-PRESENCE` calls `collector.get_recent_merged_prs()` and
+        `collector._run_gh`; `PROOF-INTEGRITY` calls
+        `collector.get_recent_merged_prs()`;
+      - `RELEASE-READY` condition (c) calls `check_proof_integrity()`.
+    That bypass predates ADR-0087 and is not fixed here. #1515 tracks the
+    `get_closed_prd_numbers()` label read, plus the flag-spelling gaps in
+    `_args_apply_label_filter`; #1518 tracks the
+    `get_recent_merged_prs()` / `_run_gh` reads.
+
+    Fetches through `_health_gh_fetch_raw()` FIRST, unconditionally, then
+    gates only a CONFIRMED label-filtering answer behind the QUERY-HONESTY
+    REST-attested canary (ADR-0087 D2, slice #1498):
+
+    A desynced repo slug can make a label-filtered `gh` query answer
+    `source="live"` while silently returning the wrong (often empty) set —
+    no provenance label alone can catch that. So once a call whose `args`
+    apply a label filter (any spelling `_args_apply_label_filter`
+    recognizes) has come back CONFIRMED (`rc == 0`) from the raw fetch,
+    this wrapper requires `_query_honesty_attest()` to PASS before letting
+    that confirmed answer through as-is. When the attestation does not
+    PASS, the call is downgraded to `(1, "", "unverified")` (or its
+    2-tuple prefix) regardless of that confirmed answer's payload — the
+    seven pre-existing label-filtered callers already treat any non-zero
+    `rc` as "gh unavailable", so none of them needed editing.
+
+    An UNCONFIRMED raw answer (source `stale`/`computing`, i.e. `rc != 0`)
+    is returned exactly as `_health_gh_fetch_raw()` reported it, whether or
+    not `args` apply a label filter — the attestation is never consulted
+    for it, so its true cause (e.g. GitHub unreachable) is never masked
+    behind `unverified`. This ordering is ADR-0087 D2's own wording: the
+    attestation gates a call "before [the seam] returns [it] ... as
+    confirmed" — an already-unconfirmed call has nothing left to gate.
+
+    Calls that apply no label filter pass through with the raw answer
+    untouched, whatever its source.
 
     Parameters
     ----------
-    args    : gh sub-command args (the "gh" binary is prepended by gh_cache).
-    ttl     : cache TTL in seconds (how long a fresh result is reused).
-    timeout : hard per-call timeout in seconds passed to gh_cache / subprocess.
+    args        : gh sub-command args (the "gh" binary is prepended by gh_cache).
+    ttl         : cache TTL in seconds (how long a fresh result is reused).
+    timeout     : hard per-call timeout in seconds passed to gh_cache / subprocess.
+    with_source : when True, return a 3-tuple including the provenance source.
+    """
+    rc, out, source = _health_gh_fetch_raw(args, ttl=ttl, timeout=timeout, with_source=True)
+    if rc == 0 and _args_apply_label_filter(args):
+        _qh_passed = _query_honesty_attest()[0]
+        if not _qh_passed:
+            rc, out, source = 1, "", "unverified"
+    return (rc, out, source) if with_source else (rc, out)
+
+
+def _health_gh_fetch_raw(
+    args: list,
+    *,
+    ttl: float = 60.0,
+    timeout: float = 5.0,
+    with_source: bool = False,
+) -> tuple:
+    """Route a gh call through gh_cache (degrade-not-block), with NO
+    QUERY-HONESTY gating — the seam `_health_gh_fetch()` wraps this
+    function and is what every check should call. This function exists
+    separately so the QUERY-HONESTY canary's own label-path query can
+    bypass its own attestation gate (ADR-0087 D2): calling `_health_gh_fetch`
+    for that query would recurse whenever its raw fetch came back
+    confirmed (the seam consults the attestation for a label-filtered call
+    only once its raw fetch is confirmed).
+
+    Returns (returncode: int, stdout: str) by default, matching the existing
+    ``_sp.run`` pattern used inside each check's inner helper. Pass
+    ``with_source=True`` to additionally receive the provenance label as a
+    third tuple element: (returncode, stdout, source).
+
+    Provenance vocabulary is closed (ADR-0087 D1):
+      - confirmed   : "live" (this call succeeded) or "cache" (a fresh
+        cached success within ttl) — always paired with rc=0.
+      - unconfirmed : "stale" (gh failed on THIS call; a last-known value
+        exists) or "computing" (gh failed and no prior value exists) —
+        always paired with rc=1, stdout="". A "stale" answer means GitHub
+        failed right now; in a one-shot CLI process it proves nothing about
+        the present, so it is no longer read as success (this reverses the
+        PRD #993 mapping — ADR-0088 D1 deleted that mapping's only
+        consumer, the served dashboard row).
+
+    When gh_cache is unavailable (import failed), falls back to direct
+    subprocess.run with a hard ``timeout`` cap so the stall is still
+    bounded; the fallback labels its answer "live" on rc=0 and "computing"
+    otherwise.
+
+    Parameters
+    ----------
+    args        : gh sub-command args (the "gh" binary is prepended by gh_cache).
+    ttl         : cache TTL in seconds (how long a fresh result is reused).
+    timeout     : hard per-call timeout in seconds passed to gh_cache / subprocess.
+    with_source : when True, return a 3-tuple including the provenance source.
     """
     if _GH_CACHE_AVAILABLE and _gh_fetch_impl is not None:
         result = _gh_fetch_impl(args, ttl=ttl, timeout=timeout)
-        if result.source == "computing" or result.value is None:
-            return 1, ""
-        return 0, result.value
+        source = result.source
+        if source in ("live", "cache"):
+            rc, out = 0, result.value
+        else:
+            rc, out = 1, ""
+        return (rc, out, source) if with_source else (rc, out)
     # Fallback: bounded subprocess (still better than unbounded)
     try:
         r = subprocess.run(
@@ -106,9 +255,199 @@ def _health_gh_fetch(
             errors="replace", timeout=timeout,
             cwd=str(_HEALTH_REPO_ROOT), stdin=subprocess.DEVNULL,
         )
-        return r.returncode, r.stdout or ""
+        if r.returncode == 0:
+            rc, out, source = 0, (r.stdout or ""), "live"
+        else:
+            rc, out, source = 1, "", "computing"
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError, Exception):
-        return 1, ""
+        rc, out, source = 1, "", "computing"
+    return (rc, out, source) if with_source else (rc, out)
+
+
+# ---------------------------------------------------------------------------
+# QUERY-HONESTY — REST-attested canary over the `prd`-label path (ADR-0087
+# D2, slice #1498). This is the attestation `_health_gh_fetch()` (the seam,
+# above) consults on each call whose args `_args_apply_label_filter`
+# recognizes and whose raw fetch came back confirmed (`rc == 0`).
+# ---------------------------------------------------------------------------
+
+_QUERY_HONESTY_CANARY_LABEL = "prd"
+_QUERY_HONESTY_LABEL_LIMIT = 1000
+# Memoization window for the attestation's own PASS/FAIL/WARN verdict
+# (ADR-0087 D2: "memoized per process for its own queries' cache lifetime").
+# Matches the ttl used for the attestation's two internal gh calls below.
+_QUERY_HONESTY_TTL = 60.0
+
+_query_honesty_lock = threading.Lock()
+_query_honesty_cache: dict = {"ts": 0.0, "result": None}
+
+
+def _sum_paginated_rest_issue_count(payload: str) -> int:
+    """Sum non-pull-request issue counts across a `gh api ... --paginate`
+    payload (ADR-0087 D2: each page is its own JSON document; concatenated
+    documents are summed rather than assumed to already be one merged
+    array, since that merging behavior is a `gh` CLI implementation detail
+    this function does not depend on either way).
+
+    Raises ValueError on an empty/unparsable payload — the caller must
+    treat that as unconfirmed, never as a zero count (ADR-0087 D3's
+    "a confirmed source with an empty or unparsable payload is unconfirmed,
+    never zero", applied here to the REST leg the same way slice #1497
+    applied it to condition (e)'s legs).
+    """
+    import json as _json
+
+    decoder = _json.JSONDecoder()
+    idx, n = 0, len(payload)
+    total = 0
+    saw_any_page = False
+    while idx < n:
+        while idx < n and payload[idx] in " \t\r\n":
+            idx += 1
+        if idx >= n:
+            break
+        doc, end = decoder.raw_decode(payload, idx)
+        if not isinstance(doc, list):
+            raise ValueError("REST canary page is not a JSON array")
+        saw_any_page = True
+        total += sum(
+            1 for item in doc
+            if isinstance(item, dict) and "pull_request" not in item
+        )
+        idx = end
+    if not saw_any_page:
+        raise ValueError("REST canary payload is empty or unparsable")
+    return total
+
+
+def _query_honesty_attest() -> tuple:
+    """Run the QUERY-HONESTY canary attestation (ADR-0087 D2), memoized
+    per-process for `_QUERY_HONESTY_TTL` seconds.
+
+    Compares the `prd`-label path (`gh issue list --label prd --state all`)
+    against a REST canary (`gh api repos/{owner}/{repo}/issues?labels=prd
+    &state=all --paginate`, excluding items carrying `pull_request`). Both
+    paths resolve the repository through gh's own resolution — no slug is
+    written into code.
+
+    Deliberately calls `_health_gh_fetch_raw()`, NOT the seam
+    `_health_gh_fetch()`, for its own two queries: the label-path query is
+    itself `--label`-bearing, and routing it through the seam would recurse
+    into this same function whenever that query's raw fetch came back
+    confirmed (the seam consults this function only then).
+
+    Returns (passed: bool, verdict: "PASS"|"FAIL"|"WARN", detail: str).
+    `passed` is True iff verdict == "PASS". At the seam, `passed` is a
+    required condition, not the only one: the seam first fetches through
+    `_health_gh_fetch_raw()`, and only when that raw fetch comes back
+    confirmed (`rc == 0`) for a label-filtered call (any spelling
+    `_args_apply_label_filter` recognizes) does it consult this function —
+    letting the confirmed answer through as-is when `passed` is True and
+    downgrading it to rc=1, empty stdout, source "unverified" otherwise. An
+    unconfirmed raw fetch is returned with its own source and never
+    consults this function; neither does a call that applies no label
+    filter.
+    """
+    now = time.time()
+    with _query_honesty_lock:
+        cached = _query_honesty_cache["result"]
+        if cached is not None and (now - _query_honesty_cache["ts"]) < _QUERY_HONESTY_TTL:
+            return cached
+
+    import json as _json
+
+    label_rc, label_out, label_source = _health_gh_fetch_raw(
+        ["issue", "list", "--label", _QUERY_HONESTY_CANARY_LABEL,
+         "--state", "all", "--limit", str(_QUERY_HONESTY_LABEL_LIMIT),
+         "--json", "number"],
+        ttl=_QUERY_HONESTY_TTL, timeout=5.0, with_source=True,
+    )
+    label_confirmed = (label_rc == 0)
+    label_count = None
+    label_at_limit = False
+    if label_confirmed:
+        try:
+            _label_items = _json.loads(label_out)
+            if not isinstance(_label_items, list):
+                raise ValueError("label-path payload is not a JSON list")
+            label_count = len(_label_items)
+            label_at_limit = label_count >= _QUERY_HONESTY_LABEL_LIMIT
+        except Exception as exc:
+            label_confirmed = False
+            label_source = f"{label_source}: unparsable payload: {exc}"
+
+    rest_rc, rest_out, rest_source = _health_gh_fetch_raw(
+        ["api",
+         "repos/{owner}/{repo}/issues?labels=" + _QUERY_HONESTY_CANARY_LABEL
+         + "&state=all&per_page=100",
+         "--paginate"],
+        ttl=_QUERY_HONESTY_TTL, timeout=15.0, with_source=True,
+    )
+    rest_confirmed = (rest_rc == 0)
+    rest_count = None
+    if rest_confirmed:
+        try:
+            rest_count = _sum_paginated_rest_issue_count(rest_out)
+        except Exception as exc:
+            rest_confirmed = False
+            rest_source = f"{rest_source}: {exc}"
+
+    if label_confirmed and rest_confirmed:
+        if rest_count == 0:
+            verdict = "WARN"
+            detail = "rest canary count is 0 (agreement on an empty set proves nothing)"
+        elif label_at_limit:
+            verdict = "WARN"
+            detail = (
+                f"label path returned its full --limit "
+                f"({_QUERY_HONESTY_LABEL_LIMIT}); comparison is not reliable"
+            )
+        elif label_count == rest_count:
+            verdict = "PASS"
+            detail = f"label={label_count} rest={rest_count}"
+        else:
+            verdict = "FAIL"
+            detail = f"label={label_count} rest={rest_count}"
+    else:
+        _reasons = []
+        if not label_confirmed:
+            _reasons.append(f"label path unconfirmed (source={label_source})")
+        if not rest_confirmed:
+            _reasons.append(f"REST canary unconfirmed (source={rest_source})")
+        verdict = "WARN"
+        detail = "; ".join(_reasons)
+
+    result = (verdict == "PASS", verdict, detail)
+    with _query_honesty_lock:
+        _query_honesty_cache["result"] = result
+        _query_honesty_cache["ts"] = time.time()
+    return result
+
+
+def check_query_honesty() -> dict:
+    """QUERY-HONESTY: attests the `prd`-label query path against a REST
+    canary. At the seam (`_health_gh_fetch`) this attestation is a
+    required condition, not the only one: a label-filtered call reads as
+    confirmed only when its raw fetch is confirmed (`rc == 0`) AND the
+    attestation PASSes. The seam consults the attestation only after the
+    raw fetch is confirmed; an unconfirmed raw fetch is returned with its
+    own source, without consulting it.
+
+    A repo-slug desync (e.g. after a rename) can leave `gh issue list
+    --label prd` answering an empty, `source=live` list while the repo
+    still has plenty of `prd`-labeled issues — no per-call provenance label
+    can catch that on its own (ADR-0087 D2). This check re-derives the same
+    PASS/FAIL/WARN the seam is gating on (subject to the per-process
+    memoization window in `_query_honesty_attest`):
+      - PASS: both legs confirmed, the REST count is > 0, and the two
+        counts agree.
+      - FAIL: both legs confirmed and the counts disagree (detail carries
+        `label=<n> rest=<n>`).
+      - WARN: either leg is unconfirmed, the REST count is 0 (agreement on
+        an empty set proves nothing), or the label path hit its `--limit`.
+    """
+    verdict, detail = _query_honesty_attest()[1:]
+    return {"id": "QUERY-HONESTY", "result": verdict, "detail": detail}
 
 
 # ---------------------------------------------------------------------------
@@ -144,7 +483,7 @@ def _telemetry_log_root() -> Path:
             ["git", "rev-parse", "--git-common-dir"],
             cwd=str(_HEALTH_REPO_ROOT),
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=5,
         )
         if result.returncode != 0:
@@ -224,19 +563,28 @@ def _v3_trace_log_exists() -> bool:
     return bool(path) and os.path.exists(path)
 
 
-# Known critics — mirrors server.py KNOWN_CRITICS (CHECK 7 regexes server.py SOURCE).
-_KNOWN_CRITICS = {
-    "reviewer",
-    "prd-critic",
-    "adr-critic",
-    "slicer-critic",
-    "backlog-critic",
-    "codebase-critic",
-}
+# Known critics — single-sourced from _constants.py (CHECK 7 regexes that
+# file's literal; ADR-0088 D4). Aliased to the pre-existing local name so
+# every downstream reference in this module is unchanged.
+# Standalone invocation (`python3 dashboard/health.py ...`, used throughout
+# ci-checks.sh) implicitly puts dashboard/ on sys.path[0], so the bare import
+# below already worked in that mode. Imported as the `dashboard.health`
+# submodule (`from dashboard import health`, e.g. from tests/ or another
+# repo-root-relative caller) does not carry that implicit entry, so the bare
+# import raised ModuleNotFoundError there; explicitly ensuring dashboard/ is
+# on sys.path first (mirroring _insert_dashboard_sys_path()'s own logic,
+# defined later in this file and unusable this early at module-import time)
+# fixes both call shapes identically. A relative import is not an option:
+# it would break the standalone-script mode ci-checks.sh depends on.
+_dashboard_dir = str(Path(__file__).resolve().parent)
+if _dashboard_dir not in sys.path:
+    sys.path.insert(0, _dashboard_dir)
+from _constants import KNOWN_CRITICS as _KNOWN_CRITICS  # noqa: E402
 
 # ---------------------------------------------------------------------------
-# /api/health TTL cache — health checks can take 1-2 s on cold start.
-# Background-thread + TTL cache pattern.
+# Aggregate health-payload TTL cache — health checks can take 1-2 s on cold
+# start. Background-thread + TTL cache pattern. Retained as a library shim
+# with no HTTP caller after ADR-0088 D1's server deletion (captured: #1491).
 # ---------------------------------------------------------------------------
 _health_cache: dict = {}       # {"data": {...}, "ts": float}
 _health_computing: bool = False
@@ -262,13 +610,14 @@ _RELEASE_READY_PYTEST_TIMEOUT_S = 300
 
 
 def _fetch_github_ci_conclusion(repo_root, sha=None) -> tuple:
-    """Query GitHub for the `ci` check conclusion on the given (or develop
-    HEAD) commit.
+    """Query GitHub for the `ci` check conclusion on the given (or the
+    configured integration branch's, ADR-0089 D1, HEAD) commit.
 
     Strategy (issue #986):
       1. Resolve the sha to query — see `sha` parameter below.
-      2. Fetch the latest merged PRs targeting develop (gh pr list --base develop
-         --state merged --limit N --json number,mergeCommit).
+      2. Fetch the latest merged PRs targeting the integration branch
+         (gh pr list --base <integration> --state merged --limit N --json
+         number,mergeCommit).
       3. Find the PR whose mergeCommit.oid matches the resolved sha.
       4. Run `gh pr checks <n> --json name,state` and look for name="ci".
       5. Map state: SUCCESS/PASS → "pass"; FAILURE/ERROR/CANCELLED → "fail";
@@ -283,13 +632,14 @@ def _fetch_github_ci_conclusion(repo_root, sha=None) -> tuple:
                 resolved DEV_SHA, itself possibly a caller-provided confirmed
                 merge oid per #1188). When given, this function uses it
                 DIRECTLY and skips the internal `git rev-parse
-                origin/develop` derivation entirely — the PR-mergeCommit
-                search below can then only ever match the requested sha,
-                never a stale local ref. This closes the #1192 class: the
-                OLD (sha-less) code re-derived its own sha independently of
-                whatever the caller had already resolved, so a local ref
-                that moved between the two derivations (e.g. a DIFFERENT PR
-                merging to develop in between) could cause this function to
+                origin/<integration>` derivation entirely — the
+                PR-mergeCommit search below can then only ever match the
+                requested sha, never a stale local ref. This closes the
+                #1192 class: the OLD (sha-less) code re-derived its own sha
+                independently of whatever the caller had already resolved,
+                so a local ref that moved between the two derivations (e.g.
+                a DIFFERENT PR merging to the integration branch in
+                between) could cause this function to
                 cite a NEIGHBOURING PR's CI run instead of the one the
                 caller actually meant to certify (live incident: PR
                 #1190/#1191).
@@ -315,6 +665,7 @@ def _fetch_github_ci_conclusion(repo_root, sha=None) -> tuple:
     import subprocess as _sp
 
     repo_root = Path(repo_root)
+    integration = _load_pipeline_config().integration_branch(str(repo_root))
 
     if sha:
         # Explicit sha (ADR-0079 D2): use it as-is, no local git derivation.
@@ -324,12 +675,12 @@ def _fetch_github_ci_conclusion(repo_root, sha=None) -> tuple:
         # code — this branch is untouched by the sha parameter's addition).
         try:
             sha_r = _sp.run(
-                ["git", "rev-parse", "origin/develop"],
-                capture_output=True, text=True, timeout=10,
+                ["git", "rev-parse", f"origin/{integration}"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
                 cwd=str(repo_root),
             )
             if sha_r.returncode != 0:
-                return "unavailable", "git rev-parse origin/develop failed"
+                return "unavailable", f"git rev-parse origin/{integration} failed"
             develop_sha = sha_r.stdout.strip()
         except Exception as exc:
             return "unavailable", f"git rev-parse error: {exc}"
@@ -338,11 +689,12 @@ def _fetch_github_ci_conclusion(repo_root, sha=None) -> tuple:
     # Routed through gh_cache (ttl=30s, timeout=5s) so a slow gh degrades to
     # "unavailable" (which triggers the ci-checks.sh local fallback) rather than
     # blocking the request path for up to 20s (PRD #993 cr.3, slice #996).
-    # ttl=30s caches only within a long-running dashboard server process; promote.sh invokes
-    # --check RELEASE-READY as a fresh subprocess (empty cache) so the gate always reads LIVE GitHub ci (#986 honesty preserved).
+    # ttl=30s caches only within one long-running process; CLI invocations
+    # (including promote.sh's --check RELEASE-READY) each start a fresh
+    # subprocess (empty cache) so the gate always reads LIVE GitHub ci (#986 honesty preserved).
     try:
         _pr_rc, _pr_out = _health_gh_fetch(
-            ["pr", "list", "--base", "develop", "--state", "merged",
+            ["pr", "list", "--base", integration, "--state", "merged",
              "--limit", "20", "--json", "number,mergeCommit"],
             ttl=30.0, timeout=5.0,
         )
@@ -361,7 +713,7 @@ def _fetch_github_ci_conclusion(repo_root, sha=None) -> tuple:
 
     if matching_pr is None:
         return "unavailable", (
-            f"no merged PR to develop matched HEAD {develop_sha[:8]} "
+            f"no merged PR to {integration} matched HEAD {develop_sha[:8]} "
             f"(checked {len(prs)} recent PRs)"
         )
 
@@ -463,7 +815,7 @@ def _tracked_files(root: Path, pathspec: str) -> "list[Path] | None":
     try:
         result = subprocess.run(
             ["git", "-C", str(root), "ls-files", pathspec],
-            capture_output=True, text=True, timeout=10,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
         )
         if result.returncode != 0:
             # git failed (e.g. not a git repo) — signal fallback with None
@@ -1068,7 +1420,7 @@ def check_meta_tripwire() -> dict:
         result = subprocess.run(
             ["git", "log", "--name-only", "--format=COMMIT:%H",
              f"{last_sha}..HEAD"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
             cwd=str(_HEALTH_REPO_ROOT),
         )
         if result.returncode != 0:
@@ -1499,17 +1851,17 @@ _CHECK_GROUP_MAP: dict = {
     "CAPTURE-SHAPE": "Verification integrity",
     "GREEN-MAIN": "Verification integrity",
     "DRAIN-LEDGER": "Verification integrity",
+    "QUERY-HONESTY": "Verification integrity",
     # Release gates — promotion topology, lag, release-readiness
     "BRANCH-TOPOLOGY": "Release gates",
     "PROMOTION-LAG": "Release gates",
     "RELEASE-READY": "Release gates",
     "R-SENSITIVE-DETECTOR": "Release gates",
     "META-TRIPWIRE": "Release gates",
-    # Session hygiene — log rotation, untracked files, required labels, dead routes
+    # Session hygiene — log rotation, untracked files, required labels
     "UNTRACKED-SIZE": "Session hygiene",
     "LOG-ROTATION": "Session hygiene",
     "REQUIRED-LABELS": "Session hygiene",
-    "DEAD-ROUTES": "Session hygiene",
     "SESSION-INJECTION": "Session hygiene",
 }
 
@@ -1593,7 +1945,6 @@ PURPOSE_GROUP_MAP: dict = {
     "UNTRACKED-SIZE":    "Isolation/hygiene",
     "LOG-ROTATION":      "Isolation/hygiene",
     "REQUIRED-LABELS":   "Isolation/hygiene",
-    "DEAD-ROUTES":       "Isolation/hygiene",
     "SESSION-INJECTION": "Isolation/hygiene",
     "STALE-BRANCHES":    "Isolation/hygiene",
     "TESTS-COLLECTED":   "Isolation/hygiene",
@@ -2150,11 +2501,13 @@ def check_isolation_group() -> dict:
     Checks:
     1. Dirs under .claude/worktrees/ that are NOT registered in `git worktree list`
        (orphaned — agent-* dirs left behind after the worktree was removed).
-    2. Worktrees that are 0-ahead + clean relative to origin/main (prune drift —
-       they could be pruned).
+    2. Worktrees that are 0-ahead + clean relative to origin/<release>
+       (ADR-0089 D1 — this site keeps the role its code has always used;
+       prune drift — they could be pruned).
 
     Read-only: never removes anything; only reports.
     """
+    release = _load_pipeline_config().release_branch(str(_HEALTH_REPO_ROOT))
     worktrees_dir = _HEALTH_REPO_ROOT / ".claude" / "worktrees"
     if not worktrees_dir.exists():
         return {
@@ -2209,12 +2562,12 @@ def check_isolation_group() -> dict:
         # Check prune-drift: 0-ahead and clean
         try:
             ahead = subprocess.run(
-                ["git", "rev-list", "--count", "origin/main..HEAD"],
-                capture_output=True, text=True, timeout=8, cwd=str(d),
+                ["git", "rev-list", "--count", f"origin/{release}..HEAD"],
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8, cwd=str(d),
             )
             status = subprocess.run(
                 ["git", "status", "--porcelain"],
-                capture_output=True, text=True, timeout=8, cwd=str(d),
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8, cwd=str(d),
             )
             if (ahead.returncode == 0 and ahead.stdout.strip() == "0"
                     and status.returncode == 0 and not status.stdout.strip()):
@@ -2451,7 +2804,7 @@ def check_rule_coverage() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Spec-coverage check (slice #798 / ADR-0066 D2: SC-COVERAGE dashboard row)
+# Spec-coverage check (slice #798 / ADR-0066 D2: SC-COVERAGE health-registry row)
 # ---------------------------------------------------------------------------
 
 def check_spec_coverage() -> dict:
@@ -2684,7 +3037,7 @@ def check_critic_health() -> dict:
     hold all verdicts and named critics will show 0 verdicts — that is correct.
 
     Returns a substrate-compatible check dict with id="CRITIC-HEALTH" and a
-    per-critic breakdown in the "critics" key for the dashboard card.
+    per-critic breakdown in the "critics" key in the check's result.
     """
     try:
         # Lazy import to avoid circular deps (collector imports nothing from health)
@@ -2817,7 +3170,10 @@ def check_critic_health() -> dict:
 # Used by check_proof_presence to classify PRs by their changed paths.
 _ROUTE_TABLE = [
     # (glob_pattern, proof_class)
-    ("dashboard/**", "browser"),
+    # dashboard/** routes command-run, not browser (ADR-0088 D5): after the
+    # served dashboard's retirement, every surviving file under dashboard/
+    # is a command-line library. *.html stays browser for host UIs.
+    ("dashboard/**", "command-run"),
     ("*.html", "browser"),
     (".claude/hooks/**", "hook-fire"),
     (".claude/settings.json", "hook-fire"),
@@ -2979,32 +3335,48 @@ def check_residual_ratio() -> dict:
 
     def _fetch_closed_prds(limit):
         # Routed through gh_cache — PRD #993 cr.3/cr.4, slice #996.
+        # ADR-0087 D3: an unconfirmed fetch, and a confirmed source paired
+        # with an empty/unparsable payload, both count as unconfirmed —
+        # never as a confirmed empty list. Returns (numbers, confirmed, source).
         try:
-            rc, out = _health_gh_fetch(
+            rc, out, source = _health_gh_fetch(
                 ["issue", "list", "--label", "prd",
                  "--state", "closed", "--limit", str(limit),
                  "--json", "number"],
-                ttl=60.0, timeout=5.0,
+                ttl=60.0, timeout=5.0, with_source=True,
             )
-            if rc == 0 and out.strip():
-                return [item["number"] for item in _json.loads(out)]
-        except Exception:
-            pass
-        return []
+        except Exception as exc:
+            return [], False, f"computing: {exc}"
+        if rc != 0:
+            return [], False, source
+        try:
+            items = _json.loads(out)
+            if not isinstance(items, list):
+                raise ValueError("payload is not a JSON list")
+        except Exception as exc:
+            return [], False, f"{source}: unparsable payload: {exc}"
+        return [item["number"] for item in items], True, source
 
     def _fetch_comments(prd_num):
-        # Routed through gh_cache — each PRD comment fetch is individually cached.
+        # Routed through gh_cache — each PRD comment fetch is individually
+        # cached. Same unconfirmed contract as _fetch_closed_prds above.
         try:
-            rc, out = _health_gh_fetch(
+            rc, out, source = _health_gh_fetch(
                 ["issue", "view", str(prd_num), "--json", "comments"],
-                ttl=60.0, timeout=5.0,
+                ttl=60.0, timeout=5.0, with_source=True,
             )
-            if rc == 0 and out.strip():
-                data = _json.loads(out)
-                return [c.get("body", "") for c in data.get("comments", [])]
-        except Exception:
-            pass
-        return []
+        except Exception as exc:
+            return [], False, f"computing: {exc}"
+        if rc != 0:
+            return [], False, source
+        try:
+            data = _json.loads(out)
+            comments = data.get("comments") if isinstance(data, dict) else None
+            if comments is None:
+                raise ValueError("payload missing a comments list")
+        except Exception as exc:
+            return [], False, f"{source}: unparsable payload: {exc}"
+        return [c.get("body", "") for c in comments], True, source
 
     # Separator rows like "|---|---|" -- skip these
     _separator_re = re.compile(r'^\|\s*[-:]+\s*\|')
@@ -3013,9 +3385,16 @@ def check_residual_ratio() -> dict:
     extract_failed = 0
     total = 0
     prds_scanned = 0
-    fetch_error = None
+    unconfirmed_source = None
 
-    prd_numbers = _fetch_closed_prds(_RESIDUAL_RATIO_PRD_WINDOW)
+    prd_numbers, prds_confirmed, prds_source = _fetch_closed_prds(_RESIDUAL_RATIO_PRD_WINDOW)
+    if not prds_confirmed:
+        return {
+            "id": "RESIDUAL-RATIO",
+            "result": "WARN",
+            "detail": f"unconfirmed (source={prds_source})",
+            "judgment": 0, "extract_failed": 0, "total": 0, "rate": None,
+        }
     if not prd_numbers:
         return {
             "id": "RESIDUAL-RATIO",
@@ -3028,9 +3407,15 @@ def check_residual_ratio() -> dict:
         }
 
     for prd_num in prd_numbers:
-        comments = _fetch_comments(prd_num)
-        if not comments and fetch_error is None:
-            fetch_error = "comment fetch failed for PRD #{} (auth or timeout)".format(prd_num)
+        comments, comments_confirmed, comments_source = _fetch_comments(prd_num)
+        if not comments_confirmed:
+            # ADR-0087 D3: RESIDUAL-RATIO must not compute a ratio from
+            # partial comment data — remember the first unconfirmed leg and
+            # report it once the loop ends, instead of silently treating a
+            # failed comment fetch as "no QA-plan in this PRD".
+            if unconfirmed_source is None:
+                unconfirmed_source = comments_source
+            continue
         prd_has_plan = False
         for body in comments:
             if "## QA-plan" not in body:
@@ -3062,14 +3447,21 @@ def check_residual_ratio() -> dict:
         if prd_has_plan:
             prds_scanned += 1
 
+    if unconfirmed_source is not None:
+        return {
+            "id": "RESIDUAL-RATIO",
+            "result": "WARN",
+            "detail": f"unconfirmed (source={unconfirmed_source})",
+            "judgment": judgment, "extract_failed": extract_failed,
+            "total": total, "rate": None,
+        }
+
     if total < _RESIDUAL_RATIO_MIN_ROWS:
         detail = (
             "low-sample: {} criteria rows across {} PRDs with QA-plans "
             "(min={}); judgment={}, extract_failed={}; "
             "ratio not computed -- insufficient data for ADR-0066 D1 drop-criterion signal"
         ).format(total, prds_scanned, _RESIDUAL_RATIO_MIN_ROWS, judgment, extract_failed)
-        if fetch_error:
-            detail += " | note: {}".format(fetch_error)
         return {
             "id": "RESIDUAL-RATIO",
             "result": "WARN",
@@ -3087,8 +3479,6 @@ def check_residual_ratio() -> dict:
         "across {} PRDs with QA-plans "
         "(bind-forward ADR-0066 D1: ratio should fall after PC-EARS adoption)"
     ).format(residual, total, rate_pct, judgment, extract_failed, prds_scanned)
-    if fetch_error:
-        detail += " | note: {}".format(fetch_error)
 
     # WARN always (not FAIL) -- this is a measurement row, not a blocking check.
     # The drop-criterion is a human-reviewed decision, not an automated gate.
@@ -3273,23 +3663,43 @@ def check_capture_shape() -> dict:
         r'\*\*Symptom:\*\*(.*?)(?=\*\*Root cause:\*\*)', re.DOTALL
     )
 
-    def _fetch_issues(label: str) -> list[dict]:
+    def _fetch_issues(label: str) -> tuple:
         # Routed through gh_cache — PRD #993 cr.3/cr.4, slice #996.
+        # ADR-0087 D3: an unconfirmed fetch, and a confirmed source paired
+        # with an empty/unparsable payload, both count as unconfirmed —
+        # never as a confirmed empty list. Returns (items, confirmed, source).
         try:
-            rc, out = _health_gh_fetch(
+            rc, out, source = _health_gh_fetch(
                 ["issue", "list", "--label", label,
                  "--state", "all", "--limit", "50",
                  "--json", "number,body,labels"],
-                ttl=60.0, timeout=5.0,
+                ttl=60.0, timeout=5.0, with_source=True,
             )
-            if rc == 0 and out.strip():
-                return _json.loads(out)
-        except Exception:
-            pass
-        return []
+        except Exception as exc:
+            return [], False, f"computing: {exc}"
+        if rc != 0:
+            return [], False, source
+        try:
+            items = _json.loads(out)
+            if not isinstance(items, list):
+                raise ValueError("payload is not a JSON list")
+        except Exception as exc:
+            return [], False, f"{source}: unparsable payload: {exc}"
+        return items, True, source
 
     # Step 1: Check root-cause labeled issues
-    root_cause_issues = _fetch_issues("root-cause")
+    root_cause_issues, rc_confirmed, rc_source = _fetch_issues("root-cause")
+    if not rc_confirmed:
+        return {
+            "id": "CAPTURE-SHAPE",
+            "result": "WARN",
+            "detail": f"unconfirmed (source={rc_source})",
+            "total_root_cause": 0,
+            "conforming_count": 0,
+            "evidence_count": 0,
+            "non_conformers": [],
+            "unlabeled_candidates": [],
+        }
     total_rc = len(root_cause_issues)
     conforming = []
     non_conformers = []
@@ -3311,7 +3721,18 @@ def check_capture_shape() -> dict:
     evid_rate = round(evidence_present / len(conforming), 3) if conforming else None
 
     # Step 2: Unlabeled-candidate counter (captured issues with 3-section shape)
-    captured_issues = _fetch_issues("captured")
+    captured_issues, cap_confirmed, cap_source = _fetch_issues("captured")
+    if not cap_confirmed:
+        return {
+            "id": "CAPTURE-SHAPE",
+            "result": "WARN",
+            "detail": f"unconfirmed (source={cap_source})",
+            "total_root_cause": total_rc,
+            "conforming_count": len(conforming),
+            "evidence_count": evidence_present,
+            "non_conformers": non_conformers,
+            "unlabeled_candidates": [],
+        }
     unlabeled_candidates = []
     rc_numbers = {i["number"] for i in root_cause_issues}
     for issue in captured_issues:
@@ -3351,14 +3772,16 @@ def check_green_main() -> dict:
     """GREEN-MAIN: last develop_green (or backward-compat main_green) sha + lag + age.
 
     Reads workflow-events.jsonl for the last 'develop_green' event (ADR-0062 D3,
-    two-tier migration: slices merge to develop; green gate tracks develop HEAD).
+    two-tier migration: slices merge to the integration branch; green gate
+    tracks the integration branch's HEAD, ADR-0089 D1).
     Falls back to 'main_green' for backward compatibility with pre-migration history
     (avoids a false-WARN window while historical logs still only carry main_green).
-    lag = git rev-list <sha>..origin/develop --count
+    lag = git rev-list <sha>..origin/<integration> --count
     age = seconds since the event timestamp
     Red on lag > 0 or stale > 24h.
     """
     import json as _json
+    integration = _load_pipeline_config().integration_branch(str(_HEALTH_REPO_ROOT))
     events_log = _telemetry_log_root() / ".claude" / "logs" / "workflow-events.jsonl"
     if not events_log.exists():
         return {"id": "GREEN-MAIN", "result": "WARN",
@@ -3400,8 +3823,8 @@ def check_green_main() -> dict:
     lag = -1
     try:
         r = subprocess.run(
-            ["git", "rev-list", "--count", f"{sha}..origin/develop"],
-            capture_output=True, text=True, timeout=10, cwd=str(_HEALTH_REPO_ROOT),
+            ["git", "rev-list", "--count", f"{sha}..origin/{integration}"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10, cwd=str(_HEALTH_REPO_ROOT),
         )
         if r.returncode == 0:
             lag = int(r.stdout.strip())
@@ -3463,9 +3886,10 @@ _RECORD_VS_GH_WINDOW_EXCEPTIONS = {"1089"}
 
 def check_record_vs_gh() -> dict:
     """RECORD-VS-GH: reconcile recorded pr_merged spans (trace-v3.jsonl) vs
-    gh's merged-PR ground truth on develop (PRD #1075 criterion 3 / slice #1081).
+    gh's merged-PR ground truth on the integration branch (ADR-0089 D1;
+    PRD #1075 criterion 3 / slice #1081).
 
-    Ground truth: `gh pr list --base develop --state merged --json
+    Ground truth: `gh pr list --base <integration> --state merged --json
     number,mergedAt,mergeCommit`, routed through the existing
     _health_gh_fetch/gh_cache seam (timeout-bounded; degrades honestly to
     'unverifiable — gh unavailable' rather than fabricating PASS/FAIL).
@@ -3490,6 +3914,8 @@ def check_record_vs_gh() -> dict:
     import json as _json
     from datetime import datetime
 
+    integration = _load_pipeline_config().integration_branch(str(_HEALTH_REPO_ROOT))
+
     def _parse_ts(s: str):
         return datetime.fromisoformat(s.replace("Z", "+00:00"))
 
@@ -3501,7 +3927,7 @@ def check_record_vs_gh() -> dict:
         try:
             r = subprocess.run(
                 ["git", "show", "-s", "--format=%cI", _RECORD_VS_GH_ANCHOR_SHA],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
                 cwd=str(_HEALTH_REPO_ROOT),
             )
             anchor_ts_str = r.stdout.strip() if r.returncode == 0 else ""
@@ -3538,9 +3964,9 @@ def check_record_vs_gh() -> dict:
             ),
         }
 
-    # --- Step 2: fetch merged PRs on develop, routed through gh_cache ---
+    # --- Step 2: fetch merged PRs on the integration branch, routed through gh_cache ---
     rc, out = _health_gh_fetch(
-        ["pr", "list", "--base", "develop", "--state", "merged",
+        ["pr", "list", "--base", integration, "--state", "merged",
          "--limit", "100", "--json", "number,mergedAt,mergeCommit"],
         ttl=60.0, timeout=5.0,
     )
@@ -3669,7 +4095,7 @@ def _resolve_adr_0076_anchor_ts():
         try:
             r = subprocess.run(
                 ["git", "show", "-s", "--format=%cI", _ADR_0076_ANCHOR_SHA],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
                 cwd=str(_HEALTH_REPO_ROOT),
             )
             ts_str = r.stdout.strip() if r.returncode == 0 else ""
@@ -3686,15 +4112,17 @@ def _resolve_adr_0076_anchor_ts():
 
 
 def check_slice_vs_pr() -> dict:
-    """SLICE-VS-PR: reconcile merged slice-closing PRs on develop against
-    their recorded dispatch + pr_opened v3 spans (PRD #1127 §2 criterion
-    11b; ADR-0076 D1 enforcement item (c) -- the #918 hand-created-slice
-    class stays caught even when it routes entirely around the verbs).
+    """SLICE-VS-PR: reconcile merged slice-closing PRs on the integration
+    branch against their recorded dispatch + pr_opened v3 spans (ADR-0089
+    D1; PRD #1127 §2 criterion 11b; ADR-0076 D1 enforcement item (c) -- the
+    #918 hand-created-slice class stays caught even when it routes
+    entirely around the verbs).
 
     Ground truth for "is this a slice PR": GitHub's own
-    closingIssuesReferences is empty for every PR here (this repo's default
-    branch is main; every slice PR merges to develop, and GitHub only
-    auto-populates issue-closing references against the default branch) --
+    closingIssuesReferences is empty for every PR here (the release branch
+    is this repo's default branch; every slice PR merges to the
+    integration branch, and GitHub only auto-populates issue-closing
+    references against the default branch) --
     so this check parses each merged PR's own body for a `Closes #<n>`
     reference (the same regex tools/pipe/pr-open uses to derive its own
     pr_opened span's attrs.slice) and cross-checks the referenced issue
@@ -3717,6 +4145,8 @@ def check_slice_vs_pr() -> dict:
     import json as _json
     from datetime import datetime as _dt
 
+    integration = _load_pipeline_config().integration_branch(str(_HEALTH_REPO_ROOT))
+
     def _parse_ts(s: str):
         return _dt.fromisoformat(s.replace("Z", "+00:00"))
 
@@ -3737,7 +4167,7 @@ def check_slice_vs_pr() -> dict:
                 )}
 
     rc, out = _health_gh_fetch(
-        ["pr", "list", "--base", "develop", "--state", "merged",
+        ["pr", "list", "--base", integration, "--state", "merged",
          "--limit", "100", "--json", "number,mergedAt,body"],
         ttl=60.0, timeout=5.0,
     )
@@ -3850,9 +4280,10 @@ def check_slice_vs_pr() -> dict:
 
 
 def check_merged_without_verdict() -> dict:
-    """MERGED-WITHOUT-VERDICT: every PR merged to develop after the ADR-0076
-    bind-forward anchor MUST carry a recorded `verdict` v3 span (PRD #1127
-    §2 criterion 11b; ADR-0076 D3's merge-time reviewer-verdict assertion).
+    """MERGED-WITHOUT-VERDICT: every PR merged to the integration branch
+    (ADR-0089 D1) after the ADR-0076 bind-forward anchor MUST carry a
+    recorded `verdict` v3 span (PRD #1127 §2 criterion 11b; ADR-0076 D3's
+    merge-time reviewer-verdict assertion).
 
     tools/pipe/pr-merge only started emitting `verdict` spans once slice
     #1130 (this PRD's own pr-merge verdict-floor extension) landed -- ITSELF
@@ -3863,7 +4294,7 @@ def check_merged_without_verdict() -> dict:
     -- ADR-0076's binding paragraph is explicit that the gap is named, not
     hidden.
 
-    Ground truth: `gh pr list --base develop --state merged --json
+    Ground truth: `gh pr list --base <integration> --state merged --json
     number,mergedAt` (same shape as RECORD-VS-GH). Spans: recorded
     `verdict`-kind spans in the canonical v3 trace log, matched on attrs.pr
     (string).
@@ -3872,6 +4303,8 @@ def check_merged_without_verdict() -> dict:
     """
     import json as _json
     from datetime import datetime as _dt
+
+    integration = _load_pipeline_config().integration_branch(str(_HEALTH_REPO_ROOT))
 
     def _parse_ts(s: str):
         return _dt.fromisoformat(s.replace("Z", "+00:00"))
@@ -3893,7 +4326,7 @@ def check_merged_without_verdict() -> dict:
                 )}
 
     rc, out = _health_gh_fetch(
-        ["pr", "list", "--base", "develop", "--state", "merged",
+        ["pr", "list", "--base", integration, "--state", "merged",
          "--limit", "100", "--json", "number,mergedAt"],
         ttl=60.0, timeout=5.0,
     )
@@ -4288,7 +4721,7 @@ def check_tests_collected() -> dict:
             [sys.executable, "-m", "pytest", str(tests_dir),
              "--collect-only", "-q", "--no-header"],
             capture_output=True,
-            text=True,
+            text=True, encoding="utf-8", errors="replace",
             timeout=30,
             cwd=str(_HEALTH_REPO_ROOT),
         )
@@ -4428,13 +4861,14 @@ def check_test_ordering() -> dict:
     1. Fetch recently merged PRs whose headRefName starts with fix/.
     2. Squash-merge detection (slice #1060 / ADR-0042 D3): the pipeline's
        ONLY merge mode is squash-merge, which collapses a PR's test+fix
-       commits into ONE develop commit. A merge commit with exactly one
-       parent is a squash (a merge-preserving strategy would have two).
+       commits into ONE commit on the integration branch (ADR-0089 D1). A
+       merge commit with exactly one parent is a squash (a merge-preserving
+       strategy would have two).
        For such PRs, fetch the PR's ORIGINAL branch commit list via
        `gh pr view N --json commits` (routed through the health gh_cache
        seam) and evaluate ordering on THAT sequence — using the same
        file-touch classification logic — instead of the collapsed
-       develop-history commit. This also avoids the direct-history range
+       integration-branch-history commit. This also avoids the direct-history range
        walk picking up unrelated sibling PRs' commits (root-cause of the
        false-negatives on PRs 1045/1047/1049/1051/1055/1058).
        Degrade: if gh is unavailable, or a commit oid gh reports is no
@@ -4454,6 +4888,8 @@ def check_test_ordering() -> dict:
     """
     import json as _json
     import subprocess as _sp
+
+    release = _load_pipeline_config().release_branch(str(_HEALTH_REPO_ROOT))
 
     _GRANDFATHERED_BELOW = 816  # PRs linked to slices < #816 are pre-activation
 
@@ -4577,7 +5013,7 @@ def check_test_ordering() -> dict:
             try:
                 result = _sp.run(
                     ["git", "log", "--reverse", "--pretty=%H",
-                     f"origin/main...{merge_commit}", "--"],
+                     f"origin/{release}...{merge_commit}", "--"],
                     capture_output=True, text=True, encoding="utf-8",
                     errors="replace", timeout=15,
                     cwd=str(_HEALTH_REPO_ROOT),
@@ -4810,154 +5246,6 @@ def check_frontmatter_coverage() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Stale-server check (ADR-0071 D5 — slice #907)
-# ---------------------------------------------------------------------------
-
-def check_stale_server() -> dict:
-    """STALE-SERVER: dashboard server sha vs git HEAD (is the server fresh?).
-
-    Compares the sha reported by /api/meta against the current git HEAD.
-    PASS  when server sha == HEAD (server loaded current code).
-    FAIL  when sha differs from HEAD OR /api/meta reports stale=True.
-    FAIL  (occupied=True) when something answers at the dashboard port but
-          fails the identity check — non-200 status, non-JSON body, or a
-          missing "sha" field. A foreign listener squatting the port is
-          NEVER conflated with "no server running" (#1184 incident fix).
-    WARN  when the server is genuinely not reachable at all (connection
-          refused/timeout — no server running is not stale).
-
-    Supports env-var overrides for offline testing:
-      _STALE_SERVER_META_OVERRIDE  — JSON string for the /api/meta response body
-        (empty string = simulate unreachable / connection error).
-      _STALE_SERVER_HEAD_OVERRIDE  — HEAD sha string (overrides git rev-parse).
-
-    Per ADR-0071 D5 (server-staleness claim); surfaces the #726 staleness
-    condition as an honest registry row. Identity-verifying per the #1184
-    root-cause incident (slice #1189): an HTTP error response means SOMETHING
-    answered — that is never the same as no server running.
-    """
-    import json as _json
-    import urllib.request as _urllib_request
-    import urllib.error as _urllib_error
-
-    # --- 1. Get HEAD sha ---
-    head_override = os.environ.get("_STALE_SERVER_HEAD_OVERRIDE", "")
-    if head_override:
-        head_sha = head_override.strip()
-    else:
-        try:
-            r = subprocess.run(
-                ["git", "-C", str(_HEALTH_REPO_ROOT), "rev-parse", "HEAD"],
-                capture_output=True, text=True, timeout=10,
-            )
-            head_sha = r.stdout.strip() if r.returncode == 0 else ""
-        except Exception:
-            head_sha = ""
-
-    if not head_sha:
-        return {
-            "id": "STALE-SERVER",
-            "result": "WARN",
-            "detail": "could not determine git HEAD sha; check skipped",
-        }
-
-    # --- 2. Fetch /api/meta from running server ---
-    meta_override = os.environ.get("_STALE_SERVER_META_OVERRIDE", None)
-    if meta_override is not None:
-        # Test injection path
-        if meta_override == "":
-            # Simulate unreachable server
-            return {
-                "id": "STALE-SERVER",
-                "result": "WARN",
-                "detail": "dashboard server not reachable (no server running is not stale)",
-            }
-        try:
-            meta = _json.loads(meta_override)
-        except Exception as exc:
-            return {
-                "id": "STALE-SERVER",
-                "result": "WARN",
-                "detail": f"meta override parse error: {exc}",
-            }
-    else:
-        # Production path: try localhost:8765 (the canonical dashboard port).
-        # Identity-verifying (#1184 fix): HTTPError means SOMETHING answered
-        # at this port — it must be classified occupied, never "unreachable".
-        # HTTPError is a URLError subclass, so it is caught BEFORE the
-        # generic URLError/OSError branch (which is genuine no-listener).
-        try:
-            with _urllib_request.urlopen(
-                "http://localhost:8765/api/meta", timeout=3
-            ) as resp:
-                meta = _json.loads(resp.read().decode("utf-8"))
-        except _urllib_error.HTTPError as exc:
-            return {
-                "id": "STALE-SERVER",
-                "result": "FAIL",
-                "occupied": True,
-                "detail": (
-                    f"occupied by a foreign listener: HTTP {exc.code} answering "
-                    f"/api/meta at localhost:8765 (not a project-claude dashboard)"
-                ),
-            }
-        except (_urllib_error.URLError, OSError):
-            return {
-                "id": "STALE-SERVER",
-                "result": "WARN",
-                "detail": "dashboard server not reachable at localhost:8765 (no server running is not stale)",
-            }
-        except Exception as exc:
-            # Includes JSON parse failures — a 200 response with a
-            # non-conforming body is also "occupied", not unreachable.
-            return {
-                "id": "STALE-SERVER",
-                "result": "FAIL",
-                "occupied": True,
-                "detail": f"occupied by a foreign listener: non-conforming /api/meta response ({exc})",
-            }
-
-    # --- 3. Compare sha and stale flag ---
-    server_sha = meta.get("sha", "")
-    server_stale_flag = bool(meta.get("stale", False))
-
-    if not server_sha:
-        return {
-            "id": "STALE-SERVER",
-            "result": "FAIL",
-            "occupied": True,
-            "detail": "occupied by a foreign listener: /api/meta did not return a sha field",
-        }
-
-    if server_stale_flag or server_sha != head_sha:
-        reason = []
-        if server_stale_flag:
-            reason.append("server reports stale=True")
-        if server_sha != head_sha:
-            reason.append(
-                f"server sha {server_sha[:12]} != HEAD {head_sha[:12]}"
-            )
-        return {
-            "id": "STALE-SERVER",
-            "result": "FAIL",
-            "detail": (
-                "stale server detected: " + "; ".join(reason)
-                + " — restart dashboard to load current code"
-            ),
-            "server_sha": server_sha,
-            "head_sha": head_sha,
-        }
-
-    return {
-        "id": "STALE-SERVER",
-        "result": "PASS",
-        "detail": f"server sha {server_sha[:12]} matches HEAD (server is fresh)",
-        "server_sha": server_sha,
-        "head_sha": head_sha,
-    }
-
-
-# ---------------------------------------------------------------------------
 # Hygiene registry checks (ADR-0068 D1) — wave-4 slice #818
 # ---------------------------------------------------------------------------
 
@@ -4971,6 +5259,7 @@ _STALE_BRANCH_DAYS = 14
 _REQUIRED_LABELS = [
     "prd", "slice", "backlog", "captured",
     "trivial", "needs-human", "needs-human-check", "root-cause",
+    "bug", "feature", "lane",
 ]
 
 
@@ -5097,6 +5386,8 @@ def check_stale_branches() -> dict:
         import datetime as _dt
         import json as _json
 
+        release = _load_pipeline_config().release_branch(str(_HEALTH_REPO_ROOT))
+
         # Fetch remote branch refs + last commit date.
         result = subprocess.run(
             ["git", "for-each-ref",
@@ -5123,8 +5414,9 @@ def check_stale_branches() -> dict:
             if len(parts) < 2:
                 continue
             ref_name = parts[0]
-            # Skip HEAD and main
-            if ref_name in ("origin/HEAD", "origin/main"):
+            # Skip HEAD and the release branch (ADR-0089 D1 — this site
+            # keeps the role its code has always used).
+            if ref_name in ("origin/HEAD", f"origin/{release}"):
                 continue
             total += 1
             date_str = parts[1].strip()
@@ -5209,82 +5501,6 @@ def check_required_labels() -> dict:
         ),
         "missing": [],
     }
-
-
-def check_dead_routes() -> dict:
-    """DEAD-ROUTES: API routes served but never fetched by the frontend.
-
-    Implements ADR-0068 D1. Scans dashboard/server.py for registered API routes
-    (lines with @app.route('/api/...')) then checks dashboard/index.html for
-    fetch('/api/...') calls. Routes served but never fetched = dead surface.
-    Honest day-one: pre-existing dead routes are the starting value, not a FAIL.
-    """
-    server_py = _HEALTH_REPO_ROOT / "dashboard" / "server.py"
-    index_html = _HEALTH_REPO_ROOT / "dashboard" / "index.html"
-
-    if not server_py.exists():
-        return {"id": "DEAD-ROUTES", "result": "WARN",
-                "detail": "dashboard/server.py not found"}
-    if not index_html.exists():
-        return {"id": "DEAD-ROUTES", "result": "WARN",
-                "detail": "dashboard/index.html not found"}
-
-    try:
-        server_text = _read_file(server_py)
-        html_text = _read_file(index_html)
-
-        # Extract routes from server.py.
-        # Supports two patterns:
-        #   1. elif path == "/api/..."  (custom HTTPHandler dispatch)
-        #   2. @app.route('/api/...')   (Flask-style decorator)
-        served_routes = set(re.findall(
-            r'''elif\s+path\s*==\s*['"](/api/[^'"]+)['"]''',
-            server_text
-        ))
-        served_routes |= set(re.findall(
-            r'''@app\.route\(['"](/api/[^'"]+)['"]''',
-            server_text
-        ))
-        # Extract fetch targets from index.html: fetch('/api/...') or fetch(`/api/...`)
-        fetched_routes = set(re.findall(
-            r'''fetch\([`'"]([/][^`'"?]+)''',
-            html_text
-        ))
-        # Normalize: strip trailing slashes
-        served_normalized = {r.rstrip("/") for r in served_routes}
-        fetched_normalized = {r.rstrip("/") for r in fetched_routes}
-
-        dead = sorted(served_normalized - fetched_normalized)
-        total_served = len(served_normalized)
-
-        if dead:
-            return {
-                "id": "DEAD-ROUTES",
-                "result": "WARN",
-                "detail": (
-                    f"{len(dead)}/{total_served} route(s) served but not fetched "
-                    f"by index.html: {dead[:5]}"
-                    + (" ..." if len(dead) > 5 else "")
-                    + " (detectors-report per ADR-0068 D1)"
-                ),
-                "dead_count": len(dead),
-                "dead_routes": dead[:10],
-                "total_served": total_served,
-            }
-        return {
-            "id": "DEAD-ROUTES",
-            "result": "PASS",
-            "detail": (
-                f"all {total_served} served /api/* routes are fetched "
-                f"by index.html (ADR-0068 D1)"
-            ),
-            "dead_count": 0,
-            "dead_routes": [],
-            "total_served": total_served,
-        }
-    except Exception as exc:
-        return {"id": "DEAD-ROUTES", "result": "WARN",
-                "detail": f"check failed: {exc}"}
 
 
 def check_session_injection() -> dict:
@@ -5404,7 +5620,7 @@ def _git_sha(ref: str) -> str:
     try:
         r = subprocess.run(
             ["git", "rev-parse", ref],
-            capture_output=True, text=True, timeout=8,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8,
             cwd=str(_HEALTH_REPO_ROOT),
         )
         return r.stdout.strip() if r.returncode == 0 else ""
@@ -5417,7 +5633,7 @@ def _git_count(range_spec: str) -> int:
     try:
         r = subprocess.run(
             ["git", "rev-list", "--count", range_spec],
-            capture_output=True, text=True, timeout=8,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=8,
             cwd=str(_HEALTH_REPO_ROOT),
         )
         return int(r.stdout.strip()) if r.returncode == 0 else -1
@@ -5426,50 +5642,55 @@ def _git_count(range_spec: str) -> int:
 
 
 def check_branch_topology() -> dict:
-    """BRANCH-TOPOLOGY: real two-tier develop/main topology assertion (ADR-0070 D1/D3).
+    """BRANCH-TOPOLOGY: real two-tier integration/release topology assertion
+    (ADR-0070 D1/D3, as amended by ADR-0089 D1).
 
     Checks (in order; first failure determines result/detail):
-    1. origin/develop exists — FAIL if missing.
-    2. origin/main exists — FAIL if missing.
-    3. main is an ancestor of develop (fast-forward topology) — WARN if not.
-    4. develop is ahead of main by N commits (healthy: N>=0).
-    5. Recent merged PRs base develop, not main — WARN if any recent PR has main base.
-    6. Branch-protection on develop — WARN (honest, requires API availability).
+    1. origin/<integration> exists — FAIL if missing.
+    2. origin/<release> exists — FAIL if missing.
+    3. release is an ancestor of integration (fast-forward topology) — WARN if not.
+    4. integration is ahead of release by N commits (healthy: N>=0).
+    5. Recent merged PRs base integration, not release — WARN if any recent PR has release base.
+    6. Branch-protection on integration — WARN (honest, requires API availability).
 
     Returns PASS when the topology is clean, WARN on advisory issues, FAIL on
     structural breaks. Always emits real data — never the "dormant" stub.
 
-    Extra fields for /api/promotion:
+    Extra diagnostic fields on the returned dict (beyond id/result/detail),
+    surfaced via `python3 dashboard/health.py --check BRANCH-TOPOLOGY`:
       develop_sha, main_sha, ahead, behind, main_is_ancestor
     """
     import json as _json
 
-    # 1. Check origin/develop exists
-    develop_sha = _git_sha("origin/develop")
+    integration = _load_pipeline_config().integration_branch(str(_HEALTH_REPO_ROOT))
+    release = _load_pipeline_config().release_branch(str(_HEALTH_REPO_ROOT))
+
+    # 1. Check origin/<integration> exists
+    develop_sha = _git_sha(f"origin/{integration}")
     if not develop_sha:
         return {
             "id": "BRANCH-TOPOLOGY",
             "result": "FAIL",
-            "detail": "origin/develop does not exist — two-tier topology not initialised",
+            "detail": f"origin/{integration} does not exist — two-tier topology not initialised",
         }
 
-    # 2. Check origin/main exists
-    main_sha = _git_sha("origin/main")
+    # 2. Check origin/<release> exists
+    main_sha = _git_sha(f"origin/{release}")
     if not main_sha:
         return {
             "id": "BRANCH-TOPOLOGY",
             "result": "FAIL",
-            "detail": "origin/main does not exist",
+            "detail": f"origin/{release} does not exist",
         }
 
     # 3. Commit counts
-    ahead = _git_count(f"origin/main..origin/develop")
-    behind = _git_count(f"origin/develop..origin/main")
+    ahead = _git_count(f"origin/{release}..origin/{integration}")
+    behind = _git_count(f"origin/{integration}..origin/{release}")
 
-    # 4. Ancestor check: main should be ancestor of develop (ff-clean)
+    # 4. Ancestor check: release should be ancestor of integration (ff-clean)
     try:
         anc = subprocess.run(
-            ["git", "merge-base", "--is-ancestor", "origin/main", "origin/develop"],
+            ["git", "merge-base", "--is-ancestor", f"origin/{release}", f"origin/{integration}"],
             capture_output=True, timeout=8, cwd=str(_HEALTH_REPO_ROOT),
         )
         main_is_ancestor = (anc.returncode == 0)
@@ -5477,46 +5698,75 @@ def check_branch_topology() -> dict:
         main_is_ancestor = False
 
     # 5. Recent PRs base check via gh CLI (via gh_cache — PRD #993 cr.3, slice #996)
+    # ADR-0087 D3: an unconfirmed fetch — or a confirmed source paired with
+    # an empty/unparsable payload — must never silently default
+    # pr_base_ok = True; it must report WARN naming the unconfirmed source
+    # (closes #1448).
     pr_base_ok = True
+    pr_unconfirmed = False
     pr_warn_detail = ""
+    pr_source = "computing"
     try:
-        _pr5_rc, _pr5_out = _health_gh_fetch(
+        _pr5_rc, _pr5_out, _pr5_source = _health_gh_fetch(
             ["pr", "list", "--state", "merged", "--limit", "10",
              "--json", "number,baseRefName"],
-            ttl=60.0, timeout=5.0,
+            ttl=60.0, timeout=5.0, with_source=True,
         )
-        if _pr5_rc == 0 and _pr5_out.strip():
-            prs = _json.loads(_pr5_out)
-            main_based = [p["number"] for p in prs if p.get("baseRefName") == "main"]
-            if main_based:
-                pr_base_ok = False
-                pr_warn_detail = f" | recent PRs with main base: {main_based[:3]}"
+        pr_source = _pr5_source
+        if _pr5_rc != 0:
+            pr_unconfirmed = True
+        else:
+            try:
+                prs = _json.loads(_pr5_out)
+                if not isinstance(prs, list):
+                    raise ValueError("payload is not a JSON list")
+            except Exception:
+                pr_unconfirmed = True
+            else:
+                main_based = [p["number"] for p in prs if p.get("baseRefName") == release]
+                if main_based:
+                    pr_base_ok = False
+                    pr_warn_detail = f" | recent PRs with {release} base: {main_based[:3]}"
     except Exception:
-        pass  # gh unavailable — skip PR check, don't WARN for this
+        pr_unconfirmed = True
 
     # 6. Branch-protection advisory (via gh_cache — PRD #993 cr.3, slice #996)
+    # #1525 / same class as ADR-0087 D3: a failed or exception-raising fetch,
+    # or a confirmed source paired with an empty, unparsable, or
+    # `protected`-less payload, must never let the function fall through to
+    # PASS on a state it never confirmed -- bp_confirmed gates the result
+    # below, mirroring step 5's pr_unconfirmed handling above.
     bp_note = ""
+    bp_confirmed = True
+    bp_source = "computing"
     try:
-        _bp_rc, _bp_out = _health_gh_fetch(
-            ["api", "repos/{owner}/{repo}/branches/develop"],
-            ttl=60.0, timeout=5.0,
+        _bp_rc, _bp_out, _bp_source = _health_gh_fetch(
+            ["api", f"repos/{{owner}}/{{repo}}/branches/{integration}"],
+            ttl=60.0, timeout=5.0, with_source=True,
         )
-        if _bp_rc == 0 and _bp_out.strip():
-            bp = _json.loads(_bp_out)
-            protected = bp.get("protected", False)
-            bp_note = f" | branch-protection={'on' if protected else 'off (advisory: enable)'}"
+        bp_source = _bp_source
+        if _bp_rc != 0:
+            bp_confirmed = False
         else:
-            bp_note = " | branch-protection: API unavailable (WARN)"
+            try:
+                bp = _json.loads(_bp_out)
+                if not isinstance(bp, dict) or "protected" not in bp:
+                    raise ValueError("payload is not a dict with a protected field")
+            except Exception:
+                bp_confirmed = False
+            else:
+                protected = bp["protected"]
+                bp_note = f" | branch-protection={'on' if protected else 'off (advisory: enable)'}"
     except Exception:
-        bp_note = " | branch-protection: check skipped"
+        bp_confirmed = False
 
     # Determine result
     ahead_str = str(ahead) if ahead >= 0 else "?"
     behind_str = str(behind) if behind >= 0 else "?"
     base_detail = (
-        f"develop ahead of main by {ahead_str}, behind by {behind_str}; "
-        f"main-is-ancestor={main_is_ancestor}; "
-        f"develop={develop_sha[:8]}, main={main_sha[:8]}"
+        f"{integration} ahead of {release} by {ahead_str}, behind by {behind_str}; "
+        f"{release}-is-ancestor={main_is_ancestor}; "
+        f"{integration}={develop_sha[:8]}, {release}={main_sha[:8]}"
         f"{pr_warn_detail}{bp_note}"
     )
 
@@ -5524,7 +5774,21 @@ def check_branch_topology() -> dict:
         return {
             "id": "BRANCH-TOPOLOGY",
             "result": "WARN",
-            "detail": f"main is NOT ancestor of develop (diverged topology); {base_detail}",
+            "detail": f"{release} is NOT ancestor of {integration} (diverged topology); {base_detail}",
+            "develop_sha": develop_sha,
+            "main_sha": main_sha,
+            "ahead": ahead,
+            "behind": behind,
+            "main_is_ancestor": main_is_ancestor,
+        }
+
+    if pr_unconfirmed:
+        return {
+            "id": "BRANCH-TOPOLOGY",
+            "result": "WARN",
+            "detail": (
+                f"recent-PR base check unconfirmed (source={pr_source}); {base_detail}"
+            ),
             "develop_sha": develop_sha,
             "main_sha": main_sha,
             "ahead": ahead,
@@ -5536,7 +5800,21 @@ def check_branch_topology() -> dict:
         return {
             "id": "BRANCH-TOPOLOGY",
             "result": "WARN",
-            "detail": f"recent PRs targeting main (should target develop); {base_detail}",
+            "detail": f"recent PRs targeting {release} (should target {integration}); {base_detail}",
+            "develop_sha": develop_sha,
+            "main_sha": main_sha,
+            "ahead": ahead,
+            "behind": behind,
+            "main_is_ancestor": main_is_ancestor,
+        }
+
+    if not bp_confirmed:
+        return {
+            "id": "BRANCH-TOPOLOGY",
+            "result": "WARN",
+            "detail": (
+                f"branch-protection fetch unconfirmed (source={bp_source}); {base_detail}"
+            ),
             "develop_sha": develop_sha,
             "main_sha": main_sha,
             "ahead": ahead,
@@ -5557,9 +5835,10 @@ def check_branch_topology() -> dict:
 
 
 def check_promotion_lag() -> dict:
-    """PROMOTION-LAG: age of develop HEAD since last promotion to main (ADR-0070 D3).
+    """PROMOTION-LAG: age of integration-branch HEAD since last promotion to
+    the release branch (ADR-0070 D3, as amended by ADR-0089 D1).
 
-    Measures how long develop has been ahead of main:
+    Measures how long the integration branch has been ahead of the release branch:
     - 0 commits ahead: no lag (PASS)
     - ahead > 0, last promotion < 24h ago: PASS
     - ahead > 0, last promotion 24h-72h: WARN (promotion due)
@@ -5571,8 +5850,11 @@ def check_promotion_lag() -> dict:
     import json as _json
     import time as _time
 
+    integration = _load_pipeline_config().integration_branch(str(_HEALTH_REPO_ROOT))
+    release = _load_pipeline_config().release_branch(str(_HEALTH_REPO_ROOT))
+
     promotions = _read_promotion_events()
-    ahead = _git_count("origin/main..origin/develop")
+    ahead = _git_count(f"origin/{release}..origin/{integration}")
     now = _time.time()
 
     if ahead == 0:
@@ -5580,7 +5862,7 @@ def check_promotion_lag() -> dict:
         return {
             "id": "PROMOTION-LAG",
             "result": "PASS",
-            "detail": f"develop == main (0 commits ahead); last promotion sha: {last_sha}",
+            "detail": f"{integration} == {release} (0 commits ahead); last promotion sha: {last_sha}",
             "ahead": 0,
             "last_promotion_ts": promotions[-1].get("ts", "") if promotions else None,
             "lag_hours": 0.0,
@@ -5591,7 +5873,7 @@ def check_promotion_lag() -> dict:
             "id": "PROMOTION-LAG",
             "result": "WARN",
             "detail": (
-                f"develop is {ahead} commit(s) ahead of main; no promotion events yet "
+                f"{integration} is {ahead} commit(s) ahead of {release}; no promotion events yet "
                 f"(honest day-one — first promotion pending); ADR-0070 D3"
             ),
             "ahead": ahead,
@@ -5611,7 +5893,7 @@ def check_promotion_lag() -> dict:
 
     last_sha = last_promo.get("sha", "")[:8]
     detail = (
-        f"develop {ahead} commit(s) ahead of main; "
+        f"{integration} {ahead} commit(s) ahead of {release}; "
         f"last promotion {lag_hours}h ago (sha={last_sha}, ts={last_ts_str})"
     )
 
@@ -5637,8 +5919,10 @@ def check_promotion_lag() -> dict:
 def check_release_ready() -> dict:
     """RELEASE-READY: deterministic six-condition promotion gate (ADR-0070 D2).
 
-    Evaluates develop HEAD against six conditions (ADR-0070 D2):
-      (a) CI green on develop HEAD — via real GitHub ci conclusion (#986);
+    Evaluates the integration branch's HEAD (ADR-0089 D1) against six
+    conditions (ADR-0070 D2):
+      (a) CI green on the integration branch's HEAD — via real GitHub ci
+          conclusion (#986);
           falls back to local tools/ci-checks.sh when gh is unavailable
       (b) full test suite passes (ADR-0067 D1) — GREEN-FAST (#1161): when (a)
           was satisfied by a REAL (non-override) recorded GitHub ci=pass for
@@ -5651,7 +5935,9 @@ def check_release_ready() -> dict:
       (d) green-develop streak intact — no failing checkpoint since last promotion
           (uses main_green events in workflow-events.jsonl as the green-develop proxy
           until a full green-develop event stream is landed by migration slices)
-      (e) zero open needs-human items — gh issue list --label needs-human
+      (e) zero open, CONFIRMED needs-human items — gh issue list AND
+          gh pr list --label needs-human (issues + PRs, ADR-0087 D4);
+          holds on any unconfirmed source or unparsable payload (D3)
       (f) guardrail-path batch check — wired to check_meta_tripwire() (slice #840 / ADR-0070 D4)
 
     Returns:
@@ -5667,7 +5953,7 @@ def check_release_ready() -> dict:
       _RELEASE_READY_TESTS_RESULT        PASS|FAIL  (bypasses pytest)
       _RELEASE_READY_PROOF_INTEGRITY_RESULT  PASS|WARN|FAIL  (bypasses check_proof_integrity)
       _RELEASE_READY_STREAK_RESULT       PASS|FAIL  (bypasses event-log streak check)
-      _RELEASE_READY_NEEDS_HUMAN_COUNT   <int>      (bypasses gh issue list)
+      _RELEASE_READY_NEEDS_HUMAN_COUNT   <int>      (bypasses gh issue list + gh pr list)
       _META_TRIPWIRE_RESULT_OVERRIDE     PASS|FAIL|WARN  (bypasses check_meta_tripwire for (f))
       _RELEASE_READY_FORCE_FAIL          1          (forces verdict false; for promote.sh guard tests)
     """
@@ -5693,7 +5979,7 @@ def check_release_ready() -> dict:
     #
     # Fallback: if gh is unavailable or no matching PR found, run local
     # ci-checks.sh — but label the detail "(local fallback — no GitHub ci
-    # run found)" so the source is unambiguous in the dashboard/CLI output.
+    # run found)" so the source is unambiguous in the CLI output.
     # -----------------------------------------------------------------------
     ci_override = os.environ.get("_RELEASE_READY_CI_RESULT", "").strip().upper()
     # gh_status is populated ONLY on the real (non-override) gh-query path
@@ -5722,7 +6008,7 @@ def check_release_ready() -> dict:
             try:
                 ci_result = subprocess.run(
                     ["bash", str(_HEALTH_REPO_ROOT / "tools" / "ci-checks.sh")],
-                    capture_output=True, text=True,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace",
                     timeout=_RELEASE_READY_CICHECKS_TIMEOUT_S,
                     cwd=str(_HEALTH_REPO_ROOT),
                 )
@@ -5787,7 +6073,7 @@ def check_release_ready() -> dict:
                 t_result = subprocess.run(
                     [sys.executable, "-m", "pytest", str(tests_dir), "-q",
                      "--no-header", "--tb=no"],
-                    capture_output=True, text=True,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace",
                     timeout=_RELEASE_READY_PYTEST_TIMEOUT_S,
                     cwd=str(_HEALTH_REPO_ROOT),
                 )
@@ -5876,36 +6162,104 @@ def check_release_ready() -> dict:
         }
 
     # -----------------------------------------------------------------------
-    # (e) Zero open needs-human items
+    # (e) A confirmed zero open needs-human items — issues AND pull requests
+    # (ADR-0087 D3: the gate holds unless the count is CONFIRMED — an
+    # unconfirmed source, an unparsable payload, an exception, or a
+    # non-integer injection all hold it now; a "treat as 0" default used to
+    # let an unreachable GitHub read as a clean queue. ADR-0087 D4: the
+    # count spans issues and pull requests — CLAUDE.md I5 puts the
+    # `needs-human` label on PRs too, but only `gh issue list` was queried.)
     # -----------------------------------------------------------------------
     nh_override = os.environ.get("_RELEASE_READY_NEEDS_HUMAN_COUNT", "").strip()
     if nh_override:
         try:
             nh_count = int(nh_override)
+            nh_confirmed = True
             nh_detail = f"needs-human count (injected): {nh_count}"
         except ValueError:
             nh_count = 0
-            nh_detail = f"needs-human count override parse error (default 0)"
+            nh_confirmed = False
+            nh_detail = (
+                "needs-human count unconfirmed (source=test-injection: "
+                f"_RELEASE_READY_NEEDS_HUMAN_COUNT={nh_override!r} is not an integer)"
+            )
     else:
         # Routed through gh_cache (ttl=30s, timeout=5s) — PRD #993 cr.3, slice #996.
         # Short TTL so stale cached counts don't hold the gate on the wrong value.
-        try:
-            _nh_rc, _nh_out = _health_gh_fetch(
-                ["issue", "list", "--label", "needs-human",
-                 "--state", "open", "--json", "number"],
-                ttl=30.0, timeout=5.0,
-            )
-            if _nh_rc == 0 and _nh_out.strip():
-                issues = _json.loads(_nh_out)
-                nh_count = len(issues)
-                nh_detail = f"needs-human open: {nh_count}"
-            else:
-                # gh unavailable or timeout → treat as 0 to avoid false holds
-                nh_count = 0
-                nh_detail = "gh issue list unavailable (timeout/cache miss; treat as 0)"
-        except Exception as exc:
-            nh_count = 0
-            nh_detail = f"needs-human check error (treat as 0): {exc}"
+        # Two legs, issues and PRs; both must be a CONFIRMED, parseable JSON
+        # list before the sum counts as observed. Both legs are label-filtered,
+        # so the seam applies ADR-0087 D2's QUERY-HONESTY attestation (slice
+        # #1498) to each: a confirmed leg whose attestation does not PASS
+        # comes back rc=1 with source "unverified" and is held below like any
+        # other unconfirmed leg — no edit was needed at this call site.
+        nh_confirmed = True
+        nh_count = 0
+        nh_legs = []
+        # ADR-0083 D5 (advisory): name the observation and the states
+        # consistent with it, not a single guessed cause.
+        _unconfirmed_explanations = {
+            "computing": "GitHub unreachable, unauthenticated, rate-limited or timed out",
+            "stale": "GitHub unreachable, unauthenticated, rate-limited or timed out",
+            "unverified": "label-filtered path failed QUERY-HONESTY",
+        }
+        for _leg_label, _leg_args in (
+            ("issues", ["issue", "list", "--label", "needs-human",
+                        "--state", "open", "--json", "number"]),
+            ("PRs", ["pr", "list", "--label", "needs-human",
+                     "--state", "open", "--json", "number"]),
+        ):
+            try:
+                _leg_rc, _leg_out, _leg_source = _health_gh_fetch(
+                    _leg_args, ttl=30.0, timeout=5.0, with_source=True,
+                )
+            except Exception as exc:
+                nh_confirmed = False
+                nh_legs.append(f"{_leg_label} check error: {exc}")
+                continue
+            if _leg_rc != 0:
+                nh_confirmed = False
+                _explain = _unconfirmed_explanations.get(_leg_source)
+                if _explain:
+                    nh_legs.append(
+                        f"{_leg_label} unconfirmed (source={_leg_source}: {_explain})"
+                    )
+                else:
+                    nh_legs.append(f"{_leg_label} unconfirmed (source={_leg_source})")
+                continue
+            try:
+                # ADR-0087 D3: confirmed means a confirmed source AND a
+                # payload that parses as a JSON list. An empty (or
+                # whitespace-only) string does NOT parse as one — do not
+                # substitute [] for it, or a confirmed-source leg with no
+                # payload reads as a confirmed zero instead of holding.
+                _leg_items = _json.loads(_leg_out)
+                if not isinstance(_leg_items, list):
+                    raise ValueError("payload is not a JSON list")
+            except Exception as exc:
+                nh_confirmed = False
+                nh_legs.append(
+                    f"{_leg_label} unconfirmed (source={_leg_source}: "
+                    f"unparsable payload: {exc})"
+                )
+                continue
+            nh_count += len(_leg_items)
+            nh_legs.append(f"{_leg_label}={len(_leg_items)} (source={_leg_source})")
+
+        if nh_confirmed:
+            nh_detail = f"needs-human open: {nh_count} [{'; '.join(nh_legs)}]"
+        else:
+            nh_detail = "; ".join(nh_legs)
+
+    if not nh_confirmed:
+        return {
+            "id": "RELEASE-READY",
+            "result": "WARN",
+            "verdict": "false",
+            "detail": (
+                f"gate held: condition (e) needs-human count unconfirmed — {nh_detail}"
+            ),
+            "first_failing_condition": "e",
+        }
 
     if nh_count > 0:
         return {
@@ -6271,7 +6625,7 @@ def check_hook_liveness() -> dict:
         try:
             r = subprocess.run(
                 ["git", "-C", str(_HEALTH_REPO_ROOT), "log", "-1", "--format=%cI"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
             )
             git_ts = _parse_ts(r.stdout.strip()) if r.returncode == 0 else 0.0
         except Exception:
@@ -6346,9 +6700,9 @@ _STREAM_LIVENESS_DARK_MINUTES = 60  # always-on window (unchanged; mirrors
 # alarm, not a real outage. Two narrower classes carve out of the default
 # "always-on" bucket:
 #   - "session-scoped": streams registered under the SessionStart hook event
-#     (session-start.sh, dashboard-autostart.sh today; any future once-per-
-#     session hook is picked up automatically since classification keys off
-#     the settings.json event name, not a hardcoded stream-name list). Alive
+#     (session-start.sh today; any future once-per-session hook is picked up
+#     automatically since classification keys off the settings.json event
+#     name, not a hardcoded stream-name list). Alive
 #     iff the stream's own last beacon is within
 #     _STREAM_LIVENESS_SESSION_SKEW_MINUTES of the NEWEST beacon among all
 #     session-scoped streams (the "newest observed session" cluster) — never
@@ -6726,7 +7080,7 @@ def check_deploy_handshake() -> dict:
     try:
         result = subprocess.run(
             ["bash", str(script), "--check-only"],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
             cwd=str(_HEALTH_REPO_ROOT),
         )
     except Exception as exc:
@@ -6825,6 +7179,15 @@ _DRAIN_RUN_START_COUNTS = ("prd", "slice", "backlog", "captured")
 _DRAIN_ESCALATION_LABELS = frozenset({"needs-human-check", "needs-human"})
 _DRAIN_CONCURRENCY_CAP = 3
 
+# Release mode (ADR-0090 D2/D3 — slice #1506): a `run_start` record carrying
+# `mode: "release"` switches two things below, and nothing else — a plain
+# (non-release) run's validation is byte-for-byte unchanged:
+#   - `triaged.lane` must be a non-empty STRING (a file-lane branch name);
+#     plain-mode `lane` stays an unvalidated integer queue-lane index.
+#   - concurrency counts DISTINCT LANES open at once (via each open item's
+#     triaged-recorded lane), capped at 15 — not distinct items capped at 3.
+_DRAIN_RELEASE_CONCURRENCY_CAP = 15
+
 
 def _drain_repr(value: object, limit: int = 60) -> str:
     """Bounded `repr` of a malformed ledger value for a FAIL message.
@@ -6856,7 +7219,7 @@ def _drain_ledger_dir(explicit: str | None = None) -> Path:
     try:
         out = subprocess.run(
             ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
-            capture_output=True, text=True, timeout=10, check=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10, check=True,
         ).stdout.strip()
         root = Path(os.path.dirname(os.path.abspath(out)))
     except Exception:
@@ -6893,6 +7256,12 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
          Because the ledger is append-only, a later `fix_queued` record for
          the same item is the sanctioned way to attach a `captured_ref`.
       7. a `parked` record with an empty remaining-items list
+      8. release mode (`run_start.mode == "release"`, ADR-0090 D2 — slice
+         #1506): a `run_start` missing `version`; a `triaged.lane` that is
+         not a non-empty string; concurrency counted by DISTINCT LANES
+         (each open item's triaged-recorded lane) exceeding 15, in place of
+         condition 5's distinct-item/3 cap, which stays exactly as-is for a
+         plain-mode run
 
     No ledger present → WARN (a drain may simply never have run here).
 
@@ -6926,6 +7295,11 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
 
     failures: list[str] = []
     records: list[dict] = []
+    # Release mode (condition 8, ADR-0090 D2/D3): set from the run_start
+    # record's `mode` field, which precedes every other record in a
+    # well-formed ledger — a malformed ledger with no leading run_start
+    # simply validates as plain mode, same as an absent `mode` field would.
+    release_mode = False
 
     # --- conditions 1 + 2: parse, kind membership, required fields ---
     for lineno, line in enumerate(raw.splitlines(), start=1):
@@ -6955,8 +7329,15 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
                 f"{', '.join(missing)}"
             )
             continue
+        # Release mode (condition 8) additionally demands `triaged.lane` be a
+        # non-empty string — a plain-mode `lane` (an integer queue-lane
+        # index) is deliberately left unvalidated, per _DRAIN_IDENTITY_FIELDS
+        # staying unchanged.
+        identity_fields = _DRAIN_IDENTITY_FIELDS.get(kind, ())
+        if release_mode and kind == "triaged":
+            identity_fields = identity_fields + ("lane",)
         bad_ids = [
-            f for f in _DRAIN_IDENTITY_FIELDS.get(kind, ())
+            f for f in identity_fields
             if not (isinstance(rec[f], str) and rec[f].strip())
         ]
         if bad_ids:
@@ -6967,6 +7348,7 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
             )
             continue
         if kind == "run_start":
+            release_mode = rec.get("mode") == "release"
             counts = rec.get("counts")
             if not isinstance(counts, dict):
                 failures.append(f"line {lineno}: run_start `counts` is not an object")
@@ -6976,6 +7358,11 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
                 failures.append(
                     f"line {lineno}: run_start `counts` missing "
                     f"{', '.join(missing_counts)}"
+                )
+                continue
+            if release_mode and not rec.get("version"):
+                failures.append(
+                    f"line {lineno}: release-mode run_start missing `version` (ADR-0090 D2)"
                 )
                 continue
         records.append(rec)
@@ -6991,6 +7378,10 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
     # revisit on a real ledger that double-starts one item).
     open_items: set = set()
     max_concurrent = 0
+    # Release mode only (condition 8): items grouped by their triaged-
+    # recorded lane, so concurrency counts distinct LANES rather than items.
+    item_to_lane: dict = {}
+    max_concurrent_lanes = 0
     fix_queued: dict = {}      # item -> True when a captured_ref was recorded
     fixed_items: set = set()
     reported_unresolved: set = set()   # report each escaping fix once, not per terminal
@@ -7016,6 +7407,7 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
 
         elif kind == "triaged":
             triaged_items.add(item)
+            item_to_lane[item] = rec.get("lane")
 
         elif kind == "item_start":
             if item not in triaged_items:
@@ -7024,7 +7416,13 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
                     "triaged record"
                 )
             open_items.add(item)
-            max_concurrent = max(max_concurrent, len(open_items))
+            if release_mode:
+                open_lanes = {
+                    item_to_lane[i] for i in open_items if item_to_lane.get(i)
+                }
+                max_concurrent_lanes = max(max_concurrent_lanes, len(open_lanes))
+            else:
+                max_concurrent = max(max_concurrent, len(open_items))
 
         elif kind == "item_done":
             open_items.discard(item)
@@ -7077,10 +7475,18 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
                 )
             terminal_seen = True
 
-    if max_concurrent > _DRAIN_CONCURRENCY_CAP:
+    if release_mode:
+        effective_peak, effective_cap, cap_unit, cap_adr = (
+            max_concurrent_lanes, _DRAIN_RELEASE_CONCURRENCY_CAP, "lanes", "ADR-0090 D3",
+        )
+    else:
+        effective_peak, effective_cap, cap_unit, cap_adr = (
+            max_concurrent, _DRAIN_CONCURRENCY_CAP, "items", "ADR-0085 D3",
+        )
+    if effective_peak > effective_cap:
         failures.append(
-            f"{max_concurrent} distinct items concurrently in flight; the "
-            f"cap is {_DRAIN_CONCURRENCY_CAP} (ADR-0085 D3)"
+            f"{effective_peak} distinct {cap_unit} concurrently in flight; "
+            f"the cap is {effective_cap} ({cap_adr})"
         )
 
     if failures:
@@ -7095,7 +7501,7 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
         "detail": (
             f"{newest.name}: {len(records)} records valid, "
             f"{len(triaged_items)} triaged, peak concurrency "
-            f"{max_concurrent}/{_DRAIN_CONCURRENCY_CAP}{terminal_note}"
+            f"{effective_peak}/{effective_cap} {cap_unit}{terminal_note}"
         ),
     }
 
@@ -7134,7 +7540,6 @@ CHECK_REGISTRY: dict[str, callable] = {
     "LOG-ROTATION":      check_log_rotation,
     "STALE-BRANCHES":    check_stale_branches,
     "REQUIRED-LABELS":   check_required_labels,
-    "DEAD-ROUTES":       check_dead_routes,
     "SESSION-INJECTION": check_session_injection,
     # model-frontmatter invariant check (ADR-0027 D1; fleet-economics removed per ADR-0071 D2)
     "FRONTMATTER-COVERAGE": check_frontmatter_coverage,
@@ -7145,6 +7550,9 @@ CHECK_REGISTRY: dict[str, callable] = {
     "CAPTURE-SHAPE":   check_capture_shape,
     "GREEN-MAIN":      check_green_main,
     "RECORD-VS-GH":    check_record_vs_gh,
+    # REST-attested canary gating every confirmed --label answer through
+    # the seam (ADR-0087 D2 — slice #1498)
+    "QUERY-HONESTY":   check_query_honesty,
     # ADR-0076 reconciler family (PRD #1127 §2 criterion 11b / slice #1136)
     "SLICE-VS-PR":            check_slice_vs_pr,
     "MERGED-WITHOUT-VERDICT": check_merged_without_verdict,
@@ -7159,8 +7567,6 @@ CHECK_REGISTRY: dict[str, callable] = {
     "PROOF-INTEGRITY": check_proof_integrity,
     # Guardrail-machinery promotion meta-tripwire (ADR-0070 D4 — slice #840)
     "META-TRIPWIRE": check_meta_tripwire,
-    # Server-staleness check (ADR-0071 D5 — slice #907)
-    "STALE-SERVER": check_stale_server,
     # Audit-subagents aggregate check (PRD #919 slice #921 — replaces /audit-subagents skill)
     "AS-AUDIT": check_audit_subagents,
     # Queue-drain run-ledger integrity (ADR-0085 D6 — PRD #1326 slice #1329)
@@ -7296,7 +7702,7 @@ CHECK_REGISTRY["PARITY"] = check_parity
 
 
 def _build_health_data() -> dict:
-    """Build the full /api/health payload synchronously.
+    """Build the full aggregate health-check payload synchronously.
 
     Called from the background thread; never from an HTTP handler.
 
@@ -7360,7 +7766,6 @@ def _build_health_data() -> dict:
         check_log_rotation(),
         check_stale_branches(),
         check_required_labels(),
-        check_dead_routes(),
         check_session_injection(),
         check_deploy_handshake(),
     ])

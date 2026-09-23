@@ -89,7 +89,7 @@ cat > /tmp/qa-headless-$$.py << 'PYEOF'
 from playwright.sync_api import sync_playwright
 import sys, os
 
-URL = "http://localhost:8765"  # or declared URL
+URL = "<declared URL from the Production check line>"
 PROOF_DIR = "qa-proof/<prd-num>"
 os.makedirs(PROOF_DIR, exist_ok=True)
 
@@ -297,7 +297,7 @@ If prompt contains both `production-verify mode` AND `ui-mode`/`bash-mode` token
 
 | Changed-path glob | Proof class | Required proof |
 |---|---|---|
-| `dashboard/**` | **browser** | screenshot (.png/.jpg) + inner_text: excerpt |
+| `dashboard/**` | **command-run** | command output excerpt + exit codes |
 | `.claude/hooks/**`, `.claude/settings.json` | **hook-fire** | happy-path proof (a pasted verbatim `ok` beacon line + exit code) AND induced-failure proof (a pasted verbatim `ERROR` beacon line shown firing) |
 | `tools/**`, `.claude/skills/**` | **command-run** | command output excerpt + exit codes |
 | `decisions/**`, `docs/**`, `README.md` | **static** | grep count= |
@@ -308,7 +308,7 @@ If prompt contains both `production-verify mode` AND `ui-mode`/`bash-mode` token
 - PRs touching `.claude/hooks/**` or `.claude/settings.json`: require a **happy-path proof AND an induced-failure proof** — the ERROR beacon's verbatim line must be shown firing, not merely described (ADR-0083 D4(a)). A happy-path-only proof is insufficient for hook-fire changes.
 - PRs touching `.github/workflows/**` or `tools/ci-checks.sh`: require a **deliberately-failing canary** shown to fail before the final green run is evidence. A green-only run is not admissible.
 
-**Multi-glob union (ADR-0061 D1):** when a PR touches multiple glob categories, the required proof class is the **union** of all matching classes (not just the highest-priority). Document each matched glob and its required proof in REASON. Example: a PR touching both `dashboard/**` and `.claude/skills/**` requires both a browser screenshot+inner_text AND a command-run output+exit proof.
+**Multi-glob union (ADR-0061 D1):** when a PR touches multiple glob categories, the required proof class is the **union** of all matching classes (not just the highest-priority). Document each matched glob and its required proof in REASON. Example: a PR touching both `.claude/hooks/**` and `tools/**` requires both a hook-fire happy-path+induced-failure proof AND a command-run output+exit proof.
 
 **Tiebreak for single-route selection (legacy):** when the union is functionally identical to one route (all matched globs resolve to the same proof class), document as that route. Priority order for readability (highest → lowest): `browser > hook-fire > command-run > static`. This priority is descriptive only; the TABLE above is the authority.
 
@@ -331,29 +331,26 @@ Used when `list_connected_browsers` returns ≥1 connected browser.
 
 **Step L0 — Start recording.** Call `gif_creator start_recording` before any navigation. This ensures the full click-through is captured.
 
-**Step L1 — /api/meta handshake** (same as headless preamble, adapted for live):
-Check the dashboard is serving merged code via `Bash`: `curl -s http://localhost:8765/api/meta | python3 -m json.tool`. Assert `sha == merged HEAD sha`. If stale, restart the server or return BLOCKED (same as headless preamble logic).
+**Step L1 — Navigate.** Call `navigate` to the feature URL (from the "Production check:" line). Call `tabs_context_mcp` to confirm the tab is active.
 
-**Step L2 — Navigate.** Call `navigate` to the feature URL (from the "Production check:" line). Call `tabs_context_mcp` to confirm the tab is active.
+**Step L2 — Click through the declared surface.** Execute the steps declared in the "Production check:" line using `navigate`, `find`, `read_page`, and `computer` as needed. Scope interactions exactly to what the line declares — no exploratory clicks (ADR-0040 D5 fidelity). Use `read_page` / `find` for DOM-level assertions (equivalent role to `page.inner_text()` in headless mode — primary evidence).
 
-**Step L3 — Click through the declared surface.** Execute the steps declared in the "Production check:" line using `navigate`, `find`, `read_page`, and `computer` as needed. Scope interactions exactly to what the line declares — no exploratory clicks (ADR-0040 D5 fidelity). Use `read_page` / `find` for DOM-level assertions (equivalent role to `page.inner_text()` in headless mode — primary evidence).
-
-**Step L4 — Assert the three required conditions:**
+**Step L3 — Assert the three required conditions:**
 - **(A) Renders** — the target element/view is visible. Assert via `find` or `read_page` content. `read_page` text is PRIMARY evidence.
 - **(B) Console check — genuine-error count (ADR-0074 D2):** call `read_console_messages(onlyErrors: true)` scoped to the exercised surface. Count GENUINE errors only — apply the noise filter before scoring:
-  - **Noise filter (exclude):** favicon 404 errors (URL ends in `/favicon.ico` and status is 404); errors from third-party origins not in the feature surface (e.g., analytics, CDN, ad-tech hosts whose origin is NOT the dashboard's `localhost:8765` or the declared feature URL).
+  - **Noise filter (exclude):** favicon 404 errors (URL ends in `/favicon.ico` and status is 404); errors from third-party origins not in the feature surface (e.g., analytics, CDN, ad-tech hosts whose origin is NOT the declared feature URL).
   - **Honesty guard:** when an error's origin is AMBIGUOUS (cannot confirm it is clearly third-party/noise), treat it as ACTIONABLE — count it, never silently discard it. Under-counting a real error is worse than over-counting a noise error.
   - **Verdict rule:** `genuine_count = total_errors − noise_excluded`. Report `genuine_count` in PROOF and in `ASSERTIONS_CHECKED` as `console_errors=<genuine_count>`. If `genuine_count == 0` → assertion (B) = PASS. If `genuine_count ≥ 1` → assertion (B) = FAIL and `PRODUCTION_VERIFY` is NOT PASS. If the surface is too ambiguous to classify any error → assertion (B) = PROVISIONAL (ADR-0040 D1).
   - **Always report:** even on PASS, emit the raw count + noise-excluded count in PROOF so the caller can audit the filter.
 - **(C) Declared behavior** — the specific outcome from the "Production check:" line, asserted via `read_page` / `find` as PRIMARY evidence.
 
-**Step L5 — Export GIF.** Call `gif_creator export download:true`. Capture the returned artifact path. This path is the `ARTIFACTS` trailer field (the rule-#20 browser proof artifact for the live path — a video, not a screenshot). Path MUST be ROOT-absolute (ADR-0061 D5); if `gif_creator export` returns a browser-download-relative path, prepend the root.
+**Step L4 — Export GIF.** Call `gif_creator export download:true`. Capture the returned artifact path. This path is the `ARTIFACTS` trailer field (the rule-#20 browser proof artifact for the live path — a video, not a screenshot). Path MUST be ROOT-absolute (ADR-0061 D5); if `gif_creator export` returns a browser-download-relative path, prepend the root.
 
-**Step L6 — Determine PASS/FAIL.** PASS when (A) + (B) + (C) all pass AND zero console errors on the exercised surface. FAIL on any assertion failure or ≥1 console error. PROVISIONAL when (A) or (C) cannot be assessed deterministically via `read_page`/`find` content.
+**Step L5 — Determine PASS/FAIL.** PASS when (A) + (B) + (C) all pass AND zero console errors on the exercised surface. FAIL on any assertion failure or ≥1 console error. PROVISIONAL when (A) or (C) cannot be assessed deterministically via `read_page`/`find` content.
 
-**Step L7 — Clean up.** No tmp files written in live path; nothing to clean.
+**Step L6 — Clean up.** No tmp files written in live path; nothing to clean.
 
-**Data-provenance assertions (ADR-0054 D5 — same as headless path):** apply assertions (D) non-fixture, (E) freshness, (F) environment freshness from §Browser route data-provenance assertions below. Live path does NOT skip these.
+**Data-provenance assertions (ADR-0054 D5 — same as headless path):** apply assertions (D) non-fixture and (E) freshness from §Browser route data-provenance assertions below. Live path does NOT skip these.
 
 #### Headless fallback path (per ADR-0050 D1/D2)
 
@@ -361,20 +358,7 @@ Used when `list_connected_browsers` returns empty or errors. This is the unchang
 
 **Driver:** Headless Playwright/Chrome via Bash-executed Python scripts (ADR-0050 D1/D2). Claude_Preview MCP tools are NOT used.
 
-**Preamble — /api/meta handshake (per ADR-0058 D4 sandbox teardown + PRD #763 slice 1):**
-
-Before writing or executing any Playwright script, perform the server-identity handshake:
-
-1. `curl -s http://localhost:8765/api/meta | python3 -m json.tool` — capture `sha` and `stale`.
-2. Obtain the merged HEAD sha: `git -C <repo_root> rev-parse HEAD`.
-3. Assert `sha == merged HEAD sha`. If they differ (server is stale — serving pre-merge code):
-   - **Option A (restart):** kill the server (`pkill -f "python.*server.py"` or equivalent), restart (`python dashboard/server.py &`, wait for it to serve), then re-check `/api/meta`. If `stale` is now false and `sha` matches, proceed.
-   - **Option B (refuse):** if restart is not safe in context (e.g. another process owns the port), return `RESULT: BLOCKED`, `REASON: dashboard server is stale (sha mismatch) — restart required before browser-route verification`.
-4. Assert the page does NOT contain the `SERVER STALE` banner text after navigating: `page.get_by_text("SERVER STALE").count() == 0`. A visible stale banner means verification evidence is derived from old code and MUST NOT be reported as PASS.
-
-This handshake is **required** — skipping it risks a false PASS against a server running pre-merge code (the #685 / 2026-06-11 incident class, ADR-0058 D4).
-
-**Step 1 — Write and execute the Playwright script.** Write a Python script to `/tmp/qa-pv-$$.py` via Bash heredoc. The script uses `sync_playwright()` → `chromium.launch(channel="chrome", headless=True)`. Per ADR-0033 D1, assume the dashboard has been started (port 8765 is serving). If the server is not running, start it: `python dashboard/server.py &` and verify it serves before running the script.
+**Step 1 — Write and execute the Playwright script.** Write a Python script to `/tmp/qa-pv-$$.py` via Bash heredoc. The script uses `sync_playwright()` → `chromium.launch(channel="chrome", headless=True)` and navigates to the URL the "Production check:" line declares.
 
 **Step 2 — Perform the declared interaction.** The Python script parses the "Production check:" line and executes the steps it declares using `page.click()`, `page.fill()`, and `page.goto()`. Scope the interaction exactly to what the line declares — no exploratory clicks.
 
@@ -515,10 +499,9 @@ If the probe returns PROVISIONAL → the hook-fire route verdict is PROVISIONAL 
 **Additional assertions for the browser route (append to Step 3):**
 
 - **(D) Data provenance — non-fixture:** Assert that rendered data is NOT fixture-patterned. Check that data visible in the rendered view has a real session/PRD/PR id or timestamp — not a test string like `"fixture"`, `"test-data"`, or `"synthetic"`. Assert via `page.inner_text()` on the data container: if the returned text contains a fixture-pattern substring → PROVISIONAL (human must verify data source).
-- **(E) Data freshness:** Assert that rendered timestamps are newer than the verification start time (`BEFORE_TS`). If a timestamp field is visible, parse it; if it is older than the start time by more than a session-reasonable window (e.g., >1 hr) → PROVISIONAL (dashboard may be showing stale data).
-- **(F) Environment freshness:** When `server.py` is in the merged diff, assert the dashboard process was restarted from the merged code (not a stale pre-merge process). Check: `ps aux | grep server.py` start time vs merge time; if the process predates the merge → FAIL with `"browser route: dashboard process predates merged code; restart required"`.
+- **(E) Data freshness:** Assert that rendered timestamps are newer than the verification start time (`BEFORE_TS`). If a timestamp field is visible, parse it; if it is older than the start time by more than a session-reasonable window (e.g., >1 hr) → PROVISIONAL (the view may be showing stale data).
 
-Update Step 5 (PASS condition) to: PASS when asserts (A)+(B)+(C)+(D)+(E)+(F) all pass. (D) and (E) that cannot be evaluated deterministically → PROVISIONAL (residual); (F) evaluates as FAIL or PASS only.
+Update Step 5 (PASS condition) to: PASS when asserts (A)+(B)+(C)+(D)+(E) all pass. (D) and (E) that cannot be evaluated deterministically → PROVISIONAL (residual).
 
 ### Regenerate-proofs mandate (ADR-0060 D3)
 
@@ -567,7 +550,7 @@ CONCERNS: <self-disclosed risk entry points (doubts, not success claims), or "no
 - `ts` ordering must be sane (not a future timestamp; not older than the verification window).
 Validation failures invalidate the proof. Per ADR-0061 D2 (bootstrap-mode: binds forward from this qa-tester prompt-update merge).
 
-**`ENV:` field (ADR-0061 D2):** populate with `<sha>@<started_at>` where `sha` is the merged HEAD sha (`git rev-parse HEAD`) and `started_at` is the ISO-8601 timestamp when the verification environment (dashboard server or command context) was started. For browser routes: the orchestrator validates this against `/api/meta` (sha must match, `stale` must be false). For other routes: populate with the sha and the time this verification invocation started. Per ADR-0061 D2.
+**`ENV:` field (ADR-0061 D2):** populate with `<sha>@<started_at>` where `sha` is the merged HEAD sha (`git rev-parse HEAD`) and `started_at` is the ISO-8601 timestamp when the verification environment (browser session or command context) was started. Per ADR-0061 D2.
 
 `ASSERTIONS_CHECKED` is route-specific:
 - **browser (LIVE path):** `renders=<PASS|FAIL|PROVISIONAL>, console_errors=<PASS|FAIL|genuine_count>, declared_behavior=<PASS|FAIL|PROVISIONAL>` — `console_errors` carries either PASS (genuine_count=0) or FAIL (genuine_count≥1) or the raw genuine count; PROVISIONAL appears when the only available proof would be `page.evaluate()` of internal JS state (ADR-0040 D5)
