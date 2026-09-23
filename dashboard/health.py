@@ -68,6 +68,32 @@ except ImportError:
     _GH_CACHE_AVAILABLE = False
 
 
+_LABEL_FLAG_EXACT = ("--label", "-l")
+
+
+def _args_apply_label_filter(args: list) -> bool:
+    """True iff `args` carries any gh flag spelling that applies a label
+    filter (round-2 fix, reviewer R2). `gh issue list --help` / `gh pr
+    list --help` document `-l, --label strings`; `gh` (cobra/pflag)
+    accepts every one of `--label X`, `--label=X`, `-l X`, `-l=X`, and
+    the concatenated shorthand `-lX` — the last two verified live
+    against `gh issue list` (vojtech-stas/template-project, 2026-09-23).
+
+    Case-sensitive by design: `-L` is the unrelated `--limit` shorthand
+    and must NOT match.
+    """
+    for tok in args:
+        if not isinstance(tok, str):
+            continue
+        if tok in _LABEL_FLAG_EXACT:
+            return True
+        if tok.startswith("--label="):
+            return True
+        if tok.startswith("-l") and tok != "-l":
+            return True
+    return False
+
+
 def _health_gh_fetch(
     args: list,
     *,
@@ -77,21 +103,22 @@ def _health_gh_fetch(
 ) -> tuple:
     """The health-registry seam: the ONLY function through which any check
     reaches `gh` (ADR-0087 D1). Delegates to `_health_gh_fetch_raw()` for
-    the actual fetch, but first gates every `--label`-bearing call behind
+    the actual fetch, but first gates every label-filtering call behind
     the QUERY-HONESTY REST-attested canary (ADR-0087 D2, slice #1498):
 
     A desynced repo slug can make a label-filtered `gh` query answer
     `source="live"` while silently returning the wrong (often empty) set —
     no provenance label alone can catch that. So before any call whose
-    `args` contain the literal token ``"--label"`` is allowed to return as
-    confirmed, this wrapper requires `_query_honesty_attest()` to PASS.
-    When it does not, the call returns `(1, "", "unverified")` (or its
-    2-tuple prefix) regardless of what the real `gh` call would have
-    answered — the seven pre-existing label-filtered callers already treat
-    any non-zero `rc` as "gh unavailable", so none of them needed editing.
+    `args` apply a label filter (any spelling `_args_apply_label_filter`
+    recognizes) is allowed to return as confirmed, this wrapper requires
+    `_query_honesty_attest()` to PASS. When it does not, the call returns
+    `(1, "", "unverified")` (or its 2-tuple prefix) regardless of what the
+    real `gh` call would have answered — the seven pre-existing
+    label-filtered callers already treat any non-zero `rc` as "gh
+    unavailable", so none of them needed editing.
 
-    Calls WITHOUT ``"--label"`` in `args` (the majority) pass straight
-    through to `_health_gh_fetch_raw()`, unaffected.
+    Calls that apply no label filter (the majority) pass straight through
+    to `_health_gh_fetch_raw()`, unaffected.
 
     Parameters
     ----------
@@ -100,8 +127,8 @@ def _health_gh_fetch(
     timeout     : hard per-call timeout in seconds passed to gh_cache / subprocess.
     with_source : when True, return a 3-tuple including the provenance source.
     """
-    if "--label" in args:
-        _qh_passed, _qh_verdict, _qh_detail = _query_honesty_attest()
+    if _args_apply_label_filter(args):
+        _qh_passed = _query_honesty_attest()[0]
         if not _qh_passed:
             return (1, "", "unverified") if with_source else (1, "")
     return _health_gh_fetch_raw(args, ttl=ttl, timeout=timeout, with_source=with_source)
@@ -342,7 +369,7 @@ def check_query_honesty() -> dict:
       - WARN: either leg is unconfirmed, the REST count is 0 (agreement on
         an empty set proves nothing), or the label path hit its `--limit`.
     """
-    _passed, verdict, detail = _query_honesty_attest()
+    verdict, detail = _query_honesty_attest()[1:]
     return {"id": "QUERY-HONESTY", "result": verdict, "detail": detail}
 
 
