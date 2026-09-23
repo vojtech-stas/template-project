@@ -72,7 +72,7 @@ def _load_pipeline_config():
 def _resolve_develop_sha(integration):
     """Fallback-only resolution (no explicit sha argument was given). Fetches
     `origin <integration>` (the configured integration branch, ADR-0089 D1,
-    resolved by main() before any side effect) FIRST (#1188 / root-cause
+    resolved by the caller before any side effect) FIRST (#1188 / root-cause
     #1183) so a stale local remote-tracking ref can never be certified —
     best-effort: a fetch failure (e.g. offline) does not abort resolution, it
     just risks the same staleness the fetch is meant to prevent, matching the
