@@ -38,6 +38,8 @@ Exports:
     check_slice_vs_pr() -> dict          (slice #1136/PRD #1127 cr.11b: merged slice PR vs dispatch+pr_opened spans)
     check_merged_without_verdict() -> dict  (slice #1136/PRD #1127 cr.11b: merged PR vs verdict span, ADR-0076 anchor)
     check_closed_prd_vs_qa() -> dict     (slice #1136/PRD #1127 cr.11b: closed PRD vs qa_verified PASS span)
+    check_query_honesty() -> dict   (slice #1498/ADR-0087 D2: REST-attested canary over the `prd`-label path;
+                                      gates every `--label` call through the seam)
     serve_health() -> dict          (TTL-cached; <200ms on second call)
     _health_background() -> None    (background thread target)
     _health_cache, _health_lock, _health_computing, _HEALTH_TTL
@@ -73,7 +75,51 @@ def _health_gh_fetch(
     timeout: float = 5.0,
     with_source: bool = False,
 ) -> tuple:
-    """Route a gh call through gh_cache (degrade-not-block).
+    """The health-registry seam: the ONLY function through which any check
+    reaches `gh` (ADR-0087 D1). Delegates to `_health_gh_fetch_raw()` for
+    the actual fetch, but first gates every `--label`-bearing call behind
+    the QUERY-HONESTY REST-attested canary (ADR-0087 D2, slice #1498):
+
+    A desynced repo slug can make a label-filtered `gh` query answer
+    `source="live"` while silently returning the wrong (often empty) set —
+    no provenance label alone can catch that. So before any call whose
+    `args` contain the literal token ``"--label"`` is allowed to return as
+    confirmed, this wrapper requires `_query_honesty_attest()` to PASS.
+    When it does not, the call returns `(1, "", "unverified")` (or its
+    2-tuple prefix) regardless of what the real `gh` call would have
+    answered — the seven pre-existing label-filtered callers already treat
+    any non-zero `rc` as "gh unavailable", so none of them needed editing.
+
+    Calls WITHOUT ``"--label"`` in `args` (the majority) pass straight
+    through to `_health_gh_fetch_raw()`, unaffected.
+
+    Parameters
+    ----------
+    args        : gh sub-command args (the "gh" binary is prepended by gh_cache).
+    ttl         : cache TTL in seconds (how long a fresh result is reused).
+    timeout     : hard per-call timeout in seconds passed to gh_cache / subprocess.
+    with_source : when True, return a 3-tuple including the provenance source.
+    """
+    if "--label" in args:
+        _qh_passed, _qh_verdict, _qh_detail = _query_honesty_attest()
+        if not _qh_passed:
+            return (1, "", "unverified") if with_source else (1, "")
+    return _health_gh_fetch_raw(args, ttl=ttl, timeout=timeout, with_source=with_source)
+
+
+def _health_gh_fetch_raw(
+    args: list,
+    *,
+    ttl: float = 60.0,
+    timeout: float = 5.0,
+    with_source: bool = False,
+) -> tuple:
+    """Route a gh call through gh_cache (degrade-not-block), with NO
+    QUERY-HONESTY gating — the seam `_health_gh_fetch()` wraps this
+    function and is what every check should call. This function exists
+    separately so the QUERY-HONESTY canary's own label-path query can
+    bypass its own attestation gate (ADR-0087 D2): calling `_health_gh_fetch`
+    for that query would recurse.
 
     Returns (returncode: int, stdout: str) by default, matching the existing
     ``_sp.run`` pattern used inside each check's inner helper. Pass
@@ -126,6 +172,178 @@ def _health_gh_fetch(
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError, Exception):
         rc, out, source = 1, "", "computing"
     return (rc, out, source) if with_source else (rc, out)
+
+
+# ---------------------------------------------------------------------------
+# QUERY-HONESTY — REST-attested canary over the `prd`-label path (ADR-0087
+# D2, slice #1498). This is the attestation `_health_gh_fetch()` (the seam,
+# above) consumes on every `--label`-bearing call.
+# ---------------------------------------------------------------------------
+
+_QUERY_HONESTY_CANARY_LABEL = "prd"
+_QUERY_HONESTY_LABEL_LIMIT = 1000
+# Memoization window for the attestation's own PASS/FAIL/WARN verdict
+# (ADR-0087 D2: "memoized per process for its own queries' cache lifetime").
+# Matches the ttl used for the attestation's two internal gh calls below.
+_QUERY_HONESTY_TTL = 60.0
+
+_query_honesty_lock = threading.Lock()
+_query_honesty_cache: dict = {"ts": 0.0, "result": None}
+
+
+def _sum_paginated_rest_issue_count(payload: str) -> int:
+    """Sum non-pull-request issue counts across a `gh api ... --paginate`
+    payload (ADR-0087 D2: each page is its own JSON document; concatenated
+    documents are summed rather than assumed to already be one merged
+    array, since that merging behavior is a `gh` CLI implementation detail
+    this function does not depend on either way).
+
+    Raises ValueError on an empty/unparsable payload — the caller must
+    treat that as unconfirmed, never as a zero count (ADR-0087 D3's
+    "a confirmed source with an empty or unparsable payload is unconfirmed,
+    never zero", applied here to the REST leg the same way slice #1497
+    applied it to condition (e)'s legs).
+    """
+    import json as _json
+
+    decoder = _json.JSONDecoder()
+    idx, n = 0, len(payload)
+    total = 0
+    saw_any_page = False
+    while idx < n:
+        while idx < n and payload[idx] in " \t\r\n":
+            idx += 1
+        if idx >= n:
+            break
+        doc, end = decoder.raw_decode(payload, idx)
+        if not isinstance(doc, list):
+            raise ValueError("REST canary page is not a JSON array")
+        saw_any_page = True
+        total += sum(
+            1 for item in doc
+            if isinstance(item, dict) and "pull_request" not in item
+        )
+        idx = end
+    if not saw_any_page:
+        raise ValueError("REST canary payload is empty or unparsable")
+    return total
+
+
+def _query_honesty_attest() -> tuple:
+    """Run the QUERY-HONESTY canary attestation (ADR-0087 D2), memoized
+    per-process for `_QUERY_HONESTY_TTL` seconds.
+
+    Compares the `prd`-label path (`gh issue list --label prd --state all`)
+    against a REST canary (`gh api repos/{owner}/{repo}/issues?labels=prd
+    &state=all --paginate`, excluding items carrying `pull_request`). Both
+    paths resolve the repository through gh's own resolution — no slug is
+    written into code.
+
+    Deliberately calls `_health_gh_fetch_raw()`, NOT the seam
+    `_health_gh_fetch()`, for its own two queries: the label-path query is
+    itself `--label`-bearing, and routing it through the seam would recurse
+    into this same function.
+
+    Returns (passed: bool, verdict: "PASS"|"FAIL"|"WARN", detail: str).
+    `passed` is True iff verdict == "PASS" — that is the sole condition
+    under which the seam lets a `--label` call through as confirmed.
+    """
+    now = time.time()
+    with _query_honesty_lock:
+        cached = _query_honesty_cache["result"]
+        if cached is not None and (now - _query_honesty_cache["ts"]) < _QUERY_HONESTY_TTL:
+            return cached
+
+    import json as _json
+
+    label_rc, label_out, label_source = _health_gh_fetch_raw(
+        ["issue", "list", "--label", _QUERY_HONESTY_CANARY_LABEL,
+         "--state", "all", "--limit", str(_QUERY_HONESTY_LABEL_LIMIT),
+         "--json", "number"],
+        ttl=_QUERY_HONESTY_TTL, timeout=5.0, with_source=True,
+    )
+    label_confirmed = (label_rc == 0)
+    label_count = None
+    label_at_limit = False
+    if label_confirmed:
+        try:
+            _label_items = _json.loads(label_out)
+            if not isinstance(_label_items, list):
+                raise ValueError("label-path payload is not a JSON list")
+            label_count = len(_label_items)
+            label_at_limit = label_count >= _QUERY_HONESTY_LABEL_LIMIT
+        except Exception as exc:
+            label_confirmed = False
+            label_source = f"{label_source}: unparsable payload: {exc}"
+
+    rest_rc, rest_out, rest_source = _health_gh_fetch_raw(
+        ["api",
+         "repos/{owner}/{repo}/issues?labels=" + _QUERY_HONESTY_CANARY_LABEL
+         + "&state=all&per_page=100",
+         "--paginate"],
+        ttl=_QUERY_HONESTY_TTL, timeout=15.0, with_source=True,
+    )
+    rest_confirmed = (rest_rc == 0)
+    rest_count = None
+    if rest_confirmed:
+        try:
+            rest_count = _sum_paginated_rest_issue_count(rest_out)
+        except Exception as exc:
+            rest_confirmed = False
+            rest_source = f"{rest_source}: {exc}"
+
+    if label_confirmed and rest_confirmed:
+        if rest_count == 0:
+            verdict = "WARN"
+            detail = "rest canary count is 0 (agreement on an empty set proves nothing)"
+        elif label_at_limit:
+            verdict = "WARN"
+            detail = (
+                f"label path returned its full --limit "
+                f"({_QUERY_HONESTY_LABEL_LIMIT}); comparison is not reliable"
+            )
+        elif label_count == rest_count:
+            verdict = "PASS"
+            detail = f"label={label_count} rest={rest_count}"
+        else:
+            verdict = "FAIL"
+            detail = f"label={label_count} rest={rest_count}"
+    else:
+        _reasons = []
+        if not label_confirmed:
+            _reasons.append(f"label path unconfirmed (source={label_source})")
+        if not rest_confirmed:
+            _reasons.append(f"REST canary unconfirmed (source={rest_source})")
+        verdict = "WARN"
+        detail = "; ".join(_reasons)
+
+    result = (verdict == "PASS", verdict, detail)
+    with _query_honesty_lock:
+        _query_honesty_cache["result"] = result
+        _query_honesty_cache["ts"] = time.time()
+    return result
+
+
+def check_query_honesty() -> dict:
+    """QUERY-HONESTY: attests the `prd`-label query path against a REST
+    canary, and is the sole gate deciding whether any `--label`-bearing
+    call through the seam (`_health_gh_fetch`) may be read as confirmed.
+
+    A repo-slug desync (e.g. after a rename) can leave `gh issue list
+    --label prd` answering an empty, `source=live` list while the repo
+    still has plenty of `prd`-labeled issues — no per-call provenance label
+    can catch that on its own (ADR-0087 D2). This check re-derives the same
+    PASS/FAIL/WARN the seam is gating on (subject to the per-process
+    memoization window in `_query_honesty_attest`):
+      - PASS: both legs confirmed, the REST count is > 0, and the two
+        counts agree.
+      - FAIL: both legs confirmed and the counts disagree (detail carries
+        `label=<n> rest=<n>`).
+      - WARN: either leg is unconfirmed, the REST count is 0 (agreement on
+        an empty set proves nothing), or the label path hit its `--limit`.
+    """
+    _passed, verdict, detail = _query_honesty_attest()
+    return {"id": "QUERY-HONESTY", "result": verdict, "detail": detail}
 
 
 # ---------------------------------------------------------------------------
@@ -7000,6 +7218,9 @@ CHECK_REGISTRY: dict[str, callable] = {
     "CAPTURE-SHAPE":   check_capture_shape,
     "GREEN-MAIN":      check_green_main,
     "RECORD-VS-GH":    check_record_vs_gh,
+    # REST-attested canary gating every --label call through the seam
+    # (ADR-0087 D2 — slice #1498)
+    "QUERY-HONESTY":   check_query_honesty,
     # ADR-0076 reconciler family (PRD #1127 §2 criterion 11b / slice #1136)
     "SLICE-VS-PR":            check_slice_vs_pr,
     "MERGED-WITHOUT-VERDICT": check_merged_without_verdict,
