@@ -121,6 +121,20 @@ def _run_gh(args):
     )
 
 
+def _write_stdout_utf8(text):
+    """Write `text` to stdout as UTF-8 bytes whatever the console or pipe
+    encoding: a cp1252 stdout (Windows) cannot encode e.g. U+2192. A failed
+    write raises OSError/ValueError for the caller to handle."""
+    sys.stdout.flush()
+    buf = getattr(sys.stdout, "buffer", None)
+    if buf is None:
+        sys.stdout.write(text)
+        sys.stdout.flush()
+        return
+    buf.write(text.encode("utf-8", errors="replace"))
+    buf.flush()
+
+
 def _remote_owner_repo():
     """Resolve owner/repo from `git remote get-url origin` (mirrors
     tools/pipe/pr-merge's `_remote_owner_repo()` verbatim — avoids depending
@@ -128,7 +142,7 @@ def _remote_owner_repo():
     try:
         url = subprocess.run(
             ["git", "remote", "get-url", "origin"],
-            capture_output=True, text=True, check=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
         ).stdout.strip()
     except Exception:
         return None
@@ -290,9 +304,13 @@ def _fetch_integration_sha():
     fetch it, and return `(branch, sha)`, or `(branch, None)` on failure."""
     pc = _load_pipeline_config()
     branch = pc.integration_branch()
-    subprocess.run(["git", "fetch", "origin", branch], capture_output=True, text=True)
+    subprocess.run(
+        ["git", "fetch", "origin", branch],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
     res = subprocess.run(
-        ["git", "rev-parse", f"origin/{branch}"], capture_output=True, text=True,
+        ["git", "rev-parse", f"origin/{branch}"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     if res.returncode != 0:
         return branch, None
@@ -350,8 +368,27 @@ def _cmd_dispatch_lane(branch, milestone, model, issue_numbers):
         "model": model,
         "sha": sha,
     }
-    trace.emit_span(trace_id=f"lane-{branch}", kind="dispatch", attrs=attrs)
-    sys.stdout.write(packet_text)
+    # Deliver the packet BEFORE recording the span (PIP-014: side effect,
+    # then span). A packet that cannot be written refuses with no span, so a
+    # recorded dispatch always has a delivered packet; the write is UTF-8
+    # whatever stdout's encoding, so no character in the packet can fail it.
+    try:
+        _write_stdout_utf8(packet_text)
+    except (OSError, ValueError) as exc:
+        print(
+            f"dispatch: refused -- could not deliver the lane packet ({exc}); no span written",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        trace.emit_span(trace_id=f"lane-{branch}", kind="dispatch", attrs=attrs)
+    except OSError as exc:
+        print(
+            f"dispatch: refused -- packet printed but the dispatch span could not be "
+            f"recorded ({exc}); do NOT dispatch the builder",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 

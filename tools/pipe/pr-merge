@@ -149,13 +149,27 @@ def _run_gh(args):
     )
 
 
+def _write_stdout_utf8(text):
+    """Write `text` to stdout as UTF-8 bytes whatever the console or pipe
+    encoding: a cp1252 stdout (Windows) cannot encode e.g. U+2713. A failed
+    write raises OSError/ValueError for the caller to handle."""
+    sys.stdout.flush()
+    buf = getattr(sys.stdout, "buffer", None)
+    if buf is None:
+        sys.stdout.write(text)
+        sys.stdout.flush()
+        return
+    buf.write(text.encode("utf-8", errors="replace"))
+    buf.flush()
+
+
 def _remote_owner_repo():
     """Resolve owner/repo from `git remote get-url origin` — avoids depending
     on gh's own {owner}/{repo} api templating so this stays stubbable."""
     try:
         url = subprocess.run(
             ["git", "remote", "get-url", "origin"],
-            capture_output=True, text=True, check=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
         ).stdout.strip()
     except Exception:
         return None
@@ -438,11 +452,14 @@ def _fetch_lane_commits(head_ref):
     the caller -- never a silent pass)."""
     pc = _load_pipeline_config()
     base = pc.integration_branch()
-    subprocess.run(["git", "fetch", "origin", head_ref], capture_output=True, text=True)
-    subprocess.run(["git", "fetch", "origin", base], capture_output=True, text=True)
+    for ref in (head_ref, base):
+        subprocess.run(
+            ["git", "fetch", "origin", ref],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
     res = subprocess.run(
         ["git", "log", f"origin/{base}..origin/{head_ref}", "--no-merges", "--pretty=%H %at"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     if res.returncode != 0:
         return None
@@ -584,7 +601,14 @@ def _do_default(pr, deadline, start):
         # at least once regardless of remaining budget. The deadline only
         # bounds the (potentially slow) BEHIND-class retry cycle below.
         res = _run_gh(["pr", "merge", pr, "--squash", "--auto"])
-        sys.stdout.write(res.stdout)
+        # Echo gh's output as UTF-8 bytes: now that `_run_gh` decodes UTF-8,
+        # a character a cp1252 stdout cannot encode (e.g. U+2713) would
+        # otherwise raise after a server-side merge and skip the recording
+        # below. The echo is informational, so a failed write never aborts.
+        try:
+            _write_stdout_utf8(res.stdout or "")
+        except (OSError, ValueError) as exc:
+            print(f"pr-merge: could not echo gh output ({exc})", file=sys.stderr)
         sys.stderr.write(res.stderr)
         last_returncode = res.returncode
         if res.returncode == 0:

@@ -76,11 +76,14 @@ issue, naming it.
 lane-bound bugs into disjoint file-path groups; a bug with no cited path runs
 exclusively. This slice ships the bounded `N`-lane form only.
 
-**`packet <sha> <n>…`** (invoked internally by `tools/pipe/dispatch --lane`)
-— builds a lane's dispatch brief: the sha, then per bug its `path:line` refs,
-a ±20-line excerpt at that sha, and its `Check:` line or `CHECK: MISSING`.
-Reads only issue bodies and comments whose `author_association` is `OWNER`,
-`MEMBER` or `COLLABORATOR`.
+**`packet --sha <sha> <n>…`** (its builder is invoked internally by
+`tools/pipe/dispatch --lane`) — builds a lane's dispatch brief: the sha, then
+per bug its `path:line` refs, a ±20-line excerpt at that sha, and its `Check:`
+line or `CHECK: MISSING`. Reads only issue bodies and comments whose
+`author_association` is `OWNER`, `MEMBER` or `COLLABORATOR`. Every gh, git and
+check subprocess decodes as UTF-8, and the packet is written to stdout as UTF-8
+bytes, whatever the host locale; `dispatch --lane` delivers the packet before
+it records its `dispatch` span, so a failed write leaves no span.
 
 **`verify <n>…`** — runs each bug's resolved `Check:` command (the issue's
 own line, or its closing lane PR's `Check #<n>:` line) and prints

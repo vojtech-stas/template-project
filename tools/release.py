@@ -65,13 +65,28 @@ def _run_gh(args):
     )
 
 
+def _write_stdout_utf8(text):
+    """Write `text` to stdout as UTF-8 bytes whatever the console or pipe
+    encoding: a cp1252 stdout (Windows) cannot encode e.g. U+2192, and a
+    packet carries whatever its issues and excerpts carry. A failed write
+    raises OSError/ValueError for the caller to handle."""
+    sys.stdout.flush()
+    buf = getattr(sys.stdout, "buffer", None)
+    if buf is None:
+        sys.stdout.write(text)
+        sys.stdout.flush()
+        return
+    buf.write(text.encode("utf-8", errors="replace"))
+    buf.flush()
+
+
 def _remote_owner_repo():
     """Resolve owner/repo from `git remote get-url origin` (mirrors the
     pattern already used by tools/pipe/dispatch and tools/pipe/pr-merge)."""
     try:
         url = subprocess.run(
             ["git", "remote", "get-url", "origin"],
-            capture_output=True, text=True, check=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=True,
         ).stdout.strip()
     except Exception:
         return None
@@ -500,10 +515,12 @@ def _cmd_lanes(args):
 def _read_blob_excerpt(sha, path, line, window=20, repo_root=None):
     """`git show <sha>:<path>`, then the ±window-line excerpt around `line`
     (1-based). Reads the exact git blob at `sha` — never the working tree —
-    so the excerpt reflects that sha even if the tree has since moved on."""
+    so the excerpt reflects that sha even if the tree has since moved on.
+    Decoded as UTF-8, never the host locale, so the excerpt is the text at
+    that sha (criterion 21) and the Edit tool's before-text match holds."""
     res = subprocess.run(
         ["git", "show", f"{sha}:{path}"],
-        capture_output=True, text=True, cwd=repo_root,
+        capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=repo_root,
     )
     if res.returncode != 0:
         return None
@@ -545,7 +562,7 @@ def _cmd_packet(args):
         print("release.py packet: refused — could not resolve owner/repo from origin", file=sys.stderr)
         return 1
     owner, repo = owner_repo
-    sys.stdout.write(build_packet(owner, repo, args.issues, args.sha))
+    _write_stdout_utf8(build_packet(owner, repo, args.issues, args.sha))
     return 0
 
 
@@ -556,11 +573,11 @@ def _cmd_packet(args):
 def _find_lane_pr_for_issue(owner, repo, num):
     """The merged lane PR whose body contains `Closes #<num>`, found by
     full-text search — never the (deferred, criterion 27) closing comment,
-    which keeps the SPIDR fallback available (constraint 6)."""
-    res = subprocess.run(
-        [_gh(), "search", "prs", f"repo:{owner}/{repo}", "is:merged",
+    which keeps the SPIDR fallback available (constraint 6). Goes through
+    `_run_gh`, so the PR bodies decode as UTF-8 like every other gh read."""
+    res = _run_gh(
+        ["search", "prs", f"repo:{owner}/{repo}", "is:merged",
          f"Closes #{num} in:body", "--json", "number,body", "--limit", "20"],
-        capture_output=True, text=True,
     )
     if res.returncode != 0:
         return None
@@ -606,7 +623,9 @@ def _cmd_verify(args):
             print(f"MISSING #{num}")
             all_pass = False
             continue
-        res = subprocess.run(check, shell=True, capture_output=True, text=True)
+        res = subprocess.run(
+            check, shell=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
         if res.returncode == 0:
             print(f"PASS #{num}")
         else:
