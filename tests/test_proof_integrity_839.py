@@ -147,7 +147,7 @@ def _make_browser_pr(
         "number": number,
         "headRefName": f"feat/{number}-some-feature",
         "labels": [],
-        "files": [{"path": "dashboard/health.py"}],
+        "files": [{"path": "site/preview.html"}],
         "body": body,
         "comments": [],
     }
@@ -253,7 +253,7 @@ class TestProofIntegrityPassesOnDomAttestedProof(unittest.TestCase):
             "number": 920,
             "headRefName": "feat/920-dashboard-feature",
             "labels": [],
-            "files": [{"path": "dashboard/server.py"}],
+            "files": [{"path": "site/preview.html"}],
             "body": (
                 "## Verification\n"
                 "screenshot: /qa-proof/920/health.png\n"

@@ -283,13 +283,13 @@ Catches both drift modes: (a) someone hand-edited `README.md` directly; (b) a so
 git fetch origin main 2>/dev/null || echo "could not fetch origin — base may be stale"
 
 # Regenerate README from template + filesystem
-python dashboard/server.py --generate-readme
+python dashboard/readme_gen.py
 
 # If diff is non-empty, block
 git diff --exit-code README.md
 ```
 
-If `git diff --exit-code README.md` exits non-zero → BLOCK with: "R-DOCS-CURRENT: committed `README.md` differs from generator output; re-run `python dashboard/server.py --generate-readme` and re-stage `README.md` before pushing."
+If `git diff --exit-code README.md` exits non-zero → BLOCK with: "R-DOCS-CURRENT: committed `README.md` differs from generator output; re-run `python dashboard/readme_gen.py` and re-stage `README.md` before pushing."
 
 After checking (whether PASS or FAIL), restore the working tree state with `git checkout README.md` so the reviewer does not leave a dirty worktree. For safety, prefer running this check in a temp worktree or after a `git stash` if the PR branch has uncommitted changes — but for standard reviewer use (post-push, clean working tree) the plain diff + restore is sufficient.
 

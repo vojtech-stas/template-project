@@ -40,24 +40,31 @@ fi
 # CHECK 2: README regen-clean
 # ---------------------------------------------------------------------------
 echo "--- CHECK 2: README regen-clean ---"
-if command -v python3 > /dev/null 2>&1 && [ -f "dashboard/server.py" ]; then
+if ! command -v python3 > /dev/null 2>&1; then
+    # python3 itself missing is the one soft-degrade every check shares
+    # (ADR-0088 D3 — unchanged).
+    echo "SKIP: CHECK 2 — python3 not available (soft-degrade)"
+elif [ ! -f "dashboard/readme_gen.py" ]; then
+    # ADR-0088 D3: the missing-generator branch fails CLOSED, not SKIP — a
+    # moved/deleted generator must never turn the README gate into a silent
+    # green SKIP.
+    fail "CHECK 2 — dashboard/readme_gen.py not found; README currency cannot be verified"
+else
     # Stash the current README into a temp file so we can restore it without
     # clobbering pre-existing uncommitted edits (issue #727: git checkout --
     # README.md is destructive; cp/mv is safe).
     _readme_tmp=$(mktemp)
     cp README.md "$_readme_tmp"
-    python3 dashboard/server.py --generate-readme > /dev/null 2>&1
+    python3 dashboard/readme_gen.py > /dev/null 2>&1
     if git diff --exit-code README.md > /dev/null 2>&1; then
         pass "README.md is up-to-date with regen output"
     else
-        fail "README.md is stale — run 'python3 dashboard/server.py --generate-readme' and commit"
+        fail "README.md is stale — run 'python3 dashboard/readme_gen.py' and commit"
     fi
     # Always restore to pre-check state (avoids polluting diff for other checks
     # and preserves any pre-existing uncommitted edits).
     cp "$_readme_tmp" README.md
     rm -f "$_readme_tmp"
-else
-    echo "SKIP: CHECK 2 — python3 or dashboard/server.py not available (soft-degrade)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -304,7 +311,7 @@ import re, os, sys, glob
 
 REPO_ROOT = os.getcwd()
 AGENTS_DIR = os.path.join(REPO_ROOT, '.claude', 'agents')
-SERVER_PY  = os.path.join(REPO_ROOT, 'dashboard', 'server.py')
+CONSTANTS_PY = os.path.join(REPO_ROOT, 'dashboard', '_constants.py')
 CLAUDE_MD  = os.path.join(REPO_ROOT, 'CLAUDE.md')
 README_MD  = os.path.join(REPO_ROOT, 'README.md')
 
@@ -322,17 +329,18 @@ def read_file(path):
         return ''
 
 # ------------------------------------------------ (a) source ↔ reality ------
-# Parse KNOWN_CRITICS from dashboard/server.py (set literal, one name per line).
-spec_text = read_file(SERVER_PY)
+# Parse KNOWN_CRITICS from dashboard/_constants.py (set literal, one name per
+# line) — the single-sourced home since ADR-0088 D4 retired dashboard/server.py.
+spec_text = read_file(CONSTANTS_PY)
 if not spec_text:
-    fail('CHECK 7(a) — could not read dashboard/server.py')
+    fail('CHECK 7(a) — could not read dashboard/_constants.py')
 else:
     # Extract the KNOWN_CRITICS set: lines like: "    \"reviewer\","
     kc_block = re.search(
         r'KNOWN_CRITICS\s*=\s*\{([^}]+)\}', spec_text, re.DOTALL
     )
     if not kc_block:
-        fail('CHECK 7(a) — KNOWN_CRITICS not found in dashboard/server.py')
+        fail('CHECK 7(a) — KNOWN_CRITICS not found in dashboard/_constants.py')
     else:
         spec_critics = set(re.findall(r'"([^"]+)"', kc_block.group(1)))
         # Discover agent file stems from .claude/agents/*.md
@@ -357,6 +365,29 @@ else:
                     f'CHECK 7(a) — .claude/agents/{stem}.md exists but '
                     f'"{stem}" is not in KNOWN_CRITICS spec'
                 )
+
+# ------------------------------------------- (a2) single-definition assertion
+# ADR-0088 D4: KNOWN_CRITICS must be defined exactly once across dashboard/
+# and tools/ — dashboard/_constants.py is the sole canonical home. A second
+# definition anywhere under those two trees is a FAIL naming that file.
+_kc_def_re = re.compile(r'^\s*_?KNOWN_CRITICS\s*=', re.MULTILINE)
+_kc_def_files = []
+for _tree in ('dashboard', 'tools'):
+    _tree_dir = os.path.join(REPO_ROOT, _tree)
+    if not os.path.isdir(_tree_dir):
+        continue
+    for _f in glob.glob(os.path.join(_tree_dir, '**', '*.py'), recursive=True):
+        _text = read_file(_f)
+        if _kc_def_re.search(_text):
+            _kc_def_files.append(os.path.relpath(_f, REPO_ROOT).replace(os.sep, '/'))
+if len(_kc_def_files) > 1:
+    fail(
+        'CHECK 7(a) — multiple KNOWN_CRITICS definitions found: '
+        + ', '.join(sorted(_kc_def_files))
+        + ' (expected exactly one, in dashboard/_constants.py)'
+    )
+elif len(_kc_def_files) == 0:
+    fail('CHECK 7(a) — no KNOWN_CRITICS definition found under dashboard/ or tools/')
 
 # ------------------------------------------------ (b) artifact ↔ source -----
 # README "Adversarial critics" section lists critics — each must have an agent file.

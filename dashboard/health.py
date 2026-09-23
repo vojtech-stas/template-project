@@ -220,15 +220,10 @@ def _v3_trace_log_exists() -> bool:
     return bool(path) and os.path.exists(path)
 
 
-# Known critics — mirrors server.py KNOWN_CRITICS (CHECK 7 regexes server.py SOURCE).
-_KNOWN_CRITICS = {
-    "reviewer",
-    "prd-critic",
-    "adr-critic",
-    "slicer-critic",
-    "backlog-critic",
-    "codebase-critic",
-}
+# Known critics — single-sourced from _constants.py (CHECK 7 regexes that
+# file's literal; ADR-0088 D4). Aliased to the pre-existing local name so
+# every downstream reference in this module is unchanged.
+from _constants import KNOWN_CRITICS as _KNOWN_CRITICS  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # /api/health TTL cache — health checks can take 1-2 s on cold start.
@@ -2813,7 +2808,10 @@ def check_critic_health() -> dict:
 # Used by check_proof_presence to classify PRs by their changed paths.
 _ROUTE_TABLE = [
     # (glob_pattern, proof_class)
-    ("dashboard/**", "browser"),
+    # dashboard/** routes command-run, not browser (ADR-0088 D5): after the
+    # served dashboard's retirement, every surviving file under dashboard/
+    # is a command-line library. *.html stays browser for host UIs.
+    ("dashboard/**", "command-run"),
     ("*.html", "browser"),
     (".claude/hooks/**", "hook-fire"),
     (".claude/settings.json", "hook-fire"),

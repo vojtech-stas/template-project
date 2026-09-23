@@ -119,8 +119,8 @@ _Note: Each skill and subagent embodies its own practice in its own body file (f
 | Operator decision log | `docs/decision-log/` | dated per-problem records of operator decisions, append-only |
 | In-flight work | GitHub Issues + branches | `gh issue list` ; `git branch` |
 | Backlog / captured | `gh issue list --label backlog` / `--label captured` | project board #2; `backlog-critic` filters `captured` → `backlog` |
-| Workflow dashboard | `dashboard/` | local visualizer; the Run-board is the ONLY tab, served strictly from recorded v3 spans, plus a thin health strip. [ADR-0078](decisions/0078-run-board-landing-view.md) D1 as amended by [ADR-0080](decisions/0080-frontend-reduced-run-board-batch-plan-retired.md) D1 |
-| README | `README.template.md` → `dashboard/server.py --generate-readme` | `README.md` is a build artifact — never hand-edit, always regenerate (DOC-001, ADR-0034 D4/D7) |
+| Observability | `docs/observability.md` | index of the append-only logs under `.claude/logs/`, read on demand by an LLM session — the served dashboard's replacement. [ADR-0088](decisions/0088-dashboard-frontend-retired.md) D2 |
+| README | `README.template.md` → `dashboard/readme_gen.py` | `README.md` is a build artifact — never hand-edit, always regenerate (DOC-001, ADR-0034 D4/D7, entrypoint relocated by ADR-0088 D3) |
 | Regression tests | `tests/`, `tests/quarantine.txt` | pytest, wired into CI; flaky tests quarantined within 24 h with a 30-day SLA. [ADR-0067](decisions/0067-regression-memory.md) |
 | Fresh-clone setup | `bootstrap.sh` | per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6 |
 
