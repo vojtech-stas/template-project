@@ -130,6 +130,8 @@ def _build_repo_map() -> str:
     _TOOLS = [
         ("gen_rules.py",   "tools/gen_rules.py",   "Generate global+area rules from ADR frontmatter"),
         ("gen_repo_map.py","tools/gen_repo_map.py", "Generate this repo-map file from filesystem"),
+        ("pipeline_config.py","tools/pipeline_config.py",
+         "Resolve the configured integration/release branch roles (ADR-0089 D1)"),
         ("ci-checks.sh",   "tools/ci-checks.sh",    "Deterministic CI gate (all project checks)"),
         ("worktree-guard.sh","tools/worktree-guard.sh","Worktree isolation guard; ff-restore + prune"),
         ("promote.sh",     "tools/promote.sh",      "Promote develop→main via RELEASE-READY gate"),

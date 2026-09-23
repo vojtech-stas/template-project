@@ -16,23 +16,32 @@ repository state (deletes worktrees, local branches, and remote branches). Invok
 the `/ship` orchestrator after each isolated `implementer` or `reviewer` dispatch
 (per ADR-0058 D3 + [ADR-0041](../decisions/0041-origin-main-source-of-truth.md) D1/D3).
 
+Both branch roles (integration, release) are resolved per-invocation via
+[`tools/pipeline_config.py`](pipeline_config.py) (per
+[ADR-0089](../decisions/0089-per-repo-pipeline-identity.md) D1) — never
+hardcoded. This repo's configured values are `develop`/`main`; the
+descriptions below use "the integration branch" / "the release branch" for
+the resolved role, not a literal.
+
 ### Subcommands
 
 **`branch-restore <expected-branch>`** — checks whether the current worktree drifted
-off `<expected-branch>` and restores it via ff-only checkout of `origin/main`. If the
-current HEAD has diverged from `origin/main` (local commits exist), exits **non-zero**
-with a divergence message — the old silent force-reset is retired (ADR-0058 D3). A
-dirty tree is a no-op (safe exit 0 — orchestrator's own work is left untouched).
+off `<expected-branch>` and restores it via ff-only checkout of `origin/<integration>`.
+If the current HEAD has diverged from `origin/<integration>` (local commits exist),
+exits **non-zero** with a divergence message — the old silent force-reset is retired
+(ADR-0058 D3). A dirty tree is a no-op (safe exit 0 — orchestrator's own work is left
+untouched). Restoring to the release branch itself hard-aligns unconditionally instead
+(the release branch is never developed locally — see #950).
 
-**`root-sync`** — ff-syncs the root repo to `origin/main` after a successful merge.
-Non-zero on dirty tree or ff failure.
+**`root-sync`** — ff-syncs the root repo to `origin/<integration>` after a successful
+merge. Non-zero on dirty tree or ff failure.
 
 **`prune`** — removes landed dispatch worktrees (`agent-*` prefix only) to prevent
 unbounded accumulation. Two reclamation paths:
 1. **Landed path:** branch has a merged PR + no open PR.
 2. **No-PR reclamation path (ADR-0058 D3):** worktree with no PR at all is reclaimed
-   when clean + 0-ahead-of-main + older than 24 hours (avoids racing in-flight
-   dispatches).
+   when clean + 0-ahead-of-the-integration-branch + older than 24 hours (avoids
+   racing in-flight dispatches).
 After removing a worktree, deletes the local branch and the remote branch if present.
 Exits **non-zero** if any targeted worktree could not be removed.
 

@@ -27,137 +27,99 @@ def _read(path: Path) -> str:
 
 
 class TestWorktreeGuardDevelop(unittest.TestCase):
-    """worktree-guard.sh must reference origin/develop, not origin/main,
-    for all integration-branch semantics (ADR-0070 D1 + ADR-0058 D3).
+    """worktree-guard.sh must resolve both branch roles via
+    tools/pipeline_config.py (ADR-0089 D1) rather than hardcoding
+    'origin/develop'/'origin/main' literals — superseding the #841-era
+    assertions that pinned the integration branch to the literal 'develop'
+    (ADR-0089 D1/D3, S1-c/S1-scan of slice #1511).
     """
 
     def setUp(self):
         self.content = _read(GUARD_SH)
 
-    def test_no_origin_main_refs_outside_hard_align_block(self):
-        """worktree-guard.sh must not reference 'origin/main' EXCEPT inside the
-        main hard-align block (the intentional #950 fix for the protected main branch)
-        or in comment lines.
-
-        The #841 migration moved integration-branch semantics to origin/develop.
-        The #950 fix intentionally adds origin/main references inside the
-        'EXPECTED = main' hard-align block only — those are allowed.
-        All other non-comment origin/main refs are forbidden (integration branch is develop).
+    def test_no_hardcoded_branch_literal_outside_comments(self):
+        """Non-comment lines must not hardcode 'develop' or 'main' as a
+        git ref/branch name — every branch operation must route through the
+        resolved $INTEGRATION_BRANCH / $RELEASE_BRANCH variables instead.
+        Comment/docblock lines (which describe the resolved roles using this
+        repo's own develop/main values as illustrative examples) are exempt.
         """
-        lines = self.content.splitlines()
-        violations = []
-        # Track nesting depth inside the EXPECTED=main hard-align block.
-        # We enter when we see the 'if [ "$EXPECTED" = "main" ]' line and
-        # track depth via if/fi pairs to find the matching fi.
-        in_hard_align_block = False
-        hard_align_depth = 0
-
-        for ln in lines:
-            stripped = ln.strip()
-
-            # Detect entry into the main hard-align block.
-            if not in_hard_align_block and '[ "$EXPECTED" = "main" ]' in stripped:
-                in_hard_align_block = True
-                hard_align_depth = 1
-                continue  # the if-line itself is part of the block, skip
-
-            if in_hard_align_block:
-                # Track nested if/fi.
-                if stripped.startswith("if ") or stripped == "if":
-                    hard_align_depth += 1
-                elif stripped == "fi":
-                    hard_align_depth -= 1
-                    if hard_align_depth <= 0:
-                        # This fi closes our block — exit block mode.
-                        in_hard_align_block = False
-                        hard_align_depth = 0
-                # All lines inside the block (including fi) are allowed.
+        offending = []
+        for lineno, line in enumerate(self.content.splitlines(), start=1):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
                 continue
-
-            # Outside the hard-align block: allow comment lines.
-            if stripped.startswith("#"):
-                continue
-
-            # Any non-comment reference to origin/main outside the block is a violation.
-            if "origin/main" in ln:
-                violations.append(ln)
-
+            if re.search(r"\b(develop|main)\b", line):
+                offending.append((lineno, line))
         self.assertEqual(
             [],
-            violations,
+            offending,
             msg=(
-                "worktree-guard.sh contains 'origin/main' reference(s) outside the "
-                "intentional main hard-align block (#950 fix). "
-                "Integration-branch semantics use origin/develop (slice #841):\n"
-                + "\n".join(f"  {v}" for v in violations)
+                "worktree-guard.sh contains hardcoded branch literal(s) on "
+                "non-comment line(s) — roles must resolve via "
+                "tools/pipeline_config.py (ADR-0089 D1):\n"
+                + "\n".join(f"  {n}: {v}" for n, v in offending)
             ),
         )
 
-    def test_branch_restore_fetches_develop(self):
-        """branch-restore mode must fetch origin develop (not main)."""
+    def test_resolves_both_roles_via_pipeline_config(self):
+        """Both roles are resolved once per invocation via pipeline_config.py,
+        located relative to this script's own path (BASH_SOURCE[0]) — never
+        via $REPO_ROOT or `git rev-parse --show-toplevel` of the cwd repo
+        (S1-c: callers locate the module relative to their own file)."""
         self.assertIn(
-            "fetch origin develop",
+            '_WG_TOOLS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"',
             self.content,
-            msg="branch-restore must fetch 'origin develop', not 'origin main'",
+            msg="tools dir must resolve relative to BASH_SOURCE[0], not cwd/$REPO_ROOT",
         )
+        self.assertIn('pipeline_config.py" integration', self.content)
+        self.assertIn('pipeline_config.py" release', self.content)
+        self.assertIn("INTEGRATION_BRANCH=", self.content)
+        self.assertIn("RELEASE_BRANCH=", self.content)
 
-    def test_branch_restore_ff_check_against_develop(self):
-        """FF-only check must compare HEAD against origin/develop."""
+    def test_release_hard_align_uses_resolved_variable(self):
+        """The release hard-align block (#950 fix) must key off the resolved
+        $RELEASE_BRANCH variable, not a literal 'main' comparison."""
+        self.assertIn('if [ "$EXPECTED" = "$RELEASE_BRANCH" ]', self.content)
+        self.assertIn('git reset --hard "origin/$RELEASE_BRANCH"', self.content)
+
+    def test_branch_restore_fetches_integration_branch_var(self):
+        """branch-restore mode must fetch origin "$INTEGRATION_BRANCH"."""
         self.assertIn(
-            "origin/develop",
+            'git fetch origin "$INTEGRATION_BRANCH"',
             self.content,
-            msg="FF-only ancestor check must reference origin/develop",
-        )
-        # Specifically the merge-base --is-ancestor line
-        self.assertRegex(
-            self.content,
-            r"merge-base --is-ancestor HEAD origin/develop",
-            msg="merge-base --is-ancestor must use origin/develop",
+            msg='branch-restore must fetch origin "$INTEGRATION_BRANCH"',
         )
 
-    def test_branch_restore_checkout_to_develop(self):
-        """ff-restore checkout must target origin/develop."""
-        self.assertIn(
-            "checkout -B",
-            self.content,
-            msg="branch-restore must use checkout -B",
-        )
+    def test_branch_restore_ff_check_uses_integration_branch_var(self):
+        """FF-only check must compare HEAD against origin/$INTEGRATION_BRANCH."""
         self.assertRegex(
             self.content,
-            r'checkout -B "\$EXPECTED" origin/develop',
-            msg="checkout -B must target origin/develop",
+            r'merge-base --is-ancestor HEAD "origin/\$INTEGRATION_BRANCH"',
+            msg="merge-base --is-ancestor must use origin/$INTEGRATION_BRANCH",
         )
 
-    def test_root_sync_fetches_develop(self):
-        """root-sync must fetch origin develop (integration branch)."""
-        self.assertIn(
-            "fetch origin develop",
-            self.content,
-            msg="root-sync must fetch 'origin develop'",
-        )
-
-    def test_root_sync_checkouts_develop(self):
-        """root-sync must checkout develop (not main)."""
+    def test_branch_restore_checkout_targets_integration_branch_var(self):
+        """ff-restore checkout must target origin/$INTEGRATION_BRANCH."""
         self.assertRegex(
             self.content,
-            r'checkout develop',
-            msg="root-sync must checkout develop",
+            r'checkout -B "\$EXPECTED" "origin/\$INTEGRATION_BRANCH"',
+            msg="checkout -B must target origin/$INTEGRATION_BRANCH",
         )
 
-    def test_root_sync_ff_merges_develop(self):
-        """root-sync merge must target origin/develop."""
-        self.assertRegex(
-            self.content,
-            r"merge --ff-only origin/develop",
-            msg="root-sync must merge --ff-only origin/develop",
-        )
+    def test_root_sync_uses_integration_branch_var(self):
+        """root-sync must fetch/checkout/merge against $INTEGRATION_BRANCH."""
+        self.assertIn('fetch origin "$INTEGRATION_BRANCH"', self.content)
+        self.assertIn('checkout "$INTEGRATION_BRANCH"', self.content)
+        self.assertIn('merge --ff-only "origin/$INTEGRATION_BRANCH"', self.content)
 
-    def test_prune_zero_ahead_uses_develop(self):
-        """is_branch_zero_ahead must count commits ahead of origin/develop."""
+    def test_prune_zero_ahead_uses_integration_branch_var(self):
+        """is_branch_zero_ahead must count commits ahead of
+        origin/${INTEGRATION_BRANCH}."""
         self.assertRegex(
             self.content,
-            r'origin/develop\.\.HEAD',
-            msg="is_branch_zero_ahead must use 'origin/develop..HEAD' range",
+            r"origin/\$\{INTEGRATION_BRANCH\}\.\.HEAD",
+            msg="is_branch_zero_ahead must use 'origin/${INTEGRATION_BRANCH}..HEAD' range",
         )
 
 

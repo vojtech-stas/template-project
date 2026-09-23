@@ -4,23 +4,31 @@
 # CONTRACT: Orchestrator-invoked via Bash after each isolated Agent dispatch.
 #   NOT a Claude Code event hook (per ADR-0015). Three modes (mode as $1):
 #
+#   Both branch roles (integration, release) are resolved per-invocation via
+#   tools/pipeline_config.py (ADR-0089 D1) — never hardcoded. This repo's
+#   configured values are develop/main; the examples below use those names,
+#   but every git operation below actually runs against the resolved role.
+#
 #   branch-restore <expected-branch>
-#     git fetch origin develop (soft-degrade on failure); if the current worktree
-#     drifted off <expected-branch> AND the tree is clean, attempts ff-restore via
-#     `git checkout -B <expected> origin/develop`.
-#     FF-ONLY (ADR-0058 D3): if the current HEAD is NOT an ancestor of origin/develop
-#     (local commits exist), exits NON-ZERO with a divergence message — does NOT
-#     force-reset. The silent reset --hard behaviour is RETIRED.
+#     git fetch origin <integration> (soft-degrade on failure); if the current
+#     worktree drifted off <expected-branch> AND the tree is clean, attempts
+#     ff-restore via `git checkout -B <expected> origin/<integration>`.
+#     FF-ONLY (ADR-0058 D3): if the current HEAD is NOT an ancestor of
+#     origin/<integration> (local commits exist), exits NON-ZERO with a
+#     divergence message — does NOT force-reset. The silent reset --hard
+#     behaviour is RETIRED.
 #     No-op (exit 0) if tree is dirty or already on the correct branch.
 #     Exits NON-ZERO if an unrepaired violation (diverged branch) remains.
 #
 #   root-sync
 #     Resolves the root repo via `git --git-common-dir` → dirname (same pattern as
-#     .claude/hooks/log-event.sh). If the root tree is clean, ff-syncs to origin/develop:
-#     `git -C <root> checkout develop && git -C <root> merge --ff-only origin/develop`.
+#     .claude/hooks/log-event.sh). If the root tree is clean, ff-syncs to
+#     origin/<integration>: `git -C <root> checkout <integration> &&
+#     git -C <root> merge --ff-only origin/<integration>`.
 #     STRICT: ff-only, clean-only, non-zero on failure. Never reset/force/non-ff.
 #     Implements ADR-0041 D3 carve-out: orchestrator MAY ff-sync root post-merge.
-#     Per ADR-0070 D1: integration branch is develop; main advances only by promotion.
+#     Per ADR-0070 D1 (as amended by ADR-0089 D1): the integration branch is
+#     the configured role; the release branch advances only by promotion.
 #     Exits NON-ZERO if an unrepaired violation (cannot ff-sync) remains.
 #
 #   prune
@@ -36,7 +44,7 @@
 #     NO-PR RECLAMATION (ADR-0058 D3): a dispatch worktree with NO PR of any kind
 #     (no open, no merged) is reclaimed when ALL THREE conditions hold:
 #       1. Working tree is clean (no uncommitted changes, no untracked files)
-#       2. Branch is 0-ahead of origin/develop (no local commits beyond develop)
+#       2. Branch is 0-ahead of origin/<integration> (no local commits beyond it)
 #       3. Age threshold: worktree directory mtime > 24 hours ago
 #     This prevents accumulation of agent worktrees abandoned before opening a PR.
 #     The age threshold avoids racing a dispatch in progress.
@@ -54,6 +62,23 @@
 
 MODE="$1"
 
+# Resolve both configured branch roles once per invocation (ADR-0089 D1).
+# Located relative to THIS script's own path (S1-c) — never via $REPO_ROOT
+# or $(git rev-parse --show-toplevel) of the cwd repo, so this resolves
+# correctly even when the cwd is a foreign repo with no tools/ directory
+# of its own. The release role drives branch-restore's hard-align path;
+# the integration role drives ff-sync (branch-restore/root-sync) and
+# prune's zero-ahead check.
+_WG_TOOLS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INTEGRATION_BRANCH="$(python3 "$_WG_TOOLS_DIR/pipeline_config.py" integration)" || {
+  echo "ERROR: worktree-guard: cannot resolve the integration branch (tools/pipeline_config.py failed)" >&2
+  exit 1
+}
+RELEASE_BRANCH="$(python3 "$_WG_TOOLS_DIR/pipeline_config.py" release)" || {
+  echo "ERROR: worktree-guard: cannot resolve the release branch (tools/pipeline_config.py failed)" >&2
+  exit 1
+}
+
 case "$MODE" in
   branch-restore)
     EXPECTED="$2"
@@ -61,40 +86,40 @@ case "$MODE" in
       exit 0
     fi
 
-    # MAIN HARD-ALIGN (#950): local main must always equal origin/main because
-    # main is never developed locally — it carries no local-unique commits.
-    # When branch-restore targets main, hard-align unconditionally (fetch +
-    # reset --hard origin/main) regardless of whether local main is ahead,
-    # behind, or diverged. This makes the root worktree robust to the
-    # fix-on-PR-branch dispatch pattern that can fast-forward local main onto
-    # an un-merged feature commit (ADR-0041: origin/main is source of truth;
-    # ADR-0058 D3 refinement: main-specific hard-align).
-    # NOTE: origin/main here refers to the protected branch on the remote —
-    # distinct from origin/develop (the integration branch per ADR-0070 D1).
-    if [ "$EXPECTED" = "main" ]; then
-      git fetch origin main 2>/dev/null || {
-        echo "ERROR: branch-restore: git fetch origin main failed" >&2
+    # RELEASE HARD-ALIGN (#950): local release-role branch must always equal
+    # origin's, because it is never developed locally — it carries no
+    # local-unique commits. When branch-restore targets the release branch,
+    # hard-align unconditionally (fetch + reset --hard) regardless of
+    # whether local is ahead, behind, or diverged. This makes the root
+    # worktree robust to the fix-on-PR-branch dispatch pattern that can
+    # fast-forward the local release branch onto an un-merged feature commit
+    # (ADR-0041: the remote release ref is source of truth; ADR-0058 D3
+    # refinement: release-specific hard-align; ADR-0089 D1: role resolved,
+    # not literal).
+    if [ "$EXPECTED" = "$RELEASE_BRANCH" ]; then
+      git fetch origin "$RELEASE_BRANCH" 2>/dev/null || {
+        echo "ERROR: branch-restore: git fetch origin ${RELEASE_BRANCH} failed" >&2
         exit 1
       }
-      LOCAL_MAIN=$(git rev-parse main 2>/dev/null) || true
-      REMOTE_MAIN=$(git rev-parse origin/main 2>/dev/null) || {
-        echo "ERROR: branch-restore: cannot resolve origin/main after fetch" >&2
+      LOCAL_RELEASE=$(git rev-parse "$RELEASE_BRANCH" 2>/dev/null) || true
+      REMOTE_RELEASE=$(git rev-parse "origin/$RELEASE_BRANCH" 2>/dev/null) || {
+        echo "ERROR: branch-restore: cannot resolve origin/${RELEASE_BRANCH} after fetch" >&2
         exit 1
       }
-      if [ "$LOCAL_MAIN" = "$REMOTE_MAIN" ]; then
+      if [ "$LOCAL_RELEASE" = "$REMOTE_RELEASE" ]; then
         # Already aligned — no-op.
         exit 0
       fi
-      # Hard-align: main is never ahead of origin/main by design.
-      git checkout main 2>/dev/null || true
-      git reset --hard origin/main 2>/dev/null || {
-        echo "ERROR: branch-restore: git reset --hard origin/main failed" >&2
+      # Hard-align: the release branch is never ahead of origin by design.
+      git checkout "$RELEASE_BRANCH" 2>/dev/null || true
+      git reset --hard "origin/$RELEASE_BRANCH" 2>/dev/null || {
+        echo "ERROR: branch-restore: git reset --hard origin/${RELEASE_BRANCH} failed" >&2
         exit 1
       }
       exit 0
     fi
 
-    git fetch origin develop 2>/dev/null || true
+    git fetch origin "$INTEGRATION_BRANCH" 2>/dev/null || true
 
     CURRENT=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) || exit 0
     if [ "$CURRENT" = "$EXPECTED" ]; then
@@ -109,18 +134,18 @@ case "$MODE" in
     fi
 
     # FF-ONLY CHECK (ADR-0058 D3): refuse non-ff restore.
-    # Check if current HEAD is an ancestor of origin/develop.
+    # Check if current HEAD is an ancestor of origin/<integration>.
     # If not, local commits exist that would be lost by a force-reset.
-    if ! git merge-base --is-ancestor HEAD origin/develop 2>/dev/null; then
+    if ! git merge-base --is-ancestor HEAD "origin/$INTEGRATION_BRANCH" 2>/dev/null; then
       DIVERGED_SHA=$(git rev-parse --short HEAD 2>/dev/null)
-      ORIGIN_SHA=$(git rev-parse --short origin/develop 2>/dev/null)
-      echo "ERROR: branch-restore: HEAD ${DIVERGED_SHA} is not an ancestor of origin/develop ${ORIGIN_SHA} — branch '${CURRENT}' has diverged (expected '${EXPECTED}'). Silent force-reset RETIRED per ADR-0058 D3. Manual intervention required." >&2
+      ORIGIN_SHA=$(git rev-parse --short "origin/$INTEGRATION_BRANCH" 2>/dev/null)
+      echo "ERROR: branch-restore: HEAD ${DIVERGED_SHA} is not an ancestor of origin/${INTEGRATION_BRANCH} ${ORIGIN_SHA} — branch '${CURRENT}' has diverged (expected '${EXPECTED}'). Silent force-reset RETIRED per ADR-0058 D3. Manual intervention required." >&2
       exit 1
     fi
 
-    # Safe to ff-restore: HEAD is an ancestor of origin/develop.
-    git checkout -B "$EXPECTED" origin/develop 2>/dev/null || {
-      echo "ERROR: branch-restore: git checkout -B '$EXPECTED' origin/develop failed" >&2
+    # Safe to ff-restore: HEAD is an ancestor of origin/<integration>.
+    git checkout -B "$EXPECTED" "origin/$INTEGRATION_BRANCH" 2>/dev/null || {
+      echo "ERROR: branch-restore: git checkout -B '$EXPECTED' origin/${INTEGRATION_BRANCH} failed" >&2
       exit 1
     }
     exit 0
@@ -144,16 +169,16 @@ case "$MODE" in
       exit 1
     fi
 
-    git -C "$MAIN" fetch origin develop 2>/dev/null || {
+    git -C "$MAIN" fetch origin "$INTEGRATION_BRANCH" 2>/dev/null || {
       echo "WARNING: root-sync: fetch failed; skipping ff-sync" >&2
       exit 0
     }
-    git -C "$MAIN" checkout develop 2>/dev/null || {
-      echo "ERROR: root-sync: checkout develop failed" >&2
+    git -C "$MAIN" checkout "$INTEGRATION_BRANCH" 2>/dev/null || {
+      echo "ERROR: root-sync: checkout ${INTEGRATION_BRANCH} failed" >&2
       exit 1
     }
-    git -C "$MAIN" merge --ff-only origin/develop 2>/dev/null || {
-      echo "ERROR: root-sync: merge --ff-only failed; root repo has diverged from origin/develop" >&2
+    git -C "$MAIN" merge --ff-only "origin/$INTEGRATION_BRANCH" 2>/dev/null || {
+      echo "ERROR: root-sync: merge --ff-only failed; root repo has diverged from origin/${INTEGRATION_BRANCH}" >&2
       exit 1
     }
     exit 0
@@ -233,11 +258,12 @@ case "$MODE" in
     }
 
     # is_branch_zero_ahead <path>
-    #   Returns 0 (true) iff branch at <path> has 0 commits ahead of origin/develop.
+    #   Returns 0 (true) iff branch at <path> has 0 commits ahead of the
+    #   configured integration branch's origin ref.
     is_branch_zero_ahead() {
       local wt="$1"
       local ahead
-      ahead=$(git -C "$wt" rev-list --count "origin/develop..HEAD" 2>/dev/null) || return 1
+      ahead=$(git -C "$wt" rev-list --count "origin/${INTEGRATION_BRANCH}..HEAD" 2>/dev/null) || return 1
       if [ -z "$ahead" ]; then
         return 1
       fi

@@ -164,9 +164,14 @@ SCOPE_PATHS: dict[str, str] = {
 # (advisory) and D3-D6 extend existing checks rather than minting new
 # rule ids — so it adds nothing back: the net delta is -1, measured from
 # the baseline on `develop` at the commit this slice branched from (92).
+# ADR-0089 (slice #1511) adds 2 new PIP-* ids (PIP-031, PIP-032). Its four
+# supersessions (ADR-0070 D1, ADR-0004 D3, ADR-0041 D2, ADR-0045 D3) are all
+# per-decision partial, so `superseded_by: []` stays on every one of them and
+# no rule_id drops: the delta is +2, measured from the baseline on `develop`
+# at the commit this slice branched from (91).
 # Breakdown: CAP(8) + COM(2) + CRI(5) + DOC(6) + GLO(4) + HOK(9) +
-#            ISO(6) + OUT(5) + PIP(28) + REG(3) + SLI(3) + VER(12) = 91
-RULE_IDS_BASELINE: int = 91
+#            ISO(6) + OUT(5) + PIP(30) + REG(3) + SLI(3) + VER(12) = 93
+RULE_IDS_BASELINE: int = 93
 
 # ---------------------------------------------------------------------------
 # Frontmatter parser (stdlib, no PyYAML)
@@ -544,6 +549,25 @@ _RULE_STATEMENTS: dict[str, str] = {
         "a `captured_ref`, or (on a park) a place in the remaining-items list; "
         "I3's definition, rule #13 root-cause captures, and the ADR-0067 "
         "regression rider are unchanged (ADR-0085 D5)."
+    ),
+    # ADR-0089: per-repo pipeline identity — configured branch roles (D1/D3)
+    # + repo-agnostic history anchors (D4)
+    "PIP-031": (
+        "Pipeline executables (`tools/`, `dashboard/`, `.claude/hooks/`, "
+        "`.githooks/`, `bootstrap.sh`) and agent/skill prompt commands name "
+        "the integration or release branch only through "
+        "`tools/pipeline_config.py`, which reads the tracked "
+        "`.claude/pipeline.conf` (defaults `develop`/`main`). Agents branch "
+        "from, diff against, verify on and open PRs to the integration "
+        "branch. CI CHECK 29 fails on a literal branch token in that "
+        "defined subject set (ADR-0089 D1/D3)."
+    ),
+    "PIP-032": (
+        "A health-check grandfather anchor is an ISO-8601 UTC instant in "
+        "`dashboard/_constants.py` `GRANDFATHER_UNTIL`, compared against "
+        "merge time through `grandfathered()`. It is never a PR/issue "
+        "number or commit sha of this repo. CI CHECK 29 fails on a numeric "
+        "or sha-valued anchor constant (ADR-0089 D4)."
     ),
     # -----------------------------------------------------------------------
     # hooks scope (ADR-0015, ADR-0023, ADR-0033, ADR-0057)
