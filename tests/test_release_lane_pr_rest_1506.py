@@ -316,7 +316,7 @@ class TestB1PacketAndDispatch(unittest.TestCase):
         self.assertNotIn("CHECK: MISSING", out.getvalue())
         self.assertIn("unconfirmed", err.getvalue().lower())
 
-    def test_b1_dispatch_lane_refuses_with_no_span_on_an_unconfirmed_lookup(self):
+    def test_b1_lane_dispatch_writes_no_span_on_an_unconfirmed_lookup(self):
         release = _load(RELEASE_PY, "b1_dispatch_release")
         release._run_gh = _FakeGh(
             issues={"1525": _ok(_issue(1525))}, comments={"1525": _ok([])},
