@@ -201,9 +201,10 @@ class TestCiChecksDevelop(unittest.TestCase):
 
 class TestSessionStartDevelop(unittest.TestCase):
     """session-start.sh must resolve the integration branch via
-    tools/pipeline_config.py (ADR-0089 D1) and degrade — never exit — on a
-    resolver failure (S2-d), superseding the #841-era assertions that
-    pinned the integration branch to the literal 'develop'.
+    tools/pipeline_config.py (ADR-0089 D1), superseding the #841-era
+    assertions that pinned the integration branch to the literal 'develop'.
+    Its degrade-not-exit behaviour on a resolver failure (S2-d) is tested
+    by running the hook, in tests/test_branch_roles_sandbox_1512.py.
     """
 
     def setUp(self):
@@ -262,12 +263,6 @@ class TestSessionStartDevelop(unittest.TestCase):
         hardcode 'behind origin/develop' or 'behind origin/main'."""
         self.assertIn("behind origin/%s", self.content)
         self.assertIn('"${INTEGRATION_BRANCH:-?}"', self.content)
-
-    def test_degrades_on_resolver_failure_no_fallback_literal(self):
-        """S2-d: a resolver failure shows a visible placeholder naming the
-        failure — never a fallback literal branch name, and the script
-        still continues through to its single terminal beacon."""
-        self.assertIn('DIV="(resolver failed:', self.content)
 
 
 if __name__ == "__main__":
