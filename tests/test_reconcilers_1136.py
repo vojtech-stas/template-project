@@ -107,15 +107,35 @@ class _ReconcilerTestBase(unittest.TestCase):
             for s in spans:
                 f.write(json.dumps(s) + "\n")
 
-    def _patch_gh(self, health_mod, pr_list_result=None, issue_list_result=None):
+    def _patch_gh(self, health_mod, pr_list_result=None, issue_list_result=None,
+                  api_result=None):
         """Route gh calls by sub-command: args[0] == 'pr' -> pr_list_result,
-        args[0] == 'issue' -> issue_list_result. Unrouted calls degrade to
-        'computing' (never a silent real subprocess call)."""
+        args[0] == 'issue' -> issue_list_result, args[0] == 'api' ->
+        api_result. Unrouted calls degrade to 'computing' (never a silent
+        real subprocess call).
+
+        The 'api' route answers the QUERY-HONESTY REST canary (ADR-0087 D2
+        / slice #1498) every --label-bearing call is now gated behind (see
+        health._health_gh_fetch). When api_result is not given explicitly
+        but issue_list_result is a confirmed ('live'/'cache') result, a
+        REST-canary-matching payload is auto-derived from its item count so
+        the attestation PASSes and every pre-existing --label assertion in
+        this file keeps reading exactly as it did before the canary
+        existed -- no per-test changes needed."""
         def _fetch(args, ttl, timeout):
             if args and args[0] == "pr" and pr_list_result is not None:
                 return pr_list_result
             if args and args[0] == "issue" and issue_list_result is not None:
                 return issue_list_result
+            if args and args[0] == "api":
+                if api_result is not None:
+                    return api_result
+                if issue_list_result is not None and issue_list_result.source in ("live", "cache"):
+                    try:
+                        _n = len(json.loads(issue_list_result.value))
+                    except Exception:
+                        _n = 0
+                    return _live(json.dumps([{"number": 900000 + i} for i in range(_n)]))
             return _computing()
         health_mod._gh_fetch_impl = _fetch
         health_mod._GH_CACHE_AVAILABLE = True

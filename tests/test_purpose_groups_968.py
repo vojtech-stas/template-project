@@ -225,7 +225,9 @@ class TestListCountInvariant:
         registers ONE new check: DRAIN-LEDGER. Moved from 51 to 49 by slice
         #1483 (PRD #1480 §2 criterion 13 / ADR-0088 D6), which deliberately
         REMOVES two checks: STALE-SERVER and DEAD-ROUTES, retired together
-        with the dashboard frontend they depended on. This invariant guards
+        with the dashboard frontend they depended on. Bumped from 49 to 50
+        by slice #1498 (PRD #1496 §2 criterion 4 / ADR-0087 D2), which
+        registers ONE new check: QUERY-HONESTY. This invariant guards
         against ACCIDENTAL registry drift (duplicate/dropped IDs) —
         deliberate additions and removals bump the literal in the same PR
         that adds or deletes the check, per the established pattern for
@@ -239,11 +241,11 @@ class TestListCountInvariant:
         assert result.returncode == 0, f"health.py --list failed: {result.stderr}"
         lines = [l for l in result.stdout.strip().splitlines() if l.strip()]
         count = len(lines)
-        assert count == 49, (
-            f"--list count changed! Expected 49, got {count}. "
+        assert count == 50, (
+            f"--list count changed! Expected 50, got {count}. "
             "Conservation violated (slice #968 §2 #8 / bumped by slice #1085, "
             "#1136; moved to 50 by slice #1240; moved to 51 by slice #1329; "
-            "moved to 49 by slice #1483)."
+            "moved to 49 by slice #1483; moved to 50 by slice #1498)."
         )
 
 
