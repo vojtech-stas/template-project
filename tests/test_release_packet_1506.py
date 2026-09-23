@@ -8,7 +8,7 @@ REAL `git show <sha>:<path>` against a throwaway git repo built under
 pytest's tmp_path (rule #21) — never against the checkout under test.
 
 Covers PRD #1501 §2 criteria 21, 23 (criterion 22, freshness across two
-shas, is deferred to slice 2 per the SPIDR fallback, A10):
+shas, deferred under A10, is covered by tests/test_lane_packet_fresh_1507.py):
   21 (lane_packet_shape): the sha, then per bug its path:line ref, a
      ±20-line excerpt at that sha, and its Check: line or CHECK: MISSING.
   23 (lane_packet_untrusted): a comment whose author association is not
