@@ -2,9 +2,11 @@
 tests/test_runboard_query_1172.py
 
 Fixture-ledger unit tests for the run-board query (PRD #1170 walking
-skeleton, slice #1172) — dashboard/tracestore.py's now/recent additions
-consumed by /api/runboard (the `next` query was retired per ADR-0080 D2,
-slice #1219 — its two dedicated cases below were deleted with it). One
+skeleton, slice #1172) — dashboard/tracestore.py's now/recent additions,
+formerly consumed by the served run-board's `/api/runboard` endpoint,
+retired per ADR-0088 D1 (this test exercises the underlying query
+directly; the `next` query was retired earlier, per ADR-0080 D2, slice
+#1219 — its two dedicated cases below were deleted with it). One
 test per surviving criterion's own Verify clause:
 
   1a. 2 open + 1 closed dispatch fixture -> `now` has exactly the 2 open.

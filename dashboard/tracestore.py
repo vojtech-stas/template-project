@@ -75,18 +75,19 @@ Python API (for dashboard reuse):
     trace_id whose chronologically LAST dispatch/dispatch_end event is a
     `dispatch` (per-trace_id event-order semantics, not trace_id-membership
     — see the function's own docstring for the round-1 fix rationale) —
-    the duplicate-dispatch mutex's read side and the W2 run-board's future
-    data model, both for free.
+    the duplicate-dispatch mutex's read side and the (since-retired,
+    ADR-0088 D1) run-board's data model, both for free.
   serve_trace_runs(limit=30, log_path=None, db_path_=None) -> dict
-    Background-warmed /api/trace-runs payload builder (slice #1082, PRD
-    #1075 criterion 9 — the Firing tab's PRIMARY renderer) — mirrors
+    Background-warmed payload builder (slice #1082, PRD #1075 criterion 9
+    — formerly the Firing tab's PRIMARY renderer) — mirrors
     prd_firing.py's serve_prd_firing() house pattern (issue #962):
-    stale-while-revalidate cache + daemon thread; the blocking builder
-    (`_build_recorded_runs`) is never called from the HTTP request handler
-    directly.
+    stale-while-revalidate cache + daemon thread. Kept as a library shim
+    with no HTTP caller after ADR-0088 D1's server deletion (captured:
+    #1491); the blocking builder (`_build_recorded_runs`) stays reachable
+    only via this function, never called directly.
   serve_runboard(log_path=None, db_path_=None) -> dict
-    Background-warmed /api/runboard payload builder (PRD #1170, slice
-    #1172 walking skeleton + slice #1173 provenance/staleness) — mirrors
+    Background-warmed payload builder (PRD #1170, slice #1172 walking
+    skeleton + slice #1173 provenance/staleness) — mirrors
     serve_trace_runs()'s stale-while-revalidate pattern. Returns {now,
     recent, stale_threshold_seconds, ledger, fetched_at}: `now` =
     running_dispatches() enriched with elapsed seconds, a `stale` bool
@@ -96,9 +97,11 @@ Python API (for dashboard reuse):
     `stale_threshold_seconds` and `ledger` are echoed so the caller never
     hardcodes either (row-level provenance — a pattern carried over from
     the retired run-board, ADR-0078 D1 history, superseded by ADR-0088).
-    Strict reader — never infers state the ledger does not hold. The
-    `next` panel (the retired ready-set marker) is retired per ADR-0080
-    D2 — the board shows only what is recorded, not what is promised.
+    Strict reader — never infers state the ledger does not hold. Kept as
+    a library shim with no HTTP caller after ADR-0088 D1's server
+    deletion (captured: #1491). The `next` panel (the retired ready-set
+    marker) is retired per ADR-0080 D2 — the payload reflects only what
+    is recorded, not what is promised.
 
 CLI (parity with `tools/trace.py path --pr <n>` — trace.py's linear scan
 remains the fallback/cross-check per the slice's instruction):
@@ -491,7 +494,8 @@ def _trace_runs_background(limit, log_path, db_path_):
 
 
 def serve_trace_runs(limit=30, log_path=None, db_path_=None):
-    """Stale-while-revalidate serve path for /api/trace-runs. ALWAYS returns
+    """Stale-while-revalidate serve path (no HTTP caller after ADR-0088 D1's
+    server deletion; kept as a library shim, captured: #1491). ALWAYS returns
     immediately: cached data if warm, {"status":"computing"} on true cold
     start (kicks a daemon background thread), or last-known data with
     "refreshing":true while a stale-TTL recompute runs in the background."""
@@ -680,7 +684,8 @@ def _runboard_background(log_path, db_path_):
 
 
 def serve_runboard(log_path=None, db_path_=None):
-    """Stale-while-revalidate serve path for /api/runboard — mirrors
+    """Stale-while-revalidate serve path (no HTTP caller after ADR-0088 D1's
+    server deletion; kept as a library shim, captured: #1491) — mirrors
     serve_trace_runs()'s contract exactly (cached / computing / stale+
     refreshing-in-background), applied to a single unkeyed cache slot since
     the run-board takes no limit parameter."""

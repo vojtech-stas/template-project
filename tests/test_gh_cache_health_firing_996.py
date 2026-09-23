@@ -2,7 +2,7 @@
 tests/test_gh_cache_health_firing_996.py — slice #996 acceptance tests.
 
 Verifies that:
-  cr.3  /api/health build path (affected check functions) returns in <10s
+  cr.3  the health-payload build path (affected check functions) returns in <10s
         under a simulated slow/failing gh.  No serial stall.
   cr.4  A health row whose gh data is unavailable within the timeout reports
         "computing"/last-known while other rows still return normally.
@@ -70,7 +70,7 @@ def _slow_gh_fetch(args, *, ttl, timeout):
 
 
 # ===========================================================================
-# cr.3 — /api/health build path returns <10s under slow gh
+# cr.3 — health-payload build path returns <10s under slow gh
 # ===========================================================================
 
 class TestCr3NoSerialStall(unittest.TestCase):

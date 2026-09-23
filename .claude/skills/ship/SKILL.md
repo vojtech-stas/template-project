@@ -352,10 +352,10 @@ evidence for this run; note it explicitly in the step 7 final report.
      2. Assert `sid` exists in `.claude/logs/workflow-events.jsonl` (grep for the sid in the event window).
      3. Assert `sid` is NOT fixture-patterned: must not match `sess-test-*`, `fixture-*`, or `synthetic-*`.
      4. If validation fails → verdict invalid → treat as FAIL, re-dispatch.
-   - **ENV validation for browser routes (ADR-0061 D2):** when `ROUTE: browser`, validate `ENV: <sha>@<started_at>`:
-     1. Extract `sha` from `ENV:` field.
-     2. Fetch `/api/meta` and assert `sha` matches the dashboard's reported sha.
-     3. If `sha` mismatches or `/api/meta` reports `stale: true` → verdict invalid → treat as FAIL, re-dispatch.
+   - **ENV validation for browser routes (ADR-0061 D2, host-generic — this template no longer serves an `/api/meta`-style identity endpoint per ADR-0088 D1/D5):** when `ROUTE: browser`, validate `ENV: <sha>@<started_at>`:
+     1. Extract `sha` from `ENV:` field and confirm it equals the merged HEAD sha for this PR.
+     2. Confirm by a host-appropriate mechanism that the served app is running the merged code (e.g. an app-specific version/health endpoint or build-info banner the host project exposes) — this template itself serves nothing to check against; a host project that adds a browser-reachable UI supplies its own freshness signal here.
+     3. If `sha` mismatches, or the host-appropriate freshness signal reports stale/absent, → verdict invalid → treat as FAIL, re-dispatch.
    - **Block-on-missing-proof check (per ADR-0037 D3 — orchestrator-enforced blocking):** assert `PROOF:` is non-empty for the routed change type. If `PRODUCTION_VERIFY: PASS` but `PROOF:` is empty or absent, the feature is **NOT done** — treat this as a gate failure and block:
      - `browser` route: `PROOF:` MUST contain a screenshot path (`.png` or `.jpg`) AND an `inner_text:` excerpt. A UI/browser change with no screenshot proof is not 'done'. Block with: `"PRODUCTION_VERIFY claimed PASS but PROOF: absent for browser route — screenshot proof required; not marking done."`
      - `hook-fire` route: `PROOF:` MUST contain `exit=` AND a `log:` field whose content IS a pasted verbatim beacon line matching `"status":\s*"(ok|ERROR)"` (or "log: N/A" if not declared) — a description of the beacon does not satisfy this (ADR-0083 D4(a)). A hook change with no pasted-beacon-line proof is not 'done'.

@@ -1,5 +1,5 @@
 """
-dashboard/health.py — health check helpers + /api/health TTL cache.
+dashboard/health.py — health check helpers + aggregate-payload TTL cache.
 
 Exports:
     check_docs1_adr_index_forward() -> dict
@@ -225,8 +225,9 @@ def _v3_trace_log_exists() -> bool:
 from _constants import KNOWN_CRITICS as _KNOWN_CRITICS  # noqa: E402
 
 # ---------------------------------------------------------------------------
-# /api/health TTL cache — health checks can take 1-2 s on cold start.
-# Background-thread + TTL cache pattern.
+# Aggregate health-payload TTL cache — health checks can take 1-2 s on cold
+# start. Background-thread + TTL cache pattern. Retained as a library shim
+# with no HTTP caller after ADR-0088 D1's server deletion (captured: #1491).
 # ---------------------------------------------------------------------------
 _health_cache: dict = {}       # {"data": {...}, "ts": float}
 _health_computing: bool = False
@@ -5202,7 +5203,8 @@ def check_branch_topology() -> dict:
     Returns PASS when the topology is clean, WARN on advisory issues, FAIL on
     structural breaks. Always emits real data — never the "dormant" stub.
 
-    Extra fields for /api/promotion:
+    Extra diagnostic fields on the returned dict (beyond id/result/detail),
+    surfaced via `python3 dashboard/health.py --check BRANCH-TOPOLOGY`:
       develop_sha, main_sha, ahead, behind, main_is_ancestor
     """
     import json as _json
@@ -7056,7 +7058,7 @@ CHECK_REGISTRY["PARITY"] = check_parity
 
 
 def _build_health_data() -> dict:
-    """Build the full /api/health payload synchronously.
+    """Build the full aggregate health-check payload synchronously.
 
     Called from the background thread; never from an HTTP handler.
 
