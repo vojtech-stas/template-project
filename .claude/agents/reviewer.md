@@ -435,7 +435,7 @@ The canonical verdict template + CRITIC trailer field schema is defined in [ADR-
 
 **CRITIC trailer mandatory keys (per ADR-0054 D2):** every trailer — BLOCK and APPROVE alike — MUST include these three core keys in this order: `VERDICT`, `REASON`, `ROUND`. Per-agent extension keys (e.g. `MERGE_STATUS`, `ESCALATE`, `ESCALATION_STATUS`, `MODEL`) are allowed only after the core three.
 
-**`MODEL:` (ADR-0090 D4 — lane-PR review only):** when dispatched with a `BLIND-REVIEW <PR>` message against a PR carrying the `lane` label, name your own dispatched model id in `MODEL: <id>` — `tools/pipe/pr-merge`'s lane leg refuses the merge when this key is absent or names Sonnet or Haiku (case-insensitively). Omit it (or leave it `n/a`) on an ordinary (non-lane) PR review.
+**`MODEL:` (ADR-0090 D4 — read only on lane PRs):** on a PR carrying the `lane` label, write the model your own system prompt names — its exact id (e.g. `claude-opus-5-5`) or display name (`Claude Opus 5.5`), and nothing else on the line. `tools/pipe/pr-merge`'s lane leg reads the whole value against an allow-list of Claude Opus ids (`opus`, optionally prefixed `claude`, optionally followed by a version) and refuses the merge when the key is absent or empty, a placeholder (`n/a`, `<id>`), carries extra words, or names any other model, Sonnet and Haiku included. On any other PR, `pr-merge` never reads the key: write `n/a`.
 
 **Reviewer trailer template** (emit this fenced block verbatim, filling in values):
 ```
@@ -443,7 +443,7 @@ VERDICT: <APPROVE|BLOCK>
 REASON: <one sentence>
 ROUND: <N>
 CRITIC: reviewer
-MODEL: <id|n/a>
+MODEL: <lane PR: your model id, e.g. claude-opus-5-5 | any other PR: n/a>
 MERGE_STATUS: <merged:<sha>|queued|failed:<error>|n/a>
 ESCALATE: <needs-human|n/a>
 ESCALATION_STATUS: <applied (...)|n/a>

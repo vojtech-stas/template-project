@@ -81,7 +81,10 @@ LANE MODE (slice #1506 / PRD #1501, ADR-0090 D3/D4): when the PR carries the
 `_fetch_pr_view` already widened to include `labels,body,headRefName` — no
 extra gh call on an ordinary PR:
   - MODEL: refusal (criterion 24) — the APPROVE comment's `MODEL:` line must
-    be present and name a non-Sonnet/Haiku model.
+    be present, and its whole value must name a Claude Opus model
+    (allow-list: `opus`, optional `claude` prefix, optional version); an
+    empty value, a placeholder, trailing words, Sonnet, Haiku or any other
+    name refuses.
   - Window refusal (criterion 25) — every non-merge commit on the lane's
     head branch must fall inside a recorded `dispatch`->`dispatch_end`
     window on trace_id `lane-<headRefName>`.
@@ -367,8 +370,17 @@ def _assert_verdict_or_refuse(pr):
 # ordinary (non-lane) PR (named risk, PRD #1501 constraint 5).
 # ---------------------------------------------------------------------------
 
-_MODEL_LINE_RE = re.compile(r"^MODEL:\s*(\S+)", re.MULTILINE)
-_WEAK_MODEL_RE = re.compile(r"sonnet|haiku", re.IGNORECASE)
+# Criterion 24 / ADR-0090 D4 merge leg 1. The WHOLE line value is read,
+# never its first token, and judged against an allow-list rather than a
+# denylist: D4 dispatches every lane reviewer with `model: "opus"`, so the
+# only accepted value names a Claude Opus model -- `opus`, optionally
+# prefixed `claude`, optionally followed by a version (`5-5`, `5.5`,
+# `4-1-20250805`), case- and separator-insensitive (`Claude Opus 5.5`).
+# Everything else refuses: a missing or empty line, a placeholder (`n/a`,
+# `<id>`), trailing words, Sonnet, Haiku, or any other name. `[ \t]*`
+# (never `\s*`) keeps an empty `MODEL:` from reading the next line.
+_MODEL_LINE_RE = re.compile(r"^MODEL:[ \t]*(.*)$", re.MULTILINE)
+_STRONG_MODEL_RE = re.compile(r"^(?:claude-)?opus(?:-\d+(?:[.-]\d+)*)?$")
 _LANE_CLOSES_RE = re.compile(r"closes\s*#(\d+)", re.IGNORECASE)
 
 
@@ -382,20 +394,39 @@ def _is_lane_pr(view):
     return "lane" in names
 
 
+def _normalize_model_value(raw):
+    """Lower-case, drop surrounding backticks/quotes, and fold runs of
+    whitespace or underscores into `-`, so `Claude Opus 5.5` and
+    `claude-opus-5.5` compare alike."""
+    value = raw.strip().strip("`'\"").strip().lower()
+    return re.sub(r"[\s_]+", "-", value)
+
+
+def _is_strong_model(raw):
+    return bool(_STRONG_MODEL_RE.match(_normalize_model_value(raw)))
+
+
 def _assert_lane_model_or_refuse(pr, approve_comment):
-    """Criterion 24: refuse (before any merge call) when the APPROVE
-    comment's `MODEL:` line is absent, or names a Sonnet/Haiku model
-    (case-insensitively) -- lane PRs demand a non-weak reviewing model."""
+    """Criterion 24: refuse (before any merge call) unless the APPROVE
+    comment carries at least one `MODEL:` line and EVERY such line names a
+    Claude Opus model (allow-list above). Two lines that disagree are a
+    self-contradicting comment, so the leg fails closed."""
     body = approve_comment.get("body", "") or ""
-    m = _MODEL_LINE_RE.search(body)
-    if not m or _WEAK_MODEL_RE.search(m.group(1)):
-        print(
-            f"pr-merge: lane PR #{pr} refused -- the APPROVE comment's MODEL: "
-            "line is absent or names a Sonnet/Haiku model",
-            file=sys.stderr,
-        )
-        return False
-    return True
+    values = [v.strip() for v in _MODEL_LINE_RE.findall(body)]
+    if not values:
+        reason = "has no MODEL: line"
+    else:
+        bad = [v for v in values if not _is_strong_model(v)]
+        if not bad:
+            return True
+        reason = "has MODEL: " + ", ".join(repr(v) for v in bad) + ", which is not a Claude Opus model id"
+    print(
+        f"pr-merge: lane PR #{pr} refused -- the APPROVE comment {reason} "
+        "(ADR-0090 D4: a lane PR merges only on a strong-model review; accepted: "
+        "opus, claude-opus-<version>, Claude Opus <version>)",
+        file=sys.stderr,
+    )
+    return False
 
 
 def _fetch_lane_commits(head_ref):
