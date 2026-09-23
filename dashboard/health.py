@@ -101,20 +101,32 @@ def _health_gh_fetch(
     timeout: float = 5.0,
     with_source: bool = False,
 ) -> tuple:
-    """The health-registry seam: every check registered in `CHECK_REGISTRY`
-    that reaches `gh` does so through this function (or its `_raw` sibling,
-    for the QUERY-HONESTY canary's own two queries — see below). It is
-    NOT, however, the only function anywhere in this module through which
-    a check reaches `gh`: `CRITIC-HEALTH`/`MERGE-INTEGRITY` and
-    `PROOF-PRESENCE`/`PROOF-INTEGRITY` reach `gh` via
-    `dashboard/collector.py`'s own gh runner
-    (`collector.get_closed_prd_numbers()` /
-    `collector.get_recent_merged_prs()` / `_run_gh`), bypassing both this
-    seam's provenance labelling and the QUERY-HONESTY attestation below
-    entirely. That collector-routed bypass predates this ADR and is
-    tracked separately, not fixed here (#1515 covers the seam-caller
-    class generally; #1518 covers the collector-routed checks
-    specifically).
+    """The health-registry `gh` seam: provenance labels + QUERY-HONESTY gate.
+
+    The only code in this file that spawns `gh` is `_health_gh_fetch_raw()`,
+    through `gh_cache.gh_fetch` or its bounded `subprocess.run(["gh", ...])`
+    fallback. Within this file, that function is called only by this seam
+    and by the QUERY-HONESTY canary's own two queries (see below). Child
+    processes this file starts (e.g. `bash tools/ci-checks.sh`) are outside
+    this description.
+
+    This seam is NOT the only route by which a registered check reaches
+    `gh`. Four `CHECK_REGISTRY` checks call `dashboard/collector.py`
+    directly and one more reaches it indirectly; collector runs `gh`
+    itself, so these reads bypass both this seam's provenance labels and
+    the QUERY-HONESTY gate:
+      - `CRITIC-HEALTH` and `MERGE-INTEGRITY` call
+        `collector.get_closed_prd_numbers()` (a direct
+        `gh issue list --label prd`) and `collector.get_trail()` (a
+        cache-first reader backed by `gh`);
+      - `PROOF-PRESENCE` calls `collector.get_recent_merged_prs()` and
+        `collector._run_gh`; `PROOF-INTEGRITY` calls
+        `collector.get_recent_merged_prs()`;
+      - `RELEASE-READY` condition (c) calls `check_proof_integrity()`.
+    That bypass predates ADR-0087 and is not fixed here. #1515 tracks the
+    `get_closed_prd_numbers()` label read, plus the flag-spelling gaps in
+    `_args_apply_label_filter`; #1518 tracks the
+    `get_recent_merged_prs()` / `_run_gh` reads.
 
     Fetches through `_health_gh_fetch_raw()` FIRST, unconditionally, then
     gates only a CONFIRMED label-filtering answer behind the QUERY-HONESTY
@@ -228,7 +240,8 @@ def _health_gh_fetch_raw(
 # ---------------------------------------------------------------------------
 # QUERY-HONESTY — REST-attested canary over the `prd`-label path (ADR-0087
 # D2, slice #1498). This is the attestation `_health_gh_fetch()` (the seam,
-# above) consumes on every `--label`-bearing call.
+# above) consults on each call whose args `_args_apply_label_filter`
+# recognizes and whose raw fetch came back confirmed (`rc == 0`).
 # ---------------------------------------------------------------------------
 
 _QUERY_HONESTY_CANARY_LABEL = "prd"
@@ -6055,9 +6068,11 @@ def check_release_ready() -> dict:
         # Routed through gh_cache (ttl=30s, timeout=5s) — PRD #993 cr.3, slice #996.
         # Short TTL so stale cached counts don't hold the gate on the wrong value.
         # Two legs, issues and PRs; both must be a CONFIRMED, parseable JSON
-        # list before the sum counts as observed (ADR-0087 D2's QUERY-HONESTY
-        # attestation, once slice 2 wires it, is consumed transparently here
-        # via the seam's source label — no edit needed at this call site).
+        # list before the sum counts as observed. Both legs are label-filtered,
+        # so the seam applies ADR-0087 D2's QUERY-HONESTY attestation (slice
+        # #1498) to each: a confirmed leg whose attestation does not PASS
+        # comes back rc=1 with source "unverified" and is held below like any
+        # other unconfirmed leg — no edit was needed at this call site.
         nh_confirmed = True
         nh_count = 0
         nh_legs = []
