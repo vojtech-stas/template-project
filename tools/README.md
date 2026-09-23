@@ -11,6 +11,14 @@ remote branches — it modifies repository state. `ci-checks.sh` is advisory/rea
 
 ## worktree-guard.sh
 
+For the separate OpenAI adapter entrypoint, see [openai_workflow.py](openai_workflow.py)
+and its [execution/evidence contract](../docs/openai-workflow.md). It resolves
+canonical instructions, reports observed prerequisites, validates independent
+isolation/identity and fresh proof, then delegates to unchanged guarded verbs.
+`gen_openai_skills.py --check` checks the declared ship-only D6 router inventory;
+`workflow_branch.py` is the shared conventional/Codex kind-and-issue classifier.
+These helpers add no installer, native hook coverage or pipeline engine.
+
 Post-dispatch worktree leak-guard and root ff-sync. **Enforcement tool** — modifies
 repository state (deletes worktrees, local branches, and remote branches). Invoked by
 the `/ship` orchestrator after each isolated `implementer` or `reviewer` dispatch

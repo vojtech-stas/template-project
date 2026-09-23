@@ -9,6 +9,49 @@ Chains `conditional /grill-me → /to-prd → prd-critic (+ adr-critic) → /to-
 
 Full role synthesis (chain rationale, forward-block semantics, terminal-state collection): this file. Stage-by-stage operational logic (what each hook does, hook contract, "what the pipeline deliberately does NOT do"): CLAUDE.md §3 (Hierarchy + workflow conventions). Vocabulary: prd, slice, joint-approve-gate, walking-skeleton (see CLAUDE.md glossary).
 
+## OpenAI mapping (ADR-0086 D1-D6)
+
+Read AGENTS.md and docs/openai-workflow.md; this remains the canonical
+procedure. Only the main controller dispatches native workers. Inherit the host
+model unless the user requests an available override; role frontmatter is not
+native tool/model configuration. Preserve joint review history, blind critics,
+round-3 stops, slice provenance, merge serialization and human-only promotion.
+No missing capability authorizes inventing APIs or relaxing an independent gate.
+
+Before mutation, independently capture each worker's absolute top/common Git
+directory, registration, expected branch/start SHA and clean status. Compare
+against intended repository and shared roots; run adapter isolation --before
+and the worker's own assertion. Correlate real native dispatch/result IDs;
+worker JSON or a made-up worktreePath cannot establish isolation. Recheck after
+completion and keep branch-restore, root-sync, and prune in the controller.
+D6 bootstrap uses explicit native host records until the candidate helper exists,
+then validates the same actual slice with that helper. Never reopen dispatch
+merely to exercise the adapter. Run the normal candidate hooks for its commits.
+
+Use issue-bound codex/<type>/<slice>-<slug> branches from recorded develop.
+Step 5a-fix's shared classifier selects label-free Codex fixes too; test authors
+remain independent and commit a failing regression before implementation.
+Use the real codex:<host-id> as the legacy CLAUDE_SESSION_ID alias for guarded
+verbs, with UTF-8 subprocess handling. Startup receipts are separate evidence,
+not Claude hook beacons. No missing ID falls back to date or orchestrator.
+The Claude live-feed probe and dashboard-autostart hook below are Claude-only;
+OpenAI uses preflight plus native host records, reports native hooks unverified,
+and starts a dashboard explicitly only when needed for the mandatory QA route.
+
+For OpenAI step 6 PASS handling, use tools/openai_workflow.py qa-verify with
+current controller observations and complete independent QA proof. Its route
+union comes from qa-tester's authoritative table. It checks artifact bytes,
+identity, revision and freshness BEFORE the unchanged recording verb. For
+closure use the adapter's prd-close; a bounded slice result cannot close its
+parent. Failed validation means no downstream PASS or close call. Preserve
+real browser/static/command proofs; unavailable tooling remains PROVISIONAL.
+Before an overlapping merge, apply the approved #1435 refresh, reconciliation,
+regeneration and resulting-head review gate. Only the independent reviewer merges.
+After merge, QA regenerates evidence on the actual merged SHA. Closes in a
+PR targeting develop is not proof that GitHub closed its slice (#1232).
+The initial ship-only router inventory is explicit; complete discovery and native
+hook activation belong to later slices. Never advertise full-PRD readiness here.
+
 ## When NOT to use this skill
 
 - For trivial one-line fixes — use the `hotfix/<thing>` lane (I3).
@@ -295,8 +338,9 @@ evidence for this run; note it explicitly in the step 7 final report.
 
    - **5a. Build the DAG.** Parse each slice's `## Depends on` (slicer-critic-verified per [ADR-0003](../../../decisions/0003-autonomous-pipeline-with-critics.md) D3). Topologically sort; ties broken by issue number ascending. On parse failure or cycle, STOP with `RESULT: INVALID_INPUT` in the trailer.
 
-   - **5a-fix. Blind test-author pre-dispatch for fix-type slices (ADR-0067 D2).** Before dispatching the implementer for any slice, check whether the slice is fix-type: branch name matches `fix/*` OR the slice issue carries a `root-cause` label:
+   - **5a-fix. Blind test-author pre-dispatch for fix-type slices (ADR-0067 D2).** Before dispatching the implementer, use `tools/workflow_branch.py`'s `requires_regression`: normalized kind `fix` OR the slice issue's `root-cause` label. A label-free `codex/fix/<issue>-<slug>` requires this gate too. Read the intended branch from the dispatch coordinates, not a prose guess:
      ```bash
+     python tools/workflow_branch.py "<intended-branch>"
      gh issue view <slice_number> --json labels --jq '.labels[].name' | grep root-cause
      ```
      **If fix-type:** dispatch a `general-purpose` subagent (with `isolation: "worktree"`) BEFORE the implementer. Pass only:

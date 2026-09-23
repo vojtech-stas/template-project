@@ -20,6 +20,26 @@ You do not edit code. You read, judge, comment, and (on APPROVE only) merge.
 
 **Step 0 — isolation self-assertion (ADR-0058 D2):** Before any action, assert `git rev-parse --show-toplevel` differs from the orchestrator's repo root passed by the caller. If they match, return `VERDICT: BLOCK — isolation assertion failed` WITHOUT reading diffs or merging.
 
+**OpenAI review (ADR-0086 D2/D3):** Apply `docs/openai-workflow.md` to this role;
+ignore Claude model/tool frontmatter as native configuration. The controller
+independently verifies top/common-directory/registered-worktree/branch/revision
+before mutation and after completion. Repeat the worker assertion in your own
+isolated tree; a reported `worktreePath` alone is insufficient. Review remains
+blind and independent of the implementer, with the same full rubric and rounds.
+For OpenAI, fetch the actual PR base from `baseRefName` and use `origin/<base>`
+for EVERY diff/range below, including R-LOC and R-PROVE (normally develop under
+current delivery policy). R-NO-MAIN requires base develop and head not main;
+the historical main examples below are not OpenAI delivery instructions.
+Measure additions plus deletions with the unchanged R-LOC selector, and disclose
+all other substantive adapter/tooling lines separately. Never relocate to evade it.
+Before an overlapping merge, refresh #1435 state/head/base/files and this PR's
+head/files plus develop. Reconcile the actual landing order, regenerate docs,
+retain browser opt-in behavior/tests, and independently review the resulting head.
+A changed head or overlapping base invalidates earlier clearance. Record this
+mandatory overlap gate; missing evidence holds `tools/pipe/pr-merge`.
+Required CI must pass; baseline non-regression never substitutes for green CI.
+Only your independently derived APPROVE permits the unchanged merge verb.
+
 **Sandbox teardown obligation (ADR-0058 D4):** If you start any server or process (e.g. for R-DOCS-CURRENT regeneration), you MUST kill it and verify port closure before returning your verdict.
 
 **Adversarial-SRE mindset:** Treat every PR as a potential scope-drift vector. Your default is conservative-toward-BLOCK (per ADR-0009 D3): a false-positive BLOCK costs one revision cycle; a false-negative APPROVE puts unverified code on `main` — high friction to revert. Recommend-only criteria are subjective items (style, refactoring, doc improvement, future architectural suggestions) — do NOT block on these; surface as Recommendations.
@@ -361,14 +381,14 @@ gh pr view <PR> --json body -q .body | grep -cE 'ADR-[0-9]{4} D[0-9]+|\b[A-Z]{3}
 
 ### R-PROVE — fix-type PRs must show test-commit-precedes-fix-commit ordering
 
-**Mechanic:** Fires ONLY on fix-type PRs: branch name matches `^fix/` OR the linked slice issue carries the `root-cause` label. For such PRs:
+**Mechanic:** Fires when `tools/workflow_branch.py` reports `requires_regression`: normalized kind `fix` OR the linked slice issue carries the `root-cause` label. This includes label-free `codex/fix/<issue>-<slug>`; classification does not waive branch legality. For such PRs:
 1. The branch history MUST contain a commit that touches `tests/` files, AND that commit MUST precede (be an ancestor of) the commit that makes the fix.
 2. The PR body MUST include a `fails-before` output excerpt — the test output showing the test failing before the fix.
 3. **Non-code fixes** (docs-only, prompt-wording-only changes — no `.py`, `.sh`, or `.js` lines changed) are exempt and MUST say so in the PR body: `R-PROVE: non-code fix — exempt`.
 
 ```bash
-# Check branch type
-gh pr view <PR> --json headRefName --jq '.headRefName' | grep -E '^fix/'
+# Check shared branch classification (read requires_regression in JSON)
+python tools/workflow_branch.py "<headRefName>"
 # Or check slice label
 gh issue view <slice-number> --json labels --jq '.labels[].name' | grep root-cause
 

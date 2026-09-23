@@ -184,11 +184,17 @@ class TestGenRulesBaseline(unittest.TestCase):
         # then moved it 93 -> 95, slice #1506 — ADR-0090's eight
         # supersessions (ADR-0003 D1, ADR-0024 D1/D2, ADR-0063 D1, ADR-0085
         # D1/D3/D5/D6) are each PARTIAL, so no existing rule_id drops out of
-        # the active set; the delta is a pure +2). This test's job is
-        # unchanged: confirm slice #1162's own PIP-020/021 rule_ids are
-        # still represented in the live baseline, not that the literal
+        # the active set; the delta is a pure +2; ADR-0086's PIP-030 then
+        # moved it 95 -> 96, slice #1440, reconciled against this baseline
+        # in the codex/feat/1440-shared-workflow merge — ADR-0086's five
+        # supersessions (ADR-0004 D3, ADR-0027 D1/D2/D3, ADR-0036 D1/D2,
+        # ADR-0058 D1, ADR-0061 D2) are each PARTIAL, so no existing rule_id
+        # drops out of the active set; the delta is a pure +1). This test's
+        # job is unchanged: confirm slice #1162's own PIP-020/021 rule_ids
+        # are still represented in the live baseline, not that the literal
         # number stays frozen at 82.
-        self.assertIn("RULE_IDS_BASELINE: int = 95", self.text)
+        self.assertIn("RULE_IDS_BASELINE: int = 96", self.text)
+        self.assertIn('"PIP-030"', self.text)
 
     def test_new_rule_statements_present(self):
         self.assertIn('"PIP-020"', self.text)

@@ -56,6 +56,10 @@ import threading
 import time
 from pathlib import Path
 
+if str(Path(__file__).resolve().parent.parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from tools.workflow_branch import classify as classify_branch
+
 # ---------------------------------------------------------------------------
 # Branch-role resolver (ADR-0089 D1) — pipeline_config.py is the one parser.
 # Located relative to THIS file's own path (S1-c), never via cwd or
@@ -562,6 +566,19 @@ def _v3_trace_log_exists() -> bool:
 # Known critics — single-sourced from _constants.py (CHECK 7 regexes that
 # file's literal; ADR-0088 D4). Aliased to the pre-existing local name so
 # every downstream reference in this module is unchanged.
+# Standalone invocation (`python3 dashboard/health.py ...`, used throughout
+# ci-checks.sh) implicitly puts dashboard/ on sys.path[0], so the bare import
+# below already worked in that mode. Imported as the `dashboard.health`
+# submodule (`from dashboard import health`, e.g. from tests/ or another
+# repo-root-relative caller) does not carry that implicit entry, so the bare
+# import raised ModuleNotFoundError there; explicitly ensuring dashboard/ is
+# on sys.path first (mirroring _insert_dashboard_sys_path()'s own logic,
+# defined later in this file and unusable this early at module-import time)
+# fixes both call shapes identically. A relative import is not an option:
+# it would break the standalone-script mode ci-checks.sh depends on.
+_dashboard_dir = str(Path(__file__).resolve().parent)
+if _dashboard_dir not in sys.path:
+    sys.path.insert(0, _dashboard_dir)
 from _constants import KNOWN_CRITICS as _KNOWN_CRITICS  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -3196,6 +3213,10 @@ def _classify_route(changed_files: list[str]) -> set[str]:
     import fnmatch
     classes: set[str] = set()
     for f in changed_files:
+        # Mirror qa-tester's instruction/router row; parity is tested.
+        if f == "AGENTS.md" or f.startswith(".agents/"):
+            classes.update(("command-run", "static"))
+            continue
         for pattern, cls in _ROUTE_TABLE:
             if fnmatch.fnmatch(f, pattern) or fnmatch.fnmatch(f.split("/")[-1], pattern):
                 classes.add(cls)
@@ -3513,7 +3534,7 @@ def check_proof_presence() -> dict:
     for pr in prs_all:
         ref = pr.get("headRefName", "")
         labels = [lb.get("name", "") for lb in (pr.get("labels") or [])]
-        if "trivial" in labels or ref.startswith("hotfix/"):
+        if "trivial" in labels or classify_branch(ref).kind == "hotfix":
             continue
         if pr.get("number", 0) > _PROOF_PRESENCE_BOOTSTRAP_PR:
             non_trivial.append(pr)
@@ -4900,7 +4921,7 @@ def check_test_ordering() -> dict:
             "api_available": False,
         }
 
-    fix_prs = [p for p in prs if (p.get("headRefName") or "").startswith("fix/")]
+    fix_prs = [p for p in prs if classify_branch(p.get("headRefName")).kind == "fix"]
 
     grandfathered_count = 0
     ordered = 0
@@ -6416,7 +6437,7 @@ def check_proof_integrity() -> dict:
     for pr in all_prs:
         ref = pr.get("headRefName", "")
         labels = [lb.get("name", "") for lb in (pr.get("labels") or [])]
-        if "trivial" in labels or ref.startswith("hotfix/"):
+        if "trivial" in labels or classify_branch(ref).kind == "hotfix":
             continue
         if pr.get("number", 0) <= _PROOF_INTEGRITY_BOOTSTRAP_PR:
             continue

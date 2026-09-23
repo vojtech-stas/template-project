@@ -14,7 +14,8 @@
 #      banned per CLAUDE.md cross-cutting rule #4.
 #   2. Commits on a branch whose name does NOT match the regex
 #        ^(feat|fix|chore|refactor|docs|test|perf|style|build|ci|hotfix)/[0-9]+-[a-z0-9-]+$
-#      i.e. <conventional-type>/<issue-number>-<kebab-slug>.
+#      i.e. <conventional-type>/<issue-number>-<kebab-slug>, optionally
+#      prefixed by codex/ (ADR-0086 D2; same closed types and issue grammar).
 #
 # Fail-open policy (per PRD #15 §6 OQ#2):
 #   On detached HEAD, initial-commit-with-no-branch, or any branch-name
@@ -63,9 +64,9 @@ fi
 # POSIX-compatible regex match via `expr`. The pattern below mirrors the
 # canonical regex in ADR-0004 D3 and PRD #15 §2.
 pattern='^\(feat\|fix\|chore\|refactor\|docs\|test\|perf\|style\|build\|ci\|hotfix\)/[0-9][0-9]*-[a-z0-9-][a-z0-9-]*$'
-if ! expr "$branch" : "$pattern" >/dev/null 2>&1; then
+if ! expr "${branch#codex/}" : "$pattern" >/dev/null 2>&1; then
     echo "pre-commit: ERROR: branch name '$branch' does not match the required pattern." >&2
-    echo "pre-commit: Expected: <type>/<issue#>-<kebab-slug>" >&2
+    echo "pre-commit: Expected: <type>/<issue#>-<kebab-slug> or codex/<type>/<issue#>-<kebab-slug>" >&2
     echo "pre-commit: Regex:    ^(feat|fix|chore|refactor|docs|test|perf|style|build|ci|hotfix)/[0-9]+-[a-z0-9-]+\$" >&2
     echo "pre-commit: Examples: feat/16-pre-commit-hook   docs/8-claude-md-rollup   hotfix/42-typo-fix" >&2
     echo "pre-commit: See CLAUDE.md 'Operational git workflow' and ADR-0004 D3." >&2
