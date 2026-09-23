@@ -39,7 +39,7 @@ Exports:
     check_merged_without_verdict() -> dict  (slice #1136/PRD #1127 cr.11b: merged PR vs verdict span, ADR-0076 anchor)
     check_closed_prd_vs_qa() -> dict     (slice #1136/PRD #1127 cr.11b: closed PRD vs qa_verified PASS span)
     check_query_honesty() -> dict   (slice #1498/ADR-0087 D2: REST-attested canary over the `prd`-label path;
-                                      gates every `--label` call through the seam)
+                                      gates every confirmed `--label` answer through the seam)
     serve_health() -> dict          (TTL-cached; <200ms on second call)
     _health_background() -> None    (background thread target)
     _health_cache, _health_lock, _health_computing, _HEALTH_TTL
@@ -101,24 +101,59 @@ def _health_gh_fetch(
     timeout: float = 5.0,
     with_source: bool = False,
 ) -> tuple:
-    """The health-registry seam: the ONLY function through which any check
-    reaches `gh` (ADR-0087 D1). Delegates to `_health_gh_fetch_raw()` for
-    the actual fetch, but first gates every label-filtering call behind
-    the QUERY-HONESTY REST-attested canary (ADR-0087 D2, slice #1498):
+    """The health-registry `gh` seam: provenance labels + QUERY-HONESTY gate.
+
+    The only code in this file that spawns `gh` is `_health_gh_fetch_raw()`,
+    through `gh_cache.gh_fetch` or its bounded `subprocess.run(["gh", ...])`
+    fallback. Within this file, that function is called only by this seam
+    and by the QUERY-HONESTY canary's own two queries (see below). Child
+    processes this file starts (e.g. `bash tools/ci-checks.sh`) are outside
+    this description.
+
+    This seam is NOT the only route by which a registered check reaches
+    `gh`. Four `CHECK_REGISTRY` checks call `dashboard/collector.py`
+    directly and one more reaches it indirectly; collector runs `gh`
+    itself, so these reads bypass both this seam's provenance labels and
+    the QUERY-HONESTY gate:
+      - `CRITIC-HEALTH` and `MERGE-INTEGRITY` call
+        `collector.get_closed_prd_numbers()` (a direct
+        `gh issue list --label prd`) and `collector.get_trail()` (a
+        cache-first reader backed by `gh`);
+      - `PROOF-PRESENCE` calls `collector.get_recent_merged_prs()` and
+        `collector._run_gh`; `PROOF-INTEGRITY` calls
+        `collector.get_recent_merged_prs()`;
+      - `RELEASE-READY` condition (c) calls `check_proof_integrity()`.
+    That bypass predates ADR-0087 and is not fixed here. #1515 tracks the
+    `get_closed_prd_numbers()` label read, plus the flag-spelling gaps in
+    `_args_apply_label_filter`; #1518 tracks the
+    `get_recent_merged_prs()` / `_run_gh` reads.
+
+    Fetches through `_health_gh_fetch_raw()` FIRST, unconditionally, then
+    gates only a CONFIRMED label-filtering answer behind the QUERY-HONESTY
+    REST-attested canary (ADR-0087 D2, slice #1498):
 
     A desynced repo slug can make a label-filtered `gh` query answer
     `source="live"` while silently returning the wrong (often empty) set —
-    no provenance label alone can catch that. So before any call whose
-    `args` apply a label filter (any spelling `_args_apply_label_filter`
-    recognizes) is allowed to return as confirmed, this wrapper requires
-    `_query_honesty_attest()` to PASS. When it does not, the call returns
-    `(1, "", "unverified")` (or its 2-tuple prefix) regardless of what the
-    real `gh` call would have answered — the seven pre-existing
-    label-filtered callers already treat any non-zero `rc` as "gh
-    unavailable", so none of them needed editing.
+    no provenance label alone can catch that. So once a call whose `args`
+    apply a label filter (any spelling `_args_apply_label_filter`
+    recognizes) has come back CONFIRMED (`rc == 0`) from the raw fetch,
+    this wrapper requires `_query_honesty_attest()` to PASS before letting
+    that confirmed answer through as-is. When the attestation does not
+    PASS, the call is downgraded to `(1, "", "unverified")` (or its
+    2-tuple prefix) regardless of that confirmed answer's payload — the
+    seven pre-existing label-filtered callers already treat any non-zero
+    `rc` as "gh unavailable", so none of them needed editing.
 
-    Calls that apply no label filter (the majority) pass straight through
-    to `_health_gh_fetch_raw()`, unaffected.
+    An UNCONFIRMED raw answer (source `stale`/`computing`, i.e. `rc != 0`)
+    is returned exactly as `_health_gh_fetch_raw()` reported it, whether or
+    not `args` apply a label filter — the attestation is never consulted
+    for it, so its true cause (e.g. GitHub unreachable) is never masked
+    behind `unverified`. This ordering is ADR-0087 D2's own wording: the
+    attestation gates a call "before [the seam] returns [it] ... as
+    confirmed" — an already-unconfirmed call has nothing left to gate.
+
+    Calls that apply no label filter pass through with the raw answer
+    untouched, whatever its source.
 
     Parameters
     ----------
@@ -127,11 +162,12 @@ def _health_gh_fetch(
     timeout     : hard per-call timeout in seconds passed to gh_cache / subprocess.
     with_source : when True, return a 3-tuple including the provenance source.
     """
-    if _args_apply_label_filter(args):
+    rc, out, source = _health_gh_fetch_raw(args, ttl=ttl, timeout=timeout, with_source=True)
+    if rc == 0 and _args_apply_label_filter(args):
         _qh_passed = _query_honesty_attest()[0]
         if not _qh_passed:
-            return (1, "", "unverified") if with_source else (1, "")
-    return _health_gh_fetch_raw(args, ttl=ttl, timeout=timeout, with_source=with_source)
+            rc, out, source = 1, "", "unverified"
+    return (rc, out, source) if with_source else (rc, out)
 
 
 def _health_gh_fetch_raw(
@@ -146,7 +182,9 @@ def _health_gh_fetch_raw(
     function and is what every check should call. This function exists
     separately so the QUERY-HONESTY canary's own label-path query can
     bypass its own attestation gate (ADR-0087 D2): calling `_health_gh_fetch`
-    for that query would recurse.
+    for that query would recurse whenever its raw fetch came back
+    confirmed (the seam consults the attestation for a label-filtered call
+    only once its raw fetch is confirmed).
 
     Returns (returncode: int, stdout: str) by default, matching the existing
     ``_sp.run`` pattern used inside each check's inner helper. Pass
@@ -204,7 +242,8 @@ def _health_gh_fetch_raw(
 # ---------------------------------------------------------------------------
 # QUERY-HONESTY — REST-attested canary over the `prd`-label path (ADR-0087
 # D2, slice #1498). This is the attestation `_health_gh_fetch()` (the seam,
-# above) consumes on every `--label`-bearing call.
+# above) consults on each call whose args `_args_apply_label_filter`
+# recognizes and whose raw fetch came back confirmed (`rc == 0`).
 # ---------------------------------------------------------------------------
 
 _QUERY_HONESTY_CANARY_LABEL = "prd"
@@ -269,11 +308,20 @@ def _query_honesty_attest() -> tuple:
     Deliberately calls `_health_gh_fetch_raw()`, NOT the seam
     `_health_gh_fetch()`, for its own two queries: the label-path query is
     itself `--label`-bearing, and routing it through the seam would recurse
-    into this same function.
+    into this same function whenever that query's raw fetch came back
+    confirmed (the seam consults this function only then).
 
     Returns (passed: bool, verdict: "PASS"|"FAIL"|"WARN", detail: str).
-    `passed` is True iff verdict == "PASS" — that is the sole condition
-    under which the seam lets a `--label` call through as confirmed.
+    `passed` is True iff verdict == "PASS". At the seam, `passed` is a
+    required condition, not the only one: the seam first fetches through
+    `_health_gh_fetch_raw()`, and only when that raw fetch comes back
+    confirmed (`rc == 0`) for a label-filtered call (any spelling
+    `_args_apply_label_filter` recognizes) does it consult this function —
+    letting the confirmed answer through as-is when `passed` is True and
+    downgrading it to rc=1, empty stdout, source "unverified" otherwise. An
+    unconfirmed raw fetch is returned with its own source and never
+    consults this function; neither does a call that applies no label
+    filter.
     """
     now = time.time()
     with _query_honesty_lock:
@@ -353,8 +401,12 @@ def _query_honesty_attest() -> tuple:
 
 def check_query_honesty() -> dict:
     """QUERY-HONESTY: attests the `prd`-label query path against a REST
-    canary, and is the sole gate deciding whether any `--label`-bearing
-    call through the seam (`_health_gh_fetch`) may be read as confirmed.
+    canary. At the seam (`_health_gh_fetch`) this attestation is a
+    required condition, not the only one: a label-filtered call reads as
+    confirmed only when its raw fetch is confirmed (`rc == 0`) AND the
+    attestation PASSes. The seam consults the attestation only after the
+    raw fetch is confirmed; an unconfirmed raw fetch is returned with its
+    own source, without consulting it.
 
     A repo-slug desync (e.g. after a rename) can leave `gh issue list
     --label prd` answering an empty, `source=live` list while the repo
@@ -3236,32 +3288,48 @@ def check_residual_ratio() -> dict:
 
     def _fetch_closed_prds(limit):
         # Routed through gh_cache — PRD #993 cr.3/cr.4, slice #996.
+        # ADR-0087 D3: an unconfirmed fetch, and a confirmed source paired
+        # with an empty/unparsable payload, both count as unconfirmed —
+        # never as a confirmed empty list. Returns (numbers, confirmed, source).
         try:
-            rc, out = _health_gh_fetch(
+            rc, out, source = _health_gh_fetch(
                 ["issue", "list", "--label", "prd",
                  "--state", "closed", "--limit", str(limit),
                  "--json", "number"],
-                ttl=60.0, timeout=5.0,
+                ttl=60.0, timeout=5.0, with_source=True,
             )
-            if rc == 0 and out.strip():
-                return [item["number"] for item in _json.loads(out)]
-        except Exception:
-            pass
-        return []
+        except Exception as exc:
+            return [], False, f"computing: {exc}"
+        if rc != 0:
+            return [], False, source
+        try:
+            items = _json.loads(out)
+            if not isinstance(items, list):
+                raise ValueError("payload is not a JSON list")
+        except Exception as exc:
+            return [], False, f"{source}: unparsable payload: {exc}"
+        return [item["number"] for item in items], True, source
 
     def _fetch_comments(prd_num):
-        # Routed through gh_cache — each PRD comment fetch is individually cached.
+        # Routed through gh_cache — each PRD comment fetch is individually
+        # cached. Same unconfirmed contract as _fetch_closed_prds above.
         try:
-            rc, out = _health_gh_fetch(
+            rc, out, source = _health_gh_fetch(
                 ["issue", "view", str(prd_num), "--json", "comments"],
-                ttl=60.0, timeout=5.0,
+                ttl=60.0, timeout=5.0, with_source=True,
             )
-            if rc == 0 and out.strip():
-                data = _json.loads(out)
-                return [c.get("body", "") for c in data.get("comments", [])]
-        except Exception:
-            pass
-        return []
+        except Exception as exc:
+            return [], False, f"computing: {exc}"
+        if rc != 0:
+            return [], False, source
+        try:
+            data = _json.loads(out)
+            comments = data.get("comments") if isinstance(data, dict) else None
+            if comments is None:
+                raise ValueError("payload missing a comments list")
+        except Exception as exc:
+            return [], False, f"{source}: unparsable payload: {exc}"
+        return [c.get("body", "") for c in comments], True, source
 
     # Separator rows like "|---|---|" -- skip these
     _separator_re = re.compile(r'^\|\s*[-:]+\s*\|')
@@ -3270,9 +3338,16 @@ def check_residual_ratio() -> dict:
     extract_failed = 0
     total = 0
     prds_scanned = 0
-    fetch_error = None
+    unconfirmed_source = None
 
-    prd_numbers = _fetch_closed_prds(_RESIDUAL_RATIO_PRD_WINDOW)
+    prd_numbers, prds_confirmed, prds_source = _fetch_closed_prds(_RESIDUAL_RATIO_PRD_WINDOW)
+    if not prds_confirmed:
+        return {
+            "id": "RESIDUAL-RATIO",
+            "result": "WARN",
+            "detail": f"unconfirmed (source={prds_source})",
+            "judgment": 0, "extract_failed": 0, "total": 0, "rate": None,
+        }
     if not prd_numbers:
         return {
             "id": "RESIDUAL-RATIO",
@@ -3285,9 +3360,15 @@ def check_residual_ratio() -> dict:
         }
 
     for prd_num in prd_numbers:
-        comments = _fetch_comments(prd_num)
-        if not comments and fetch_error is None:
-            fetch_error = "comment fetch failed for PRD #{} (auth or timeout)".format(prd_num)
+        comments, comments_confirmed, comments_source = _fetch_comments(prd_num)
+        if not comments_confirmed:
+            # ADR-0087 D3: RESIDUAL-RATIO must not compute a ratio from
+            # partial comment data — remember the first unconfirmed leg and
+            # report it once the loop ends, instead of silently treating a
+            # failed comment fetch as "no QA-plan in this PRD".
+            if unconfirmed_source is None:
+                unconfirmed_source = comments_source
+            continue
         prd_has_plan = False
         for body in comments:
             if "## QA-plan" not in body:
@@ -3319,14 +3400,21 @@ def check_residual_ratio() -> dict:
         if prd_has_plan:
             prds_scanned += 1
 
+    if unconfirmed_source is not None:
+        return {
+            "id": "RESIDUAL-RATIO",
+            "result": "WARN",
+            "detail": f"unconfirmed (source={unconfirmed_source})",
+            "judgment": judgment, "extract_failed": extract_failed,
+            "total": total, "rate": None,
+        }
+
     if total < _RESIDUAL_RATIO_MIN_ROWS:
         detail = (
             "low-sample: {} criteria rows across {} PRDs with QA-plans "
             "(min={}); judgment={}, extract_failed={}; "
             "ratio not computed -- insufficient data for ADR-0066 D1 drop-criterion signal"
         ).format(total, prds_scanned, _RESIDUAL_RATIO_MIN_ROWS, judgment, extract_failed)
-        if fetch_error:
-            detail += " | note: {}".format(fetch_error)
         return {
             "id": "RESIDUAL-RATIO",
             "result": "WARN",
@@ -3344,8 +3432,6 @@ def check_residual_ratio() -> dict:
         "across {} PRDs with QA-plans "
         "(bind-forward ADR-0066 D1: ratio should fall after PC-EARS adoption)"
     ).format(residual, total, rate_pct, judgment, extract_failed, prds_scanned)
-    if fetch_error:
-        detail += " | note: {}".format(fetch_error)
 
     # WARN always (not FAIL) -- this is a measurement row, not a blocking check.
     # The drop-criterion is a human-reviewed decision, not an automated gate.
@@ -3530,23 +3616,43 @@ def check_capture_shape() -> dict:
         r'\*\*Symptom:\*\*(.*?)(?=\*\*Root cause:\*\*)', re.DOTALL
     )
 
-    def _fetch_issues(label: str) -> list[dict]:
+    def _fetch_issues(label: str) -> tuple:
         # Routed through gh_cache — PRD #993 cr.3/cr.4, slice #996.
+        # ADR-0087 D3: an unconfirmed fetch, and a confirmed source paired
+        # with an empty/unparsable payload, both count as unconfirmed —
+        # never as a confirmed empty list. Returns (items, confirmed, source).
         try:
-            rc, out = _health_gh_fetch(
+            rc, out, source = _health_gh_fetch(
                 ["issue", "list", "--label", label,
                  "--state", "all", "--limit", "50",
                  "--json", "number,body,labels"],
-                ttl=60.0, timeout=5.0,
+                ttl=60.0, timeout=5.0, with_source=True,
             )
-            if rc == 0 and out.strip():
-                return _json.loads(out)
-        except Exception:
-            pass
-        return []
+        except Exception as exc:
+            return [], False, f"computing: {exc}"
+        if rc != 0:
+            return [], False, source
+        try:
+            items = _json.loads(out)
+            if not isinstance(items, list):
+                raise ValueError("payload is not a JSON list")
+        except Exception as exc:
+            return [], False, f"{source}: unparsable payload: {exc}"
+        return items, True, source
 
     # Step 1: Check root-cause labeled issues
-    root_cause_issues = _fetch_issues("root-cause")
+    root_cause_issues, rc_confirmed, rc_source = _fetch_issues("root-cause")
+    if not rc_confirmed:
+        return {
+            "id": "CAPTURE-SHAPE",
+            "result": "WARN",
+            "detail": f"unconfirmed (source={rc_source})",
+            "total_root_cause": 0,
+            "conforming_count": 0,
+            "evidence_count": 0,
+            "non_conformers": [],
+            "unlabeled_candidates": [],
+        }
     total_rc = len(root_cause_issues)
     conforming = []
     non_conformers = []
@@ -3568,7 +3674,18 @@ def check_capture_shape() -> dict:
     evid_rate = round(evidence_present / len(conforming), 3) if conforming else None
 
     # Step 2: Unlabeled-candidate counter (captured issues with 3-section shape)
-    captured_issues = _fetch_issues("captured")
+    captured_issues, cap_confirmed, cap_source = _fetch_issues("captured")
+    if not cap_confirmed:
+        return {
+            "id": "CAPTURE-SHAPE",
+            "result": "WARN",
+            "detail": f"unconfirmed (source={cap_source})",
+            "total_root_cause": total_rc,
+            "conforming_count": len(conforming),
+            "evidence_count": evidence_present,
+            "non_conformers": non_conformers,
+            "unlabeled_candidates": [],
+        }
     unlabeled_candidates = []
     rc_numbers = {i["number"] for i in root_cause_issues}
     for issue in captured_issues:
@@ -5511,22 +5628,37 @@ def check_branch_topology() -> dict:
         main_is_ancestor = False
 
     # 5. Recent PRs base check via gh CLI (via gh_cache — PRD #993 cr.3, slice #996)
+    # ADR-0087 D3: an unconfirmed fetch — or a confirmed source paired with
+    # an empty/unparsable payload — must never silently default
+    # pr_base_ok = True; it must report WARN naming the unconfirmed source
+    # (closes #1448).
     pr_base_ok = True
+    pr_unconfirmed = False
     pr_warn_detail = ""
+    pr_source = "computing"
     try:
-        _pr5_rc, _pr5_out = _health_gh_fetch(
+        _pr5_rc, _pr5_out, _pr5_source = _health_gh_fetch(
             ["pr", "list", "--state", "merged", "--limit", "10",
              "--json", "number,baseRefName"],
-            ttl=60.0, timeout=5.0,
+            ttl=60.0, timeout=5.0, with_source=True,
         )
-        if _pr5_rc == 0 and _pr5_out.strip():
-            prs = _json.loads(_pr5_out)
-            main_based = [p["number"] for p in prs if p.get("baseRefName") == "main"]
-            if main_based:
-                pr_base_ok = False
-                pr_warn_detail = f" | recent PRs with main base: {main_based[:3]}"
+        pr_source = _pr5_source
+        if _pr5_rc != 0:
+            pr_unconfirmed = True
+        else:
+            try:
+                prs = _json.loads(_pr5_out)
+                if not isinstance(prs, list):
+                    raise ValueError("payload is not a JSON list")
+            except Exception:
+                pr_unconfirmed = True
+            else:
+                main_based = [p["number"] for p in prs if p.get("baseRefName") == "main"]
+                if main_based:
+                    pr_base_ok = False
+                    pr_warn_detail = f" | recent PRs with main base: {main_based[:3]}"
     except Exception:
-        pass  # gh unavailable — skip PR check, don't WARN for this
+        pr_unconfirmed = True
 
     # 6. Branch-protection advisory (via gh_cache — PRD #993 cr.3, slice #996)
     bp_note = ""
@@ -5559,6 +5691,20 @@ def check_branch_topology() -> dict:
             "id": "BRANCH-TOPOLOGY",
             "result": "WARN",
             "detail": f"main is NOT ancestor of develop (diverged topology); {base_detail}",
+            "develop_sha": develop_sha,
+            "main_sha": main_sha,
+            "ahead": ahead,
+            "behind": behind,
+            "main_is_ancestor": main_is_ancestor,
+        }
+
+    if pr_unconfirmed:
+        return {
+            "id": "BRANCH-TOPOLOGY",
+            "result": "WARN",
+            "detail": (
+                f"recent-PR base check unconfirmed (source={pr_source}); {base_detail}"
+            ),
             "develop_sha": develop_sha,
             "main_sha": main_sha,
             "ahead": ahead,
@@ -5937,9 +6083,11 @@ def check_release_ready() -> dict:
         # Routed through gh_cache (ttl=30s, timeout=5s) — PRD #993 cr.3, slice #996.
         # Short TTL so stale cached counts don't hold the gate on the wrong value.
         # Two legs, issues and PRs; both must be a CONFIRMED, parseable JSON
-        # list before the sum counts as observed (ADR-0087 D2's QUERY-HONESTY
-        # attestation, once slice 2 wires it, is consumed transparently here
-        # via the seam's source label — no edit needed at this call site).
+        # list before the sum counts as observed. Both legs are label-filtered,
+        # so the seam applies ADR-0087 D2's QUERY-HONESTY attestation (slice
+        # #1498) to each: a confirmed leg whose attestation does not PASS
+        # comes back rc=1 with source "unverified" and is held below like any
+        # other unconfirmed leg — no edit was needed at this call site.
         nh_confirmed = True
         nh_count = 0
         nh_legs = []
@@ -7246,8 +7394,8 @@ CHECK_REGISTRY: dict[str, callable] = {
     "CAPTURE-SHAPE":   check_capture_shape,
     "GREEN-MAIN":      check_green_main,
     "RECORD-VS-GH":    check_record_vs_gh,
-    # REST-attested canary gating every --label call through the seam
-    # (ADR-0087 D2 — slice #1498)
+    # REST-attested canary gating every confirmed --label answer through
+    # the seam (ADR-0087 D2 — slice #1498)
     "QUERY-HONESTY":   check_query_honesty,
     # ADR-0076 reconciler family (PRD #1127 §2 criterion 11b / slice #1136)
     "SLICE-VS-PR":            check_slice_vs_pr,

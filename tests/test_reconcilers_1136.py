@@ -115,13 +115,13 @@ class _ReconcilerTestBase(unittest.TestCase):
         real subprocess call).
 
         The 'api' route answers the QUERY-HONESTY REST canary (ADR-0087 D2
-        / slice #1498) every --label-bearing call is now gated behind (see
-        health._health_gh_fetch). When api_result is not given explicitly
-        but issue_list_result is a confirmed ('live'/'cache') result, a
-        REST-canary-matching payload is auto-derived from its item count so
-        the attestation PASSes and every pre-existing --label assertion in
-        this file keeps reading exactly as it did before the canary
-        existed -- no per-test changes needed."""
+        / slice #1498) every confirmed --label-bearing answer is now gated
+        behind (see health._health_gh_fetch). When api_result is not given
+        explicitly but issue_list_result is a confirmed ('live'/'cache')
+        result, a REST-canary-matching payload is auto-derived from its item
+        count so the attestation PASSes and every pre-existing --label
+        assertion in this file keeps reading exactly as it did before the
+        canary existed -- no per-test changes needed."""
         def _fetch(args, ttl, timeout):
             if args and args[0] == "pr" and pr_list_result is not None:
                 return pr_list_result
@@ -451,11 +451,13 @@ class TestClosedPrdVsQa(_ReconcilerTestBase):
 # QUERY-HONESTY gate cross-effect on the reconcilers (round-2 fix, R-YAGNI
 # finding F1 / ADR-0087 D2): `_patch_gh`'s explicit `api_result` route is
 # exercised here (rather than deleted) -- a REST-canary-mismatched
-# `api_result` makes the QUERY-HONESTY attestation FAIL, which gates every
-# `--label`-bearing call through the seam as unconfirmed (ADR-0087 D2). Both
-# SLICE-VS-PR and CLOSED-PRD-VS-QA issue a `--label`-bearing call, so both
-# must degrade to an honest WARN -- never a silent PASS or a fabricated
-# FAIL. This is the unit-level form of PRD #1496 §2 criterion 11.
+# `api_result` makes the QUERY-HONESTY attestation FAIL, which downgrades
+# every confirmed `--label`-bearing answer through the seam to unconfirmed
+# (source "unverified", ADR-0087 D2). Both SLICE-VS-PR and
+# CLOSED-PRD-VS-QA issue a `--label`-bearing call whose raw answer here is
+# confirmed, so both must degrade to an honest WARN -- never a silent PASS
+# or a fabricated FAIL. This is the unit-level form of PRD #1496 §2
+# criterion 11.
 # ---------------------------------------------------------------------------
 
 class TestQueryHonestyGatesReconcilers(_ReconcilerTestBase):
