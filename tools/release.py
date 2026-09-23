@@ -690,8 +690,8 @@ def _find_lane_pr_for_issue(owner, repo, num, repo_url):
     `source.issue` carries the PR's `body`, `labels`, `author_association`
     and `pull_request.merged_at`. Never the search index, which answers
     empty with success under a renamed slug and lags a fresh merge (the
-    ADR-0087 context, #1510). Never the (deferred, criterion 27) closing
-    comment, which keeps the SPIDR fallback available (constraint 6).
+    ADR-0087 context, #1510). Never the closing comment `pr-merge` posts
+    (criterion 27): the timeline alone finds the PR (constraint 6).
     Labels are filtered here, never via `--label` (C4).
 
     Only a PR of `repo_url` (the issue's own canonical `repository_url`)
