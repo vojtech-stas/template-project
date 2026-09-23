@@ -3,7 +3,7 @@ Regression tests for issue #1107 — STREAM-LIVENESS per-stream cadence classes.
 
 Root cause (see issue #1107's diagnosis comment): STREAM-LIVENESS applied a
 uniform 60-minute window to every registered stream regardless of its natural
-cadence. A once-per-session stream (session-start, dashboard-autostart) or a
+cadence. A once-per-session stream (session-start, session-scoped-b) or a
 trigger-driven stream (grill_qa) mathematically FAILs any uniform window
 shorter than the time since its last (legitimate) trigger — a false-alarm
 class, not a real outage. This is exactly what forced PRD #1075's
@@ -12,7 +12,7 @@ their most recent real trigger; the window model was wrong for sparse streams.
 
 Fix: per-stream cadence classes in the STREAM-LIVENESS registry —
   - always-on: unchanged 60m uniform window.
-  - session-scoped (session-start, dashboard-autostart, ...): alive iff the
+  - session-scoped (session-start, session-scoped-b, ...): alive iff the
     stream's own last beacon is within a small skew tolerance of the NEWEST
     beacon among all session-scoped streams (never against wall-clock "now").
     FAILs only when a newer session-scoped beacon exists elsewhere and this
@@ -64,14 +64,18 @@ def _write_settings(path: Path, hook_entries: dict) -> None:
     path.write_text(json.dumps({"hooks": hook_entries}), encoding="utf-8")
 
 
-# Mirrors the real .claude/settings.json SessionStart registration shape:
-# two direct-beacon (filename-stem-fallback) hooks fired once per session.
+# session-start.sh is the one real SessionStart hook registered in
+# .claude/settings.json; session-scoped-b is a synthetic sibling
+# (dashboard-autostart.sh's registration was retired per ADR-0088 D1 /
+# slice #1483) that exercises the same filename-stem-fallback shape so the
+# two-session-scoped-stream skew-tolerance logic below still has a second
+# stream to test against.
 _SESSION_SCOPED_SETTINGS = {
     "SessionStart": [
         {"matcher": "", "hooks": [{"type": "command",
          "command": 'bash "$X/.claude/hooks/session-start.sh"'}]},
         {"matcher": "", "hooks": [{"type": "command",
-         "command": 'bash "$X/.claude/hooks/dashboard-autostart.sh"'}]},
+         "command": 'bash "$X/.claude/hooks/session-scoped-b.sh"'}]},
     ],
     "PreToolUse": [
         {"matcher": "Bash", "hooks": [{"type": "command",
@@ -133,8 +137,10 @@ class TestFixtureA_SessionScopedOldButSynced(unittest.TestCase):
     """(a) False-FAIL repro: session-scoped streams whose last beacon
     coincides with the newest session start, >60m ago, must NOT FAIL — this
     is exactly the PRD #1075 production-verify incident (session-start and
-    dashboard-autostart both beaconed at ~05:26Z, 145m before the check ran,
-    with no newer session having started since)."""
+    the real incident's second session-scoped hook — now the synthetic
+    session-scoped-b sibling, since that hook's registration was retired per
+    ADR-0088 D1 — both beaconed at ~05:26Z, 145m before the check ran, with
+    no newer session having started since)."""
 
     def test_synced_session_scoped_streams_old_but_not_failed(self):
         now = time.time()
@@ -147,7 +153,7 @@ class TestFixtureA_SessionScopedOldButSynced(unittest.TestCase):
                 _SESSION_SCOPED_SETTINGS,
                 fires_lines=[
                     {"hook": "session-start", "ts": _iso(now - old_seconds)},
-                    {"hook": "dashboard-autostart", "ts": _iso(now - old_seconds)},
+                    {"hook": "session-scoped-b", "ts": _iso(now - old_seconds)},
                     {"hook": "pre-tool-bash", "ts": _iso(now - 60)},  # fresh always-on
                     # grill_qa (on-demand): never fired — must not FAIL either.
                 ],
@@ -172,16 +178,16 @@ class TestFixtureA_SessionScopedOldButSynced(unittest.TestCase):
         )
         fail_names = " ".join(result.get("fail_streams", []))
         self.assertNotIn("session-start", fail_names, msg=result)
-        self.assertNotIn("dashboard-autostart", fail_names, msg=result)
+        self.assertNotIn("session-scoped-b", fail_names, msg=result)
         self.assertNotIn("grill_qa", fail_names, msg=result)
         # honesty requirement: the class + age must still be nameable in output
         self.assertIn("session-start", result["detail"], msg=result)
-        self.assertIn("dashboard-autostart", result["detail"], msg=result)
+        self.assertIn("session-scoped-b", result["detail"], msg=result)
 
 
 class TestFixtureB_NewerSessionWithoutBeacon(unittest.TestCase):
     """(b) Real outage class stays detected: a newer session-scoped beacon
-    exists (dashboard-autostart just fired) but a sibling session-scoped
+    exists (session-scoped-b just fired) but a sibling session-scoped
     stream (session-start) has NOT fired since a much older session — that
     sibling MUST FAIL (it demonstrably missed the newest session start)."""
 
@@ -194,8 +200,8 @@ class TestFixtureB_NewerSessionWithoutBeacon(unittest.TestCase):
                 tmp_dir,
                 _SESSION_SCOPED_SETTINGS,
                 fires_lines=[
-                    # dashboard-autostart just fired -- a new session started.
-                    {"hook": "dashboard-autostart", "ts": _iso(now - 120)},
+                    # session-scoped-b just fired -- a new session started.
+                    {"hook": "session-scoped-b", "ts": _iso(now - 120)},
                     # session-start's last beacon is from a MUCH older session
                     # (well beyond the skew tolerance) -- it missed this one.
                     {"hook": "session-start", "ts": _iso(now - 200 * 60)},
@@ -213,8 +219,8 @@ class TestFixtureB_NewerSessionWithoutBeacon(unittest.TestCase):
             msg=f"session-start missed the newest session start and must FAIL: {result}",
         )
         self.assertNotIn(
-            "dashboard-autostart(", fail_names,
-            msg=f"dashboard-autostart (fired at the newest session start) must not FAIL: {result}",
+            "session-scoped-b(", fail_names,
+            msg=f"session-scoped-b (fired at the newest session start) must not FAIL: {result}",
         )
 
 
@@ -235,7 +241,7 @@ class TestFixtureC_OnDemandSilentIsIdleNotFail(unittest.TestCase):
                 _SESSION_SCOPED_SETTINGS,
                 fires_lines=[
                     {"hook": "session-start", "ts": _iso(now - 60)},
-                    {"hook": "dashboard-autostart", "ts": _iso(now - 60)},
+                    {"hook": "session-scoped-b", "ts": _iso(now - 60)},
                     {"hook": "pre-tool-bash", "ts": _iso(now - 60)},
                     {"hook": "grill_qa", "ts": _iso(now - days_seconds)},
                 ],
@@ -275,7 +281,7 @@ class TestFixtureC_OnDemandSilentIsIdleNotFail(unittest.TestCase):
                 _SESSION_SCOPED_SETTINGS,
                 fires_lines=[
                     {"hook": "session-start", "ts": _iso(now - 60)},
-                    {"hook": "dashboard-autostart", "ts": _iso(now - 60)},
+                    {"hook": "session-scoped-b", "ts": _iso(now - 60)},
                     {"hook": "pre-tool-bash", "ts": _iso(now - 60)},
                     # grill_qa: no entry at all -- never fired.
                 ],
@@ -309,7 +315,7 @@ class TestFixtureC_OnDemandSilentIsIdleNotFail(unittest.TestCase):
                 _SESSION_SCOPED_SETTINGS,
                 fires_lines=[
                     {"hook": "session-start", "ts": _iso(now - 60)},
-                    {"hook": "dashboard-autostart", "ts": _iso(now - 60)},
+                    {"hook": "session-scoped-b", "ts": _iso(now - 60)},
                     {"hook": "pre-tool-bash", "ts": _iso(now - 60)},
                     {"hook": "skill_invoke", "ts": _iso(now - days_seconds)},
                 ],
@@ -347,7 +353,7 @@ class TestFixtureC_OnDemandSilentIsIdleNotFail(unittest.TestCase):
                 _SESSION_SCOPED_SETTINGS,
                 fires_lines=[
                     {"hook": "session-start", "ts": _iso(now - 60)},
-                    {"hook": "dashboard-autostart", "ts": _iso(now - 60)},
+                    {"hook": "session-scoped-b", "ts": _iso(now - 60)},
                     {"hook": "pre-tool-bash", "ts": _iso(now - 60)},
                     # skill_invoke: no entry at all -- never fired.
                 ],
