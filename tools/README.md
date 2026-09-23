@@ -80,17 +80,23 @@ exclusively. This slice ships the bounded `N`-lane form only.
 `tools/pipe/dispatch --lane`) — builds a lane's dispatch brief: the sha, then
 per bug its `path:line` or `path:start-end` refs, a ±20-line excerpt at that
 sha, and its check (resolved exactly as `verify` resolves it) or
-`CHECK: MISSING`. Reads only issue bodies and comments whose
+`CHECK: MISSING`, with the check's source on the next line: `(from issue)`
+or `(from lane PR #<m>)`. Reads only issue bodies, comments and lane PRs whose
 `author_association` is `OWNER`, `MEMBER` or `COLLABORATOR`. Every gh, git and
 check subprocess decodes as UTF-8, and the packet is written to stdout as UTF-8
 bytes, whatever the host locale; `dispatch --lane` delivers the packet before
-it records its `dispatch` span, so a failed write leaves no span.
+it records its `dispatch` span, so a failed write leaves no span. When a gh
+read the packet depends on fails, no packet is printed and `dispatch --lane`
+refuses with no span.
 
 **`verify <n>…`** — runs each bug's resolved check (the issue's own `Check:`
 line, or else the `Check #<n>:` line of its most recently merged `lane` PR
 that closes it on a whole `Closes #<n>` line), with one layer of surrounding
 backticks stripped, and prints `PASS|FAIL|MISSING #<n>`; exits 0 iff every
-line is PASS.
+line is PASS. The lane PR comes from the issue's REST timeline
+(`cross-referenced` events), never the search index, and its check counts only
+when the PR's author is trusted as above. A gh read that fails or cannot be
+parsed prints `UNCONFIRMED #<n>`, never `MISSING`.
 
 Both branch roles resolve per-invocation via
 [`tools/pipeline_config.py`](pipeline_config.py) — never hardcoded, per

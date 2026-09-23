@@ -10,8 +10,9 @@ Covers PRD #1501 §2 criteria 32-34:
   32 (release_verify_lines): exactly one `PASS|FAIL|MISSING #<n>` line per
      named issue.
   33 (release_verify_check_source): the issue's own `Check:` line when one
-     exists, otherwise its closing lane PR's `Check #<n>:` line — found by
-     search, never the (deferred, criterion 27) closing comment.
+     exists, otherwise its closing lane PR's `Check #<n>:` line — found
+     through the issue's REST timeline, never the (deferred, criterion 27)
+     closing comment.
   34 (release_verify_exit): exit 0 iff every printed line is PASS.
 """
 import importlib.util
@@ -47,7 +48,7 @@ class TestReleaseVerifyLines(unittest.TestCase):
             }[num],
         }
         release._fetch_comments = lambda owner, repo, num: []
-        release._find_lane_pr_for_issue = lambda owner, repo, num: None
+        release._find_lane_pr_for_issue = lambda owner, repo, num, repo_url: None
 
         class _Args:
             issues = ["201", "202", "203"]
@@ -74,11 +75,11 @@ class TestReleaseVerifyCheckSource(unittest.TestCase):
             "number": int(num), "body": "Check: python3 -c \"1\"",
         }
         release._fetch_comments = lambda owner, repo, num: []
-        release._find_lane_pr_for_issue = lambda owner, repo, num: (_ for _ in ()).throw(
+        release._find_lane_pr_for_issue = lambda owner, repo, num, repo_url: (_ for _ in ()).throw(
             AssertionError("must not search for a lane PR when the issue has its own Check: line")
         )
         check = release._resolve_check("o", "r", "301")
-        self.assertEqual(check, 'python3 -c "1"')
+        self.assertEqual(check, ('python3 -c "1"', "issue"))
 
     def test_release_verify_check_source_lane_pr_line(self):
         release = _load_release()
@@ -86,12 +87,13 @@ class TestReleaseVerifyCheckSource(unittest.TestCase):
             "number": int(num), "body": "No check here.",
         }
         release._fetch_comments = lambda owner, repo, num: []
-        release._find_lane_pr_for_issue = lambda owner, repo, num: {
+        release._find_lane_pr_for_issue = lambda owner, repo, num, repo_url: {
             "number": 999,
+            "author_association": "OWNER",
             "body": f"Closes #{num}\nCheck #{num}: python3 -c \"2\"\n",
         }
         check = release._resolve_check("o", "r", "302")
-        self.assertEqual(check, 'python3 -c "2"')
+        self.assertEqual(check, ('python3 -c "2"', "lane PR #999"))
 
 
 class TestReleaseVerifyExit(unittest.TestCase):
@@ -103,7 +105,7 @@ class TestReleaseVerifyExit(unittest.TestCase):
 
         release._fetch_issue_json = _issue
         release._fetch_comments = lambda owner, repo, num: []
-        release._find_lane_pr_for_issue = lambda owner, repo, num: None
+        release._find_lane_pr_for_issue = lambda owner, repo, num, repo_url: None
 
         class _AllPass:
             issues = ["401", "402"]

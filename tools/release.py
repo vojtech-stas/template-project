@@ -23,20 +23,23 @@ Four subcommands:
     Prints the lane packet for the given bug numbers at `<sha>`: the sha,
     then each bug's `path:line` / `path:start-end` refs with a ±20-line
     excerpt read from that exact git blob, and its `Check:` line or
-    `CHECK: MISSING`. Reads refs and checks from trusted authors only
-    (issue body always counts; a comment counts only when its
-    `author_association` is `OWNER`, `MEMBER` or `COLLABORATOR`), and
-    resolves the check with the same resolver `verify` runs.
-    `build_packet()` is the library entry point `tools/pipe/dispatch
-    --lane` imports directly.
+    `CHECK: MISSING`, with the check's source on the next line. Reads refs
+    and checks from trusted authors only (issue body always counts; a
+    comment or lane PR counts only when its `author_association` is
+    `OWNER`, `MEMBER` or `COLLABORATOR`), and resolves the check with the
+    same resolver `verify` runs. Refuses, printing nothing, when a gh read
+    it depends on fails. `build_packet()` is the library entry point
+    `tools/pipe/dispatch --lane` imports directly.
 
   verify <n>...
     Runs each bug's check (the issue's own `Check:` line, or else the
     `Check #<n>:` line of its most recently merged `lane` PR that closes
-    it on a whole `Closes #<n>` line), with one layer of surrounding
+    it on a whole `Closes #<n>` line, found through the issue's REST
+    timeline, never the search index), with one layer of surrounding
     backticks stripped, and prints exactly one `PASS|FAIL|MISSING #<n>`
-    line per issue; exits 0 iff every line is PASS. `--reopen` is
-    deferred to slice 2 (SPIDR fallback, A10).
+    line per issue, or `UNCONFIRMED #<n>` when a gh read failed; exits 0
+    iff every line is PASS. `--reopen` is deferred to slice 2 (SPIDR
+    fallback, A10).
 
 Stdlib only. No literal integration/release branch names (C1) — every
 branch reference resolves through `tools/pipeline_config.py`.
@@ -64,6 +67,12 @@ _PR_CHECK_LINE_RE_TMPL = r"^Check #{n}:[ \t]*(.+)$"
 # A lane PR closes a bug only on a whole `Closes #<n>` line: the anchored
 # form tools/pipe/pr-merge closes on merge. Prose `closes #<n>` never counts.
 _CLOSES_LINE_RE_TMPL = r"^Closes #{n}\s*$"
+
+
+class LookupUnconfirmed(Exception):
+    """A gh read the answer depends on failed (non-zero exit) or returned
+    output that could not be parsed. Its caller reports `unconfirmed` and
+    never reads the failed read as "none found" (PRD #1501 §6)."""
 
 
 def _gh():
@@ -112,7 +121,8 @@ def _gh_api_json(path, method="GET", fields=None, paginate=False):
     parsed as JSON. Returns the parsed value (list/dict), or None on any
     gh failure or unparseable output. `--paginate` concatenates each
     page's top-level JSON value back-to-back on stdout; this decodes the
-    stream and flattens list-shaped pages into one list."""
+    stream and flattens list-shaped pages into one list. A page that does
+    not decode makes the whole answer None, never the pages before it."""
     args = ["api", path, "-X", method]
     if paginate:
         args += ["--paginate"]
@@ -136,7 +146,7 @@ def _gh_api_json(path, method="GET", fields=None, paginate=False):
             try:
                 obj, end = decoder.raw_decode(sub)
             except json.JSONDecodeError:
-                break
+                return None
             idx = skip + end
             if isinstance(obj, list):
                 items.extend(obj)
@@ -207,9 +217,13 @@ def _is_residual(issue):
 
 def _trusted_texts(owner, repo, issue):
     """Issue body (always trusted) plus every comment whose
-    `author_association` is OWNER, MEMBER or COLLABORATOR (criterion 23)."""
+    `author_association` is OWNER, MEMBER or COLLABORATOR (criterion 23).
+    Raises LookupUnconfirmed when the comment read fails: a trusted
+    comment may carry a ref or the issue's own check."""
     texts = [issue.get("body") or ""]
-    comments = _fetch_comments(owner, repo, issue["number"]) or []
+    comments = _fetch_comments(owner, repo, issue["number"])
+    if comments is None:
+        raise LookupUnconfirmed(f"could not read issue #{issue['number']}'s comments via gh")
     for c in comments:
         if c.get("author_association") in TRUSTED_ASSOCIATIONS:
             texts.append(c.get("body") or "")
@@ -371,6 +385,24 @@ def _cmd_freeze(args):
         )
         return 1
 
+    # --- Admitted features: listed + their open sub-issues. Read before any
+    # mutation, so a failed read refuses rather than reading as "none". ---
+    admitted = set(feature_numbers)
+    for n in feature_numbers:
+        subs = _fetch_sub_issues(owner, repo, n)
+        if subs is None:
+            print(
+                f"release.py freeze: refused — could not read feature #{n}'s sub-issues "
+                "via gh (unconfirmed; not read as none)",
+                file=sys.stderr,
+            )
+            return 1
+        for sub in subs:
+            if sub.get("state") == "open":
+                sub_num = str(sub["number"])
+                admitted.add(sub_num)
+                by_number.setdefault(sub_num, sub)
+
     # --- Past every refusal: apply deferred class labels. ---
     for num_str, cls in to_label:
         _apply_class_label(owner, repo, num_str, cls)
@@ -381,15 +413,6 @@ def _cmd_freeze(args):
     if v_num is None or w_num is None:
         print("release.py freeze: refused — could not resolve/create a milestone", file=sys.stderr)
         return 1
-
-    # --- Admitted features: listed + their open sub-issues. ---
-    admitted = set(feature_numbers)
-    for n in feature_numbers:
-        for sub in (_fetch_sub_issues(owner, repo, n) or []):
-            if sub.get("state") == "open":
-                sub_num = str(sub["number"])
-                admitted.add(sub_num)
-                by_number.setdefault(sub_num, sub)
 
     moved = 0
     for num_str, issue in sorted(by_number.items(), key=lambda kv: int(kv[0])):
@@ -483,7 +506,13 @@ def _cmd_lanes(args):
             paths = {str(p) for p in evidence[num]}
         else:
             paths = set()
-            for t in _trusted_texts(owner, repo, issue):
+            try:
+                texts = _trusted_texts(owner, repo, issue)
+            except LookupUnconfirmed as exc:
+                print(f"release.py lanes: refused — {exc} (unconfirmed; not read as no cited path)",
+                      file=sys.stderr)
+                return 1
+            for t in texts:
                 paths |= _extract_refs(t)
         issue_paths[num] = paths
 
@@ -574,11 +603,16 @@ def build_packet(owner, repo, issue_numbers, sha, repo_root=None):
     counts; comments only when trusted — criterion 23), excerpts ±20 lines
     from the exact `sha` blob, and resolves each check through
     `_resolve_check`, the same resolver `verify` runs, falling back to
-    `CHECK: MISSING`."""
+    `CHECK: MISSING`. The line after the check names its source:
+    `(from issue)`, `(from lane PR #<m>)`, or the untrusted lane PR whose
+    check was ignored. Raises LookupUnconfirmed, having printed nothing,
+    when a gh read the packet depends on fails."""
     parts = [f"SHA: {sha}"]
     for num in issue_numbers:
         issue = _fetch_issue_json(owner, repo, num)
-        texts = _trusted_texts(owner, repo, issue) if issue else []
+        if issue is None:
+            raise LookupUnconfirmed(f"could not read issue #{num} via gh")
+        texts = _trusted_texts(owner, repo, issue)
         refs = []
         for t in texts:
             refs.extend(_extract_path_line_refs(t))
@@ -591,8 +625,14 @@ def build_packet(owner, repo, issue_numbers, sha, repo_root=None):
             parts.append("```")
             parts.append(excerpt if excerpt is not None else "(excerpt unavailable)")
             parts.append("```")
-        check = _resolve_check(owner, repo, num, issue=issue, texts=texts)
-        parts.append(f"Check: {check}" if check else "CHECK: MISSING")
+        check, source = _resolve_check(owner, repo, num, issue=issue, texts=texts)
+        if check:
+            parts.append(f"Check: {check}")
+            parts.append(f"(from {source})")
+        else:
+            parts.append("CHECK: MISSING")
+            if source:
+                parts.append(f"(ignored the check of {source})")
     return "\n".join(parts) + "\n"
 
 
@@ -602,7 +642,12 @@ def _cmd_packet(args):
         print("release.py packet: refused — could not resolve owner/repo from origin", file=sys.stderr)
         return 1
     owner, repo = owner_repo
-    _write_stdout_utf8(build_packet(owner, repo, args.issues, args.sha))
+    try:
+        packet = build_packet(owner, repo, args.issues, args.sha)
+    except LookupUnconfirmed as exc:
+        print(f"release.py packet: refused — {exc} (unconfirmed; no packet printed)", file=sys.stderr)
+        return 1
+    _write_stdout_utf8(packet)
     return 0
 
 
@@ -610,55 +655,92 @@ def _cmd_packet(args):
 # verify
 # ---------------------------------------------------------------------------
 
-def _find_lane_pr_for_issue(owner, repo, num):
-    """The MOST RECENTLY MERGED (`mergedAt`) `lane`-labeled PR with a whole
-    `Closes #<num>` line in its body. A bug closed, reopened and closed
-    again by a second lane PR therefore reads the newer PR's check, never
-    the first search hit. Found by search, never the (deferred, criterion
-    27) closing comment, which keeps the SPIDR fallback available
-    (constraint 6). Labels are filtered here, never via `--label` (C4).
-    Goes through `_run_gh`, so the PR bodies decode as UTF-8."""
-    res = _run_gh(
-        ["pr", "list", "--repo", f"{owner}/{repo}", "--state", "merged",
-         "--search", f"Closes #{num} in:body",
-         "--json", "number,body,mergedAt,labels", "--limit", "100"],
+def _find_lane_pr_for_issue(owner, repo, num, repo_url):
+    """The MOST RECENTLY MERGED (`merged_at`) `lane`-labeled PR of this
+    repository with a whole `Closes #<num>` line in its body, or None.
+
+    Read from the issue's own REST timeline
+    (`repos/{owner}/{repo}/issues/<num>/timeline`): each PR that mentions
+    the issue appears there as a `cross-referenced` event whose
+    `source.issue` carries the PR's `body`, `labels`, `author_association`
+    and `pull_request.merged_at`. Never the search index, which answers
+    empty with success under a renamed slug and lags a fresh merge (the
+    ADR-0087 context, #1510). Never the (deferred, criterion 27) closing
+    comment, which keeps the SPIDR fallback available (constraint 6).
+    Labels are filtered here, never via `--label` (C4).
+
+    Only a PR of `repo_url` (the issue's own canonical `repository_url`)
+    counts: a PR in another repository can cross-reference this issue,
+    and its `author_association` is relative to that other repository.
+    The PR author's trust is judged by `_resolve_check`, not here, so an
+    untrusted newest PR never lets an older PR's check stand in for it.
+    Raises LookupUnconfirmed when the timeline read fails or cannot be
+    parsed, or `repo_url` is unknown."""
+    if not repo_url:
+        raise LookupUnconfirmed(f"issue #{num} carries no repository_url to scope its lane PRs")
+    events = _gh_api_json(
+        f"repos/{owner}/{repo}/issues/{num}/timeline",
+        fields={"per_page": "100"},
+        paginate=True,
     )
-    if res.returncode != 0:
-        return None
-    try:
-        data = json.loads(res.stdout)
-    except json.JSONDecodeError:
-        return None
+    if events is None:
+        raise LookupUnconfirmed(f"could not read issue #{num}'s timeline via gh")
     closes = re.compile(_CLOSES_LINE_RE_TMPL.format(n=num), re.MULTILINE)
-    lane_prs = [
-        pr for pr in (data if isinstance(data, list) else [])
-        if isinstance(pr, dict)
-        and "lane" in _issue_labels(pr)
-        and closes.search(pr.get("body") or "")
-    ]
+    lane_prs = []
+    for event in events:
+        if not isinstance(event, dict) or event.get("event") != "cross-referenced":
+            continue
+        pr = ((event.get("source") or {}).get("issue")) or {}
+        if not isinstance(pr, dict):
+            continue
+        if (
+            (pr.get("pull_request") or {}).get("merged_at")
+            and pr.get("repository_url") == repo_url
+            and "lane" in _issue_labels(pr)
+            and closes.search(pr.get("body") or "")
+        ):
+            lane_prs.append(pr)
     if not lane_prs:
         return None
-    return max(lane_prs, key=lambda pr: pr.get("mergedAt") or "")
+    return max(lane_prs, key=lambda pr: pr["pull_request"]["merged_at"])
 
 
 def _resolve_check(owner, repo, num, issue=None, texts=None):
-    """The ONE check resolver `verify` and the packet share: the issue's
-    own trusted `Check:` line when one exists; otherwise the `Check #<n>:`
-    line of its most recently merged lane PR (criterion 33). One layer of
-    surrounding backticks is stripped. `texts` (the issue's trusted texts)
-    skips the re-fetch when the caller already holds them."""
-    if texts is None:
+    """The ONE check resolver `verify` and the packet share. Returns
+    `(check, source)`:
+      - the issue's own trusted `Check:` line: `(check, "issue")`;
+      - otherwise the `Check #<n>:` line of its most recently merged lane
+        PR (criterion 33), when that PR's author is trusted:
+        `(check, "lane PR #<m>")`;
+      - that PR's author untrusted (constraint 6: its check would be
+        executed): `(None, "lane PR #<m>, author association <A>, not
+        OWNER, MEMBER or COLLABORATOR")`;
+      - no check anywhere: `(None, None)`.
+    One layer of surrounding backticks is stripped. `texts` (the issue's
+    trusted texts) skips the re-fetch when the caller already holds them.
+    Raises LookupUnconfirmed when any gh read it depends on fails, so a
+    failed read is never reported as a missing check."""
+    if issue is None:
+        issue = _fetch_issue_json(owner, repo, num)
         if issue is None:
-            issue = _fetch_issue_json(owner, repo, num)
-        texts = _trusted_texts(owner, repo, issue) if issue else []
+            raise LookupUnconfirmed(f"could not read issue #{num} via gh")
+    if texts is None:
+        texts = _trusted_texts(owner, repo, issue)
     check = _find_check(texts)
     if check:
-        return check
-    pr = _find_lane_pr_for_issue(owner, repo, num)
-    if pr:
-        pat = re.compile(_PR_CHECK_LINE_RE_TMPL.format(n=num), re.MULTILINE)
-        return _first_check(pat, pr.get("body") or "")
-    return None
+        return check, "issue"
+    pr = _find_lane_pr_for_issue(owner, repo, num, issue.get("repository_url"))
+    if not pr:
+        return None, None
+    association = pr.get("author_association")
+    if association not in TRUSTED_ASSOCIATIONS:
+        return None, (
+            f"lane PR #{pr.get('number')}, author association {association}, "
+            "not OWNER, MEMBER or COLLABORATOR"
+        )
+    pat = re.compile(_PR_CHECK_LINE_RE_TMPL.format(n=num), re.MULTILINE)
+    check = _first_check(pat, pr.get("body") or "")
+    return (check, f"lane PR #{pr.get('number')}") if check else (None, None)
 
 
 def _cmd_verify(args):
@@ -670,8 +752,17 @@ def _cmd_verify(args):
 
     all_pass = True
     for num in args.issues:
-        check = _resolve_check(owner, repo, num)
+        try:
+            check, source = _resolve_check(owner, repo, num)
+        except LookupUnconfirmed as exc:
+            print(f"UNCONFIRMED #{num}")
+            print(f"release.py verify: #{num} unconfirmed — {exc}; not read as MISSING",
+                  file=sys.stderr)
+            all_pass = False
+            continue
         if check is None:
+            if source:
+                print(f"release.py verify: #{num} ignored the check of {source}", file=sys.stderr)
             print(f"MISSING #{num}")
             all_pass = False
             continue

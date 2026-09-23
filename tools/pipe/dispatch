@@ -359,7 +359,18 @@ def _cmd_dispatch_lane(branch, milestone, model, issue_numbers):
         print("dispatch: refused — could not resolve the integration branch's sha", file=sys.stderr)
         return 1
 
-    packet_text = release.build_packet(owner, repo, issue_numbers, sha)
+    try:
+        packet_text = release.build_packet(owner, repo, issue_numbers, sha)
+    except release.LookupUnconfirmed as exc:
+        # A gh read the packet depends on failed: refuse with no packet and
+        # no span, rather than brief a builder with `CHECK: MISSING` read
+        # from a failed lookup (PRD #1501 §6).
+        print(
+            f"dispatch: refused -- could not build the lane packet: {exc} (unconfirmed); "
+            "no span written",
+            file=sys.stderr,
+        )
+        return 1
 
     attrs = {
         "lane": branch,

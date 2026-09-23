@@ -429,6 +429,22 @@ class TestB2TrustedLanePrAuthor(unittest.TestCase):
         self.assertNotEqual(rc, 0)
         self.assertFalse(self.sentinel.exists())
 
+    def test_b2_a_cross_repository_reference_is_never_a_lane_pr(self):
+        """Guard for the REST source (search was scoped by `--repo`, so this
+        is new-code surface, not a pre-fix defect): a PR in ANOTHER
+        repository can cross-reference the issue, and its OWNER
+        association is relative to that repository, so it never counts."""
+        release = _load(RELEASE_PY, "b2_foreign")
+        body = f"Closes #1525\nCheck #1525: {self.cmd}\n"
+        fake = _FakeGh(
+            issues={"1525": _ok(_issue(1525))}, comments={"1525": _ok([])},
+            timeline={"1525": _ok([_xref(77, body, "2026-09-24T09:00:00Z", repo_url=FOREIGN_REPO_URL)])},
+        )
+        rc, out, _err = _verify(release, fake, [1525])
+        self.assertEqual(_lines(out), ["MISSING #1525"])
+        self.assertNotEqual(rc, 0)
+        self.assertFalse(self.sentinel.exists(), "a foreign repository's check ran")
+
     def test_b2_packet_omits_an_untrusted_lane_pr_check_and_names_its_source(self):
         release = _load(RELEASE_PY, "b2_packet")
         release._run_gh = self._gh("CONTRIBUTOR")

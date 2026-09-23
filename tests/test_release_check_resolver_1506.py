@@ -7,8 +7,8 @@ the orchestrator-supervised lane run (lane `fix/1525-lane-misc`, lane PR
 (rule #19). Every gh read is stubbed in-process; no test calls `gh`, and
 nothing is written outside pytest/tempfile dirs (rule #21).
 
-  R1  `verify` resolves the MOST RECENTLY MERGED lane PR (by `mergedAt`),
-      never the first search hit -- a bug closed by two lane PRs (#1525:
+  R1  `verify` resolves the MOST RECENTLY MERGED lane PR (by `merged_at`),
+      whatever order the lookup lists them in -- a bug closed by two lane PRs (#1525:
       #1527, then #1539) must read the newer PR's `Check #<n>:` line. Only
       a `lane`-labeled PR counts, and only a PR that closes the bug on a
       whole `Closes #<n>` line (the R8 class: prose `closes #<n>` is not a
@@ -50,12 +50,23 @@ class _Res:
         self.stdout, self.stderr, self.returncode = stdout, "", returncode
 
 
+REPO_URL = "https://api.github.com/repos/o/r"
+
+
 def _pr(number, body, merged_at, labels=("lane",)):
+    """A REST issue-timeline `cross-referenced` event whose source is a
+    merged PR by a trusted author (the round-2 lookup reads the timeline,
+    never the search index)."""
     return {
-        "number": number,
-        "body": body,
-        "mergedAt": merged_at,
-        "labels": [{"name": l} for l in labels],
+        "event": "cross-referenced",
+        "source": {"type": "issue", "issue": {
+            "number": number,
+            "body": body,
+            "author_association": "OWNER",
+            "repository_url": REPO_URL,
+            "labels": [{"name": l} for l in labels],
+            "pull_request": {"merged_at": merged_at},
+        }},
     }
 
 
@@ -66,8 +77,9 @@ _PR_1539 = _pr(1539, "Closes #1525\n\nCheck #1525: new-check-1539\n", "2026-09-2
 
 
 def _stub_pr_lookup(release, prs, calls=None):
-    """Every gh call returns `prs` as JSON, whatever the subcommand, so the
-    test pins the SELECTION among the returned PRs, not the query form."""
+    """Every gh call returns the timeline events `prs` as JSON, whatever the
+    request, so the test pins the SELECTION among the returned PRs, not
+    the query form."""
     def _fake_run_gh(args):
         if calls is not None:
             calls.append(list(args))
@@ -76,7 +88,9 @@ def _stub_pr_lookup(release, prs, calls=None):
 
 
 def _no_own_check(release):
-    release._fetch_issue_json = lambda owner, repo, num: {"number": int(num), "body": "No check here."}
+    release._fetch_issue_json = lambda owner, repo, num: {
+        "number": int(num), "body": "No check here.", "repository_url": REPO_URL,
+    }
     release._fetch_comments = lambda owner, repo, num: []
 
 
@@ -88,36 +102,35 @@ class TestR1MostRecentlyMergedLanePr(unittest.TestCase):
     def test_r1_newest_merged_lane_pr_wins_when_older_is_listed_first(self):
         release = _load_release()
         _stub_pr_lookup(release, [_PR_1527, _PR_1539])
-        pr = release._find_lane_pr_for_issue("o", "r", "1525")
+        pr = release._find_lane_pr_for_issue("o", "r", "1525", REPO_URL)
         self.assertIsNotNone(pr)
         self.assertEqual(pr["number"], 1539)
 
     def test_r1_selection_is_order_independent(self):
         release = _load_release()
         _stub_pr_lookup(release, [_PR_1539, _PR_1527])
-        self.assertEqual(release._find_lane_pr_for_issue("o", "r", "1525")["number"], 1539)
+        self.assertEqual(release._find_lane_pr_for_issue("o", "r", "1525", REPO_URL)["number"], 1539)
 
     def test_r1_verify_resolves_the_newer_prs_check_line(self):
         release = _load_release()
         _no_own_check(release)
         _stub_pr_lookup(release, [_PR_1527, _PR_1539])
-        self.assertEqual(release._resolve_check("o", "r", "1525"), "new-check-1539")
+        self.assertEqual(release._resolve_check("o", "r", "1525"), ("new-check-1539", "lane PR #1539"))
 
-    def test_r1_lookup_requests_merged_at(self):
+    def test_r1_lookup_reads_the_issue_rest_timeline(self):
         release = _load_release()
         calls = []
         _stub_pr_lookup(release, [_PR_1539], calls)
-        release._find_lane_pr_for_issue("o", "r", "1525")
+        release._find_lane_pr_for_issue("o", "r", "1525", REPO_URL)
         self.assertEqual(len(calls), 1, calls)
-        json_fields = calls[0][calls[0].index("--json") + 1].split(",")
-        self.assertIn("mergedAt", json_fields)
-        self.assertIn("labels", json_fields)
+        self.assertEqual(calls[0][:2], ["api", "repos/o/r/issues/1525/timeline"])
+        self.assertIn("--paginate", calls[0])
 
     def test_r1_a_newer_non_lane_pr_is_not_the_lane_pr(self):
         release = _load_release()
         hotfix = _pr(1600, "Closes #1525\n", "2026-09-24T09:00:00Z", labels=("trivial",))
         _stub_pr_lookup(release, [hotfix, _PR_1527, _PR_1539])
-        self.assertEqual(release._find_lane_pr_for_issue("o", "r", "1525")["number"], 1539)
+        self.assertEqual(release._find_lane_pr_for_issue("o", "r", "1525", REPO_URL)["number"], 1539)
 
     def test_r1_prose_closes_mention_is_not_a_closing_reference(self):
         release = _load_release()
@@ -128,12 +141,12 @@ class TestR1MostRecentlyMergedLanePr(unittest.TestCase):
             "2026-09-24T10:00:00Z",
         )
         _stub_pr_lookup(release, [prose, _PR_1527, _PR_1539])
-        self.assertEqual(release._find_lane_pr_for_issue("o", "r", "1525")["number"], 1539)
+        self.assertEqual(release._find_lane_pr_for_issue("o", "r", "1525", REPO_URL)["number"], 1539)
 
     def test_r1_no_matching_lane_pr_is_none(self):
         release = _load_release()
         _stub_pr_lookup(release, [_pr(1602, "Closes #15250\n", "2026-09-24T10:00:00Z")])
-        self.assertIsNone(release._find_lane_pr_for_issue("o", "r", "1525"))
+        self.assertIsNone(release._find_lane_pr_for_issue("o", "r", "1525", REPO_URL))
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +170,7 @@ class TestR2BacktickStrip(unittest.TestCase):
                 _no_own_check(release)
                 pr = _pr(1539, f"Closes #1525\nCheck #1525: {raw}\n", "2026-09-23T14:59:00Z")
                 _stub_pr_lookup(release, [pr])
-                self.assertEqual(release._resolve_check("o", "r", "1525"), want)
+                self.assertEqual(release._resolve_check("o", "r", "1525")[0], want)
 
     def test_r2_issue_check_line_strips_one_backtick_layer(self):
         for raw, want in self.CASES:
@@ -167,7 +180,7 @@ class TestR2BacktickStrip(unittest.TestCase):
                     "number": int(num), "body": f"Broken.\r\nCheck: {raw}\r\n",
                 }
                 release._fetch_comments = lambda owner, repo, num: []
-                self.assertEqual(release._resolve_check("o", "r", "7"), want)
+                self.assertEqual(release._resolve_check("o", "r", "7")[0], want)
 
     def test_r2_verify_runs_the_unwrapped_command(self):
         """End to end through `_cmd_verify`'s real shell run: a backtick-
@@ -201,29 +214,31 @@ class TestR2BacktickStrip(unittest.TestCase):
 class TestCheckLineClassSweep(unittest.TestCase):
     def test_sweep_pasted_packet_check_missing_is_not_a_command(self):
         release = _load_release()
-        release._fetch_issue_json = lambda owner, repo, num: {"number": int(num), "body": "No check."}
+        release._fetch_issue_json = lambda owner, repo, num: {
+            "number": int(num), "body": "No check.", "repository_url": REPO_URL,
+        }
         release._fetch_comments = lambda owner, repo, num: [{
             "author_association": "OWNER",
             "body": "Packet as dispatched:\nSHA: abc\n#### Bug #7\n(no cited path:line refs)\nCHECK: MISSING\n",
         }]
         _stub_pr_lookup(release, [])
-        self.assertIsNone(release._resolve_check("o", "r", "7"))
+        self.assertEqual(release._resolve_check("o", "r", "7"), (None, None))
 
     def test_sweep_empty_issue_check_line_does_not_read_next_line(self):
         release = _load_release()
         release._fetch_issue_json = lambda owner, repo, num: {
-            "number": int(num), "body": "Check:\nrm -rf build\n",
+            "number": int(num), "body": "Check:\nrm -rf build\n", "repository_url": REPO_URL,
         }
         release._fetch_comments = lambda owner, repo, num: []
         _stub_pr_lookup(release, [])
-        self.assertIsNone(release._resolve_check("o", "r", "7"))
+        self.assertEqual(release._resolve_check("o", "r", "7"), (None, None))
 
     def test_sweep_empty_pr_check_line_does_not_read_next_line(self):
         release = _load_release()
         _no_own_check(release)
         pr = _pr(1539, "Closes #1525\nCheck #1525:\nrm -rf build\n", "2026-09-23T14:59:00Z")
         _stub_pr_lookup(release, [pr])
-        self.assertIsNone(release._resolve_check("o", "r", "1525"))
+        self.assertEqual(release._resolve_check("o", "r", "1525"), (None, None))
 
 
 # ---------------------------------------------------------------------------
@@ -328,7 +343,7 @@ class TestR6OneResolver(_GitRepo):
         packet = release.build_packet("o", "r", ["1525"], self.sha, repo_root=str(self.repo))
         self.assertIn("Check: new-check-1539", packet)
         self.assertNotIn("CHECK: MISSING", packet)
-        self.assertEqual(release._resolve_check("o", "r", "1525"), "new-check-1539")
+        self.assertEqual(release._resolve_check("o", "r", "1525")[0], "new-check-1539")
 
     def test_r6_packet_calls_the_shared_resolver(self):
         release = _load_release()
@@ -338,7 +353,7 @@ class TestR6OneResolver(_GitRepo):
 
         def _sentinel(owner, repo, num, *a, **k):
             seen.append(num)
-            return "sentinel-check"
+            return "sentinel-check", "issue"
 
         release._resolve_check = _sentinel
         packet = release.build_packet("o", "r", ["41", "42"], self.sha, repo_root=str(self.repo))

@@ -90,7 +90,7 @@ class TestLanePacketShape(PacketTestBase):
         release._fetch_comments = lambda owner, repo, num: []
         # No issue check -> the shared resolver looks for a merged lane PR;
         # none exists here (and no test ever reaches the real gh).
-        release._find_lane_pr_for_issue = lambda owner, repo, num: None
+        release._find_lane_pr_for_issue = lambda owner, repo, num, repo_url: None
 
         packet = release.build_packet("o", "r", ["102"], self.sha, repo_root=str(self.repo))
 

@@ -8,7 +8,8 @@ ran on a Windows host whose locale and pipe encoding are cp1252:
 
 - a packet excerpt decoded as cp1252 turned an em-dash into mojibake, so it
   was not the text at that sha (criterion 21);
-- the verify lookup (`gh search prs`) and the verify check run had the same
+- the verify lookup (`gh search prs` then; the REST issue timeline since
+  the round-2 BLOCK) and the verify check run had the same
   gap, and a byte cp1252 leaves undefined (0x81) crashes a strict decode;
 - `dispatch --lane` recorded its span and then died writing a U+2192 packet
   to cp1252 stdout: a span with no delivered packet (a PIP-014 half-success).
@@ -233,16 +234,21 @@ def test_packet_excerpt_is_the_utf8_text_at_that_sha_on_cp1252_host(tmp_path, mo
 
 def test_verify_lane_pr_lookup_decodes_utf8_on_cp1252_host(monkeypatch):
     release = _load(RELEASE_PY, "enc_verify_lookup")
-    pr_list = [{"number": 12, "body": "Closes #7\nCheck #7: grep -c '—' notes.md",
-                "mergedAt": "2026-09-23T14:59:00Z", "labels": [{"name": "lane"}]}]
-    # The lookup is `gh search prs` before the R1 fix and `gh pr list`
-    # (which carries `mergedAt`) after it; either way its output is UTF-8.
-    canned = [(lambda c: _is_gh(c) and ("search" in c or "list" in c), 0,
-               json.dumps(pr_list, ensure_ascii=False).encode("utf-8"))]
+    repo_url = "https://api.github.com/repos/o/r"
+    events = [{"event": "cross-referenced", "source": {"type": "issue", "issue": {
+        "number": 12, "body": "Closes #7\nCheck #7: grep -c '—' notes.md",
+        "author_association": "OWNER", "repository_url": repo_url,
+        "labels": [{"name": "lane"}], "pull_request": {"merged_at": "2026-09-23T14:59:00Z"},
+    }}}]
+    # The lookup reads the issue's REST timeline (round-2 BLOCK: never the
+    # search index); its output is UTF-8 whatever the host locale.
+    canned = [(lambda c: _is_gh(c) and "repos/o/r/issues/7/timeline" in c, 0,
+               json.dumps(events, ensure_ascii=False).encode("utf-8"))]
     monkeypatch.setattr(subprocess, "run", _cp1252_host_run(canned))
-    monkeypatch.setattr(release, "_fetch_issue_json", lambda o, r, n: {"number": int(n), "body": "no check"})
+    monkeypatch.setattr(release, "_fetch_issue_json",
+                        lambda o, r, n: {"number": int(n), "body": "no check", "repository_url": repo_url})
     monkeypatch.setattr(release, "_fetch_comments", lambda o, r, n: [])
-    assert release._resolve_check("o", "r", "7") == "grep -c '—' notes.md"
+    assert release._resolve_check("o", "r", "7") == ("grep -c '—' notes.md", "lane PR #12")
 
 
 def test_verify_check_run_survives_non_cp1252_output(monkeypatch, capsys):
@@ -251,7 +257,7 @@ def test_verify_check_run_survives_non_cp1252_output(monkeypatch, capsys):
     canned = [(lambda c: c == check, 0, _NON_CP1252.encode("utf-8"))]
     monkeypatch.setattr(subprocess, "run", _cp1252_host_run(canned))
     monkeypatch.setattr(release, "_remote_owner_repo", lambda: ("o", "r"))
-    monkeypatch.setattr(release, "_resolve_check", lambda o, r, n, issue=None: check)
+    monkeypatch.setattr(release, "_resolve_check", lambda o, r, n, issue=None: (check, "issue"))
     rc = release._cmd_verify(argparse.Namespace(issues=["7"]))
     assert rc == 0
     assert capsys.readouterr().out == "PASS #7\n"
