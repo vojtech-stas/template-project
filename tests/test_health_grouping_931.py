@@ -34,6 +34,7 @@ class TestCheckGroupMap(unittest.TestCase):
             ("RELEASE-READY", "Release gates"),
             ("SESSION-INJECTION", "Session hygiene"),
             ("STALE-BRANCHES", "No drift"),
+            ("QUERY-HONESTY", "Verification integrity"),
         ]
         for check_id, expected_group in cases:
             with self.subTest(check_id=check_id):
