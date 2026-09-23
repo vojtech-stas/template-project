@@ -101,24 +101,47 @@ def _health_gh_fetch(
     timeout: float = 5.0,
     with_source: bool = False,
 ) -> tuple:
-    """The health-registry seam: the ONLY function through which any check
-    reaches `gh` (ADR-0087 D1). Delegates to `_health_gh_fetch_raw()` for
-    the actual fetch, but first gates every label-filtering call behind
-    the QUERY-HONESTY REST-attested canary (ADR-0087 D2, slice #1498):
+    """The health-registry seam: every check registered in `CHECK_REGISTRY`
+    that reaches `gh` does so through this function (or its `_raw` sibling,
+    for the QUERY-HONESTY canary's own two queries — see below). It is
+    NOT, however, the only function anywhere in this module through which
+    a check reaches `gh`: `CRITIC-HEALTH`/`MERGE-INTEGRITY` and
+    `PROOF-PRESENCE`/`PROOF-INTEGRITY` reach `gh` via
+    `dashboard/collector.py`'s own gh runner
+    (`collector.get_closed_prd_numbers()` /
+    `collector.get_recent_merged_prs()` / `_run_gh`), bypassing both this
+    seam's provenance labelling and the QUERY-HONESTY attestation below
+    entirely. That collector-routed bypass predates this ADR and is
+    tracked separately, not fixed here (#1515 covers the seam-caller
+    class generally; #1518 covers the collector-routed checks
+    specifically).
+
+    Fetches through `_health_gh_fetch_raw()` FIRST, unconditionally, then
+    gates only a CONFIRMED label-filtering answer behind the QUERY-HONESTY
+    REST-attested canary (ADR-0087 D2, slice #1498):
 
     A desynced repo slug can make a label-filtered `gh` query answer
     `source="live"` while silently returning the wrong (often empty) set —
-    no provenance label alone can catch that. So before any call whose
-    `args` apply a label filter (any spelling `_args_apply_label_filter`
-    recognizes) is allowed to return as confirmed, this wrapper requires
-    `_query_honesty_attest()` to PASS. When it does not, the call returns
-    `(1, "", "unverified")` (or its 2-tuple prefix) regardless of what the
-    real `gh` call would have answered — the seven pre-existing
-    label-filtered callers already treat any non-zero `rc` as "gh
-    unavailable", so none of them needed editing.
+    no provenance label alone can catch that. So once a call whose `args`
+    apply a label filter (any spelling `_args_apply_label_filter`
+    recognizes) has come back CONFIRMED (`rc == 0`) from the raw fetch,
+    this wrapper requires `_query_honesty_attest()` to PASS before letting
+    that confirmed answer through as-is. When the attestation does not
+    PASS, the call is downgraded to `(1, "", "unverified")` (or its
+    2-tuple prefix) regardless of what the real `gh` call answered — the
+    seven pre-existing label-filtered callers already treat any non-zero
+    `rc` as "gh unavailable", so none of them needed editing.
 
-    Calls that apply no label filter (the majority) pass straight through
-    to `_health_gh_fetch_raw()`, unaffected.
+    An UNCONFIRMED raw answer (source `stale`/`computing`, i.e. `rc != 0`)
+    is returned exactly as `_health_gh_fetch_raw()` reported it, whether or
+    not `args` apply a label filter — the attestation is never consulted
+    for it, so its true cause (e.g. GitHub unreachable) is never masked
+    behind `unverified`. This ordering is ADR-0087 D2's own wording: the
+    attestation gates a call "before [the seam] returns [it] ... as
+    confirmed" — an already-unconfirmed call has nothing left to gate.
+
+    Calls that apply no label filter pass through with the raw answer
+    untouched, whatever its source.
 
     Parameters
     ----------
@@ -127,11 +150,12 @@ def _health_gh_fetch(
     timeout     : hard per-call timeout in seconds passed to gh_cache / subprocess.
     with_source : when True, return a 3-tuple including the provenance source.
     """
-    if _args_apply_label_filter(args):
+    rc, out, source = _health_gh_fetch_raw(args, ttl=ttl, timeout=timeout, with_source=True)
+    if rc == 0 and _args_apply_label_filter(args):
         _qh_passed = _query_honesty_attest()[0]
         if not _qh_passed:
-            return (1, "", "unverified") if with_source else (1, "")
-    return _health_gh_fetch_raw(args, ttl=ttl, timeout=timeout, with_source=with_source)
+            rc, out, source = 1, "", "unverified"
+    return (rc, out, source) if with_source else (rc, out)
 
 
 def _health_gh_fetch_raw(
