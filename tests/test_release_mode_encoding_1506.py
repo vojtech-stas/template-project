@@ -42,7 +42,10 @@ import sys
 import time
 from pathlib import Path
 
-import pytest
+try:
+    import pytest
+except ImportError:  # CI's unittest fallback runs without pytest (CHECK 12 / #985)
+    pytest = None
 
 REPO_ROOT = Path(__file__).parent.parent
 RELEASE_PY = REPO_ROOT / "tools" / "release.py"
@@ -143,25 +146,27 @@ def _text_runs_without_encoding(path):
     return offenders
 
 
-@pytest.mark.parametrize("path", [RELEASE_PY, DISPATCH, PR_MERGE], ids=["release", "dispatch", "pr-merge"])
-def test_every_text_subprocess_names_an_encoding(path):
-    assert _text_runs_without_encoding(path) == [], (
-        f"{path.name}: text-mode subprocess.run without encoding= at these lines "
-        "(they decode as the host locale, cp1252 on Windows)"
-    )
+_THREE_FILES = [RELEASE_PY, DISPATCH, PR_MERGE]
+_THREE_IDS = ["release", "dispatch", "pr-merge"]
 
+# Parametrized only when pytest is present; the stdlib unittest fallback
+# collects no module-level function in this file anyway.
+if pytest is not None:
+    @pytest.mark.parametrize("path", _THREE_FILES, ids=_THREE_IDS)
+    def test_every_text_subprocess_names_an_encoding(path):
+        assert _text_runs_without_encoding(path) == [], (
+            f"{path.name}: text-mode subprocess.run without encoding= at these lines "
+            "(they decode as the host locale, cp1252 on Windows)"
+        )
 
-# ---------------------------------------------------------------------------
-# 59135c1: `_run_gh` decodes UTF-8 in all three files.
-# ---------------------------------------------------------------------------
-
-@pytest.mark.parametrize("path", [RELEASE_PY, DISPATCH, PR_MERGE], ids=["release", "dispatch", "pr-merge"])
-def test_run_gh_decodes_utf8_on_cp1252_host(path, monkeypatch):
-    mod = _load(path, f"enc_run_gh_{path.name.replace('.', '_').replace('-', '_')}")
-    canned = [(_is_gh, 0, (_NON_CP1252 + "\n").encode("utf-8"))]
-    monkeypatch.setattr(subprocess, "run", _cp1252_host_run(canned))
-    res = mod._run_gh(["api", "repos/o/r/issues/1"])
-    assert res.stdout == _NON_CP1252 + "\n"
+    # 59135c1: `_run_gh` decodes UTF-8 in all three files.
+    @pytest.mark.parametrize("path", _THREE_FILES, ids=_THREE_IDS)
+    def test_run_gh_decodes_utf8_on_cp1252_host(path, monkeypatch):
+        mod = _load(path, f"enc_run_gh_{path.name.replace('.', '_').replace('-', '_')}")
+        canned = [(_is_gh, 0, (_NON_CP1252 + "\n").encode("utf-8"))]
+        monkeypatch.setattr(subprocess, "run", _cp1252_host_run(canned))
+        res = mod._run_gh(["api", "repos/o/r/issues/1"])
+        assert res.stdout == _NON_CP1252 + "\n"
 
 
 # ---------------------------------------------------------------------------

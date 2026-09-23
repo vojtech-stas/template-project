@@ -31,7 +31,10 @@ import sys
 import time
 from pathlib import Path
 
-import pytest
+try:
+    import pytest
+except ImportError:  # CI's unittest fallback runs without pytest (CHECK 12 / #985)
+    pytest = None
 
 REPO_ROOT = Path(__file__).parent.parent
 PR_MERGE = REPO_ROOT / "tools" / "pipe" / "pr-merge"
@@ -83,19 +86,21 @@ _ACCEPTED = [
 ]
 
 
-@pytest.mark.parametrize("model_line", [v for _, v in _REFUSED], ids=[i for i, _ in _REFUSED])
-def test_pr_merge_lane_model_refuses(model_line, capsys):
-    mod = _load_pr_merge()
-    ok = mod._assert_lane_model_or_refuse("701", {"body": _approve_body(model_line)})
-    assert ok is False, f"MODEL line {model_line!r} must refuse a lane merge"
-    assert "MODEL" in capsys.readouterr().err
+# Parametrized only when pytest is present; the stdlib unittest fallback
+# collects no module-level function in this file anyway.
+if pytest is not None:
+    @pytest.mark.parametrize("model_line", [v for _, v in _REFUSED], ids=[i for i, _ in _REFUSED])
+    def test_pr_merge_lane_model_refuses(model_line, capsys):
+        mod = _load_pr_merge()
+        ok = mod._assert_lane_model_or_refuse("701", {"body": _approve_body(model_line)})
+        assert ok is False, f"MODEL line {model_line!r} must refuse a lane merge"
+        assert "MODEL" in capsys.readouterr().err
 
-
-@pytest.mark.parametrize("model_line", [v for _, v in _ACCEPTED], ids=[i for i, _ in _ACCEPTED])
-def test_pr_merge_lane_model_accepts(model_line, capsys):
-    mod = _load_pr_merge()
-    ok = mod._assert_lane_model_or_refuse("702", {"body": _approve_body(model_line)})
-    assert ok is True, f"MODEL line {model_line!r} must be accepted; stderr={capsys.readouterr().err!r}"
+    @pytest.mark.parametrize("model_line", [v for _, v in _ACCEPTED], ids=[i for i, _ in _ACCEPTED])
+    def test_pr_merge_lane_model_accepts(model_line, capsys):
+        mod = _load_pr_merge()
+        ok = mod._assert_lane_model_or_refuse("702", {"body": _approve_body(model_line)})
+        assert ok is True, f"MODEL line {model_line!r} must be accepted; stderr={capsys.readouterr().err!r}"
 
 
 def test_pr_merge_lane_model_refuses_contradictory_lines():
