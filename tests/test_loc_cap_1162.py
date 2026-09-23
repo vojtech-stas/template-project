@@ -152,7 +152,7 @@ class TestOtherLiveReferences(unittest.TestCase):
 
     def test_readme_generated_states_600(self):
         # README.md is a build artifact (ADR-0034 D4) — regenerated from
-        # README.template.md via dashboard/server.py --generate-readme.
+        # README.template.md via dashboard/readme_gen.py (ADR-0088 D3).
         text = _read("README.md")
         self.assertIn("≤600 LoC diff", text)
         self.assertNotIn("≤300 LoC diff", text)
@@ -174,10 +174,13 @@ class TestGenRulesBaseline(unittest.TestCase):
         # RULE_IDS_BASELINE was then corrected 94 -> 92 by issue #1464 —
         # ADR-0013's stale `superseded_by: []` frontmatter was populated with
         # `["ADR-0044"]`, which retires ADR-0013's SLI-004/SLI-005 from the
-        # active rule set). This test's job is unchanged: confirm slice
-        # #1162's own PIP-020/021 rule_ids are still represented in the live
-        # baseline, not that the literal number stays frozen at 82.
-        self.assertIn("RULE_IDS_BASELINE: int = 92", self.text)
+        # active rule set; ADR-0088 then moved it 92 -> 91, slice #1481 —
+        # ADR-0088 fully supersedes ADR-0078, so PIP-022 leaves the active
+        # set and ADR-0088 itself adds no new rule_ids). This test's job is
+        # unchanged: confirm slice #1162's own PIP-020/021 rule_ids are
+        # still represented in the live baseline, not that the literal
+        # number stays frozen at 82.
+        self.assertIn("RULE_IDS_BASELINE: int = 91", self.text)
 
     def test_new_rule_statements_present(self):
         self.assertIn('"PIP-020"', self.text)

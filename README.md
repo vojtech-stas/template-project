@@ -349,7 +349,6 @@ Specialist agents under `.claude/agents/`:
 Claude Code session hooks configured in `.claude/settings.json` (scripts in `.claude/hooks/`):
 
 - **[`session-start`](.claude/hooks/session-start.sh)** (`SessionStart`) — session-start.sh — deterministic read-only session context injection.
-- **[`dashboard-autostart`](.claude/hooks/dashboard-autostart.sh)** (`SessionStart`) — .claude/hooks/dashboard-autostart.sh — SessionStart tooling-spawn hook
 - **[`user-prompt-submit`](.claude/hooks/user-prompt-submit.sh)** (`UserPromptSubmit`) — UserPromptSubmit hook — nudge feature-request prompts toward /grill-me per ADR-0023 D5.
 - **[`pre-tool-edit`](.claude/hooks/pre-tool-edit.sh)** (`PreToolUse · Edit|MultiEdit|Write`) — PreToolUse(Edit|MultiEdit|Write) hook — extended per ADR-0028 with spec-gate;
 - **[`pre-tool-bash`](.claude/hooks/pre-tool-bash.sh)** (`PreToolUse · Bash`) — PreToolUse(Bash) hook — deny-guard for dangerous git ops and incident-backed pipeline bypasses.
@@ -359,7 +358,7 @@ Claude Code session hooks configured in `.claude/settings.json` (scripts in `.cl
 
 ### Architecture Decision Records
 
-[`decisions/`](decisions/) holds 82 ADR(s). See [`decisions/README.md`](decisions/README.md) for the full index.
+[`decisions/`](decisions/) holds 83 ADR(s). See [`decisions/README.md`](decisions/README.md) for the full index.
 
 ## Subagent-quality maintenance
 
@@ -379,7 +378,7 @@ To add a term, edit that section directly in a normal reviewer-gated PR, followi
 
 Walking-skeleton phase. The pipeline is being built incrementally **on the project itself** — dogfooding from day one. The autonomous loop now ships PRDs end-to-end with all five stages live: `/grill-me` → `to-prd`+critics → `to-issues`+slicer-critic → `implementer`+`reviewer` (per slice, DAG-batched) → `/qa-plan` at acceptance. All operational content lives in skills + subagents + CLAUDE.md + ADRs per [ADR-0032](decisions/0032-workflow-only-architecture.md).
 
-> **Auto-generated component counts** (as of last generator run): 6 skill(s), 6 critic(s) + 3 generator(s), 8 hook(s), 82 ADR(s).
+> **Auto-generated component counts** (as of last generator run): 6 skill(s), 6 critic(s) + 3 generator(s), 7 hook(s), 83 ADR(s).
 
 ## License
 

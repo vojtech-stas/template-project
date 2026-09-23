@@ -2,8 +2,8 @@
 """
 tools/gen_rules.py — generate .claude/rules/<scope>.md from ADR frontmatter.
 
-Mirrors the dashboard/server.py --generate-readme pattern (stdlib-only, no
-third-party YAML parser needed — frontmatter is simple key: value syntax).
+Mirrors the dashboard/readme_gen.py pattern (stdlib-only, no third-party
+YAML parser needed — frontmatter is simple key: value syntax).
 
 Rule ID scheme: <SCOPE3>-NNN where SCOPE3 is the first 3 characters of the
 scope name uppercased (e.g. scope "capture" → "CAP"), and NNN is a zero-padded
@@ -157,9 +157,16 @@ SCOPE_PATHS: dict[str, str] = {
 # correctly drops ADR-0013's SLI-004 and SLI-005 (the retired N=1-vs-N=3
 # degenerate-decomposition machinery ADR-0044 D2 replaced) — no other ADR's
 # rule_ids are affected: the delta is -2.
+# ADR-0088 (slice #1481) fully supersedes ADR-0078 (`status: "superseded"`,
+# `superseded_by: ["ADR-0088"]`), so ADR-0078 leaves the active frontmatter
+# set entirely and its sole rule_id, PIP-022, drops: -1. ADR-0088 itself
+# declares `rule_ids: []` — its D2 observability-doc obligation is
+# (advisory) and D3-D6 extend existing checks rather than minting new
+# rule ids — so it adds nothing back: the net delta is -1, measured from
+# the baseline on `develop` at the commit this slice branched from (92).
 # Breakdown: CAP(8) + COM(2) + CRI(5) + DOC(6) + GLO(4) + HOK(9) +
-#            ISO(6) + OUT(5) + PIP(29) + REG(3) + SLI(3) + VER(12) = 92
-RULE_IDS_BASELINE: int = 92
+#            ISO(6) + OUT(5) + PIP(28) + REG(3) + SLI(3) + VER(12) = 91
+RULE_IDS_BASELINE: int = 91
 
 # ---------------------------------------------------------------------------
 # Frontmatter parser (stdlib, no PyYAML)
@@ -474,12 +481,11 @@ _RULE_STATEMENTS: dict[str, str] = {
     "PIP-024": (
         "`tools/pipe/batch-plan` is retired and `batch_planned` leaves "
         "`tools/trace.py`'s closed kind enum (zero recorded spans, "
-        "verified); the Run-board's `next` panel and `next_source` marker "
-        "are removed — the board shows only `now` and `recent`, both "
-        "backed by spans that verifiably occur; the verb returns only via "
-        "a new ADR gated on two `captured` issues from distinct PRDs each "
-        "documenting a concrete mis-dispatch or planning failure caused by "
-        "absent recorded batch state (ADR-0080 D2)."
+        "verified); the verb returns only via a new ADR gated on two "
+        "`captured` issues from distinct PRDs each documenting a concrete "
+        "mis-dispatch or planning failure caused by absent recorded batch "
+        "state (ADR-0080 D2; its board-panel clause lapsed when ADR-0088 "
+        "retired the board)."
     ),
     # ADR-0081: post-audit dead-weight retirements (4 mechanisms, duties rehomed)
     "PIP-025": (
@@ -643,9 +649,9 @@ _RULE_STATEMENTS: dict[str, str] = {
     ),
     "VER-002": (
         "`qa-tester` in production-verify mode auto-routes by change type: "
-        "browser UI (`dashboard/*`) → headless Playwright; hooks/settings → synthetic-payload "
-        "fire + log assertion; skills/tools → command run + output assertion; "
-        "docs/ADRs → static grep (ADR-0037 D2)."
+        "browser-reachable UI → browser route; hooks/settings → synthetic-payload "
+        "fire + log assertion; skills/tools → command run + output "
+        "assertion; docs/ADRs → static grep (ADR-0037 D2, as amended by ADR-0088 D5)."
     ),
     "VER-003": (
         "Every PRD §2 must include a 'Production check:' line stating what to exercise and "
@@ -809,9 +815,10 @@ _RULE_STATEMENTS: dict[str, str] = {
     # -----------------------------------------------------------------------
     # ADR-0034: generated-docs currency — D4 (generated README) + D5 (R-DOCS-CURRENT)
     "DOC-001": (
-        "`README.md` is a build artifact: `dashboard/server.py --generate-readme` reads "
+        "`README.md` is a build artifact: `python3 dashboard/readme_gen.py` reads "
         "`README.template.md` + filesystem, writes `README.md`; the file MUST NOT be "
-        "hand-edited — always regenerate (ADR-0034 D4)."
+        "hand-edited — always regenerate (ADR-0034 D4; generator entrypoint relocated "
+        "by ADR-0088 D3)."
     ),
     "DOC-002": (
         "The reviewer enforces `R-DOCS-CURRENT`: any PR that changes a template placeholder "

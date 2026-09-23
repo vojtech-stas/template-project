@@ -46,8 +46,6 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 REPO_ROOT = Path(__file__).parent.parent
-LIB_ROOT_SH = ".claude/hooks/lib-root.sh"  # relative to REPO_ROOT, posix-style for bash
-AUTOSTART_SH = REPO_ROOT / ".claude" / "hooks" / "dashboard-autostart.sh"
 HEALTH_PY = REPO_ROOT / "dashboard" / "health.py"
 
 _FORBIDDEN_PORTS = (8765, 8766)  # real dashboard ports — never bind/target these
@@ -123,48 +121,6 @@ def _unused_port() -> int:
     s.close()
     assert port not in _FORBIDDEN_PORTS
     return port
-
-
-# ---------------------------------------------------------------------------
-# Group A — shared bash identity probe (dashboard-autostart.sh site)
-# ---------------------------------------------------------------------------
-
-class TestSharedBashIdentityProbe(unittest.TestCase):
-    """dashboard_probe_identity() in lib-root.sh — the shared contract used
-    by dashboard-autostart.sh's idempotency check."""
-
-    def _bash_available(self) -> bool:
-        try:
-            r = subprocess.run(["bash", "--version"], capture_output=True, timeout=5)
-            return r.returncode == 0
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            return False
-
-    def _run_probe(self, base_url: str, timeout: str = "2") -> subprocess.CompletedProcess:
-        py = sys.executable.replace("\\", "/")
-        script = (
-            f'source "{LIB_ROOT_SH}"\n'
-            f'dashboard_probe_identity "{py}" "{base_url}" {timeout}\n'
-        )
-        return subprocess.run(
-            ["bash", "-c", script],
-            capture_output=True, text=True,
-            cwd=str(REPO_ROOT), timeout=20,
-        )
-
-    def test_dashboard_autostart_wired_to_shared_probe(self):
-        """dashboard-autostart.sh's idempotency check must call the shared
-        contract, and must no longer probe /api/architecture directly for
-        idempotency (the #1184 repoint)."""
-        content = AUTOSTART_SH.read_text(encoding="utf-8")
-        self.assertIn(
-            "dashboard_probe_identity", content,
-            msg="dashboard-autostart.sh must call the shared dashboard_probe_identity contract",
-        )
-        self.assertNotIn(
-            "/api/architecture", content,
-            msg="dashboard-autostart.sh must no longer probe /api/architecture for idempotency",
-        )
 
 
 # ---------------------------------------------------------------------------
