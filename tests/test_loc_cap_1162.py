@@ -176,11 +176,15 @@ class TestGenRulesBaseline(unittest.TestCase):
         # `["ADR-0044"]`, which retires ADR-0013's SLI-004/SLI-005 from the
         # active rule set; ADR-0088 then moved it 92 -> 91, slice #1481 —
         # ADR-0088 fully supersedes ADR-0078, so PIP-022 leaves the active
-        # set and ADR-0088 itself adds no new rule_ids). This test's job is
+        # set and ADR-0088 itself adds no new rule_ids; ADR-0089's
+        # PIP-031/PIP-032 then moved it 91 -> 93, slice #1511 — ADR-0089's
+        # four supersessions (ADR-0070 D1, ADR-0004 D3, ADR-0041 D2,
+        # ADR-0045 D3) are each PARTIAL, so no existing rule_id drops out of
+        # the active set; the delta is a pure +2). This test's job is
         # unchanged: confirm slice #1162's own PIP-020/021 rule_ids are
         # still represented in the live baseline, not that the literal
         # number stays frozen at 82.
-        self.assertIn("RULE_IDS_BASELINE: int = 91", self.text)
+        self.assertIn("RULE_IDS_BASELINE: int = 93", self.text)
 
     def test_new_rule_statements_present(self):
         self.assertIn('"PIP-020"', self.text)
