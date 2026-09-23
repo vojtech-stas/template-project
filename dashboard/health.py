@@ -6109,9 +6109,9 @@ _STREAM_LIVENESS_DARK_MINUTES = 60  # always-on window (unchanged; mirrors
 # alarm, not a real outage. Two narrower classes carve out of the default
 # "always-on" bucket:
 #   - "session-scoped": streams registered under the SessionStart hook event
-#     (session-start.sh, dashboard-autostart.sh today; any future once-per-
-#     session hook is picked up automatically since classification keys off
-#     the settings.json event name, not a hardcoded stream-name list). Alive
+#     (session-start.sh today; any future once-per-session hook is picked up
+#     automatically since classification keys off the settings.json event
+#     name, not a hardcoded stream-name list). Alive
 #     iff the stream's own last beacon is within
 #     _STREAM_LIVENESS_SESSION_SKEW_MINUTES of the NEWEST beacon among all
 #     session-scoped streams (the "newest observed session" cluster) — never
