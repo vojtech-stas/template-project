@@ -141,7 +141,9 @@ def _gh():
 
 
 def _run_gh(args):
-    return subprocess.run([_gh()] + args, capture_output=True, text=True)
+    return subprocess.run(
+        [_gh()] + args, capture_output=True, text=True, encoding="utf-8", errors="replace",
+    )
 
 
 def _remote_owner_repo():
