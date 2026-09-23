@@ -90,7 +90,8 @@ extra gh call on an ordinary PR:
     window on trace_id `lane-<headRefName>`.
   - Close-on-merge (criterion 26 only — criterion 27's closing comment is
     deferred to slice 2 per the SPIDR note): on confirmed merge, every
-    `Closes #<n>` issue in the PR body is closed (no comment), after merge
+    issue named on a whole `Closes #<n>` line of the PR body is closed (no
+    comment; a `closes #<n>` inside prose closes nothing), after merge
     confirmation and before the span append, never on the already-recorded
     idempotence shortcut.
 
@@ -399,7 +400,10 @@ def _assert_verdict_or_refuse(pr):
 # (never `\s*`) keeps an empty `MODEL:` from reading the next line.
 _MODEL_LINE_RE = re.compile(r"^MODEL:[ \t]*(.*)$", re.MULTILINE)
 _STRONG_MODEL_RE = re.compile(r"^(?:claude-)?opus(?:-\d+(?:[.-]\d+)*)?$")
-_LANE_CLOSES_RE = re.compile(r"closes\s*#(\d+)", re.IGNORECASE)
+# Criterion 26: a lane PR closes exactly the issues named on whole
+# `Closes #<n>` lines. Prose such as "step 5 (closes #1448)" closes nothing.
+# reviewer.md's R-CLOSES lane leg names this same pattern.
+_LANE_CLOSES_RE = re.compile(r"^Closes #(\d+)\s*$", re.MULTILINE)
 
 
 def _is_lane_pr(view):
@@ -531,8 +535,9 @@ def _assert_lane_window_or_refuse(pr, view):
 
 def _close_lane_issues(view):
     """Criterion 26 ONLY (criterion 27's closing comment is deferred to
-    slice 2 per the SPIDR note / A10): close every `Closes #<n>` issue named
-    in the lane PR's body -- issue-close only, never a comment."""
+    slice 2 per the SPIDR note / A10): close every issue named on a whole
+    `Closes #<n>` line of the lane PR's body (`_LANE_CLOSES_RE`) --
+    issue-close only, never a comment."""
     body = (view or {}).get("body", "") or ""
     for num in _LANE_CLOSES_RE.findall(body):
         _run_gh(["issue", "close", num])
