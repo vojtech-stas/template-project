@@ -49,13 +49,16 @@ printf '{"hook":"session-start","status":"python3_selftest","result":"%s","ts":"
 # posture -- DIV becomes a visible placeholder naming the failure; no
 # fallback literal, no new beacon status, and the script still continues
 # through the GH_OK block to its single terminal beacon.
-PIPELINE_CONFIG_PY="$SCRIPT_DIR/../../tools/pipeline_config.py"
+# #1535: `pwd -W` (else `pwd`; braced so a failed cd never yields the cwd) for
+# MSYS_NO_PATHCONV=1. Stdout names the branch; a failure re-runs it for stderr.
+_SS_TOOLS_DIR="$(cd "$SCRIPT_DIR/../../tools" && { pwd -W 2>/dev/null || pwd; })"
+PIPELINE_CONFIG_PY="$_SS_TOOLS_DIR/pipeline_config.py"
 INTEGRATION_BRANCH=""
 _PC_ERR=""
-if _pc_out=$(python3 "$PIPELINE_CONFIG_PY" integration 2>&1); then
+if _pc_out=$(python3 "$PIPELINE_CONFIG_PY" integration); then
   INTEGRATION_BRANCH="$_pc_out"
 else
-  _PC_ERR="$_pc_out"
+  _PC_ERR=$(python3 "$PIPELINE_CONFIG_PY" integration 2>&1 >/dev/null)
 fi
 
 BR=$(git symbolic-ref --short HEAD 2>/dev/null || echo "(detached)")
