@@ -246,7 +246,7 @@ def _build_trail_with_mocks(develop_scan_returns_empty=False):
 
 
 # ---------------------------------------------------------------------------
-# Group A: slice_no_pr false-FAIL via compare() — the REAL /api/comparison path
+# Group A: slice_no_pr false-FAIL via compare() — the real comparison-engine path
 # ---------------------------------------------------------------------------
 
 class TestSliceNoPrDevelopAware(unittest.TestCase):

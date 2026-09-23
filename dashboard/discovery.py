@@ -1,5 +1,6 @@
 """
-dashboard/discovery.py — filesystem discovery helpers for the dashboard.
+dashboard/discovery.py — filesystem discovery helpers, consumed by
+dashboard/readme_gen.py and tools/gen_repo_map.py.
 
 Exports:
     discover_skills()
@@ -479,11 +480,11 @@ def discover_edges() -> list:
 
     NOTE (slice #629, ADR-0039 D2): this is a COMPONENT-REFERENCE graph, NOT
     the canonical workflow topology. The authoritative sequential pipeline flow
-    lives in the SPEC v2 (pipeline_spec.py) and is exposed via
-    ``/api/pipeline`` (rendered by the Architecture topology graph since slice #627).
-    This function's output (``/api/architecture`` ``edges``) is consumed only by
-    the flat component list section's "Inferred edges" summary — a supplementary
-    cross-reference view, not the primary topology.
+    lives in the SPEC v2 (pipeline_spec.py). This function's edge-inference
+    output was rendered by the Architecture topology graph's "Inferred edges"
+    cross-reference view — a supplementary view, never the primary topology —
+    before that UI was retired along with the rest of the served dashboard
+    (ADR-0088 D1); it currently has no consumer.
 
     Edge types:
       skill -> agent  : skill SKILL.md body mentions a known agent stem name

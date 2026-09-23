@@ -191,7 +191,7 @@ Score each criterion as PASS / FAIL / WARN (warn = present but weak).
 
 **Rationale:** Per-PRD walking-skeletons ran for 5 consecutive PRDs while no REAL datum traversed the full pipeline in production — forensics P5. The system-level skeleton is never walked by accident; it must be explicit in the decomposition. Catching the gap at slicing time costs one revision loop; discovering it post-merge (when upstream data is absent) costs a re-ship loop on the feature's production verification. Per [ADR-0054](../../decisions/0054-critic-output-contracts-and-trailer-standard.md) D6 + CLAUDE.md rule #22.
 
-**Examples:** PRD adds a dashboard view consuming hook-fires.jsonl (emitted by PRD #644); slice 1 declares "verify at least one hook beacon in hook-fires.jsonl and render it in the dashboard" → PASS. Same PRD; slice 1 only ships the dashboard route with no assertion that hook-fires.jsonl has real data → FAIL. PRD ships a pure docs update with no upstream dependency → not applicable, PASS.
+**Examples:** PRD adds a daily digest consuming hook-fires.jsonl (emitted by PRD #644); slice 1 declares "verify at least one hook beacon in hook-fires.jsonl and include it in the digest" → PASS. Same PRD; slice 1 only ships the digest job with no assertion that hook-fires.jsonl has real data → FAIL. PRD ships a pure docs update with no upstream dependency → not applicable, PASS.
 
 ### SC-COVERAGE — Every PRD §2 criterion is covered by at least one slice; no phantom citations
 

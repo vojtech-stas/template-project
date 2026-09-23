@@ -716,9 +716,8 @@ def get_spec() -> dict:
         }
 
     Consumed by:
-      - /api/pipeline (server.py)
-      - render_pipeline_mermaid() (server.py --generate-readme)
-      - dashboard/index.html renderTopologyGraph() (declared mode)
+      - readme_gen.py's render_pipeline_mermaid() (the README's generated
+        mermaid diagram, entrypoint `python3 dashboard/readme_gen.py`)
       - dashboard/comparison.py compare() (github-tier edges)
     """
     return {

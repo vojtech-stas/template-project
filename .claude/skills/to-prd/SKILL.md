@@ -51,7 +51,7 @@ The single observable outcome of shipping this PRD, plus a checklist of mechanic
 
 `prd-critic` BLOCKs on trigger-less criteria or multi-behavior criteria outside the `Verifiable:` hatch (PC-EARS rule, bind-forward per ADR-0004 D2). Both forms are equally valid; match the form to the criterion's nature.
 
-**Production check:** <what to exercise in the live running context + expected result — e.g., "load http://localhost:8765/live-tab, assert 0 console errors + graph renders". For non-runnable features: "N/A — docs-only, static: grep -c '<term>' <file> ≥ 1". Required; a missing or vague entry BLOCKs the PRD at prd-critic (PC-PRODUCTION-CHECK, ADR-0037 D4).>
+**Production check:** <what to exercise in the live running context + expected result — e.g., "run `python3 dashboard/health.py --check RELEASE-READY`; assert first line matches `^(PASS|WARN): RELEASE-READY`". For non-runnable features: "N/A — docs-only, static: grep -c '<term>' <file> ≥ 1". Required; a missing or vague entry BLOCKs the PRD at prd-critic (PC-PRODUCTION-CHECK, ADR-0037 D4).>
 
 ## 3. Non-goals / Out of scope
 

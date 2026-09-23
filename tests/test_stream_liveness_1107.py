@@ -66,10 +66,10 @@ def _write_settings(path: Path, hook_entries: dict) -> None:
 
 # session-start.sh is the one real SessionStart hook registered in
 # .claude/settings.json; session-scoped-b is a synthetic sibling
-# (dashboard-autostart.sh's registration was retired per ADR-0088 D1 /
-# slice #1483) that exercises the same filename-stem-fallback shape so the
-# two-session-scoped-stream skew-tolerance logic below still has a second
-# stream to test against.
+# (the former dashboard-spawn hook's registration was retired per
+# ADR-0088 D1 / slice #1483) that exercises the same filename-stem-fallback
+# shape so the two-session-scoped-stream skew-tolerance logic below still
+# has a second stream to test against.
 _SESSION_SCOPED_SETTINGS = {
     "SessionStart": [
         {"matcher": "", "hooks": [{"type": "command",

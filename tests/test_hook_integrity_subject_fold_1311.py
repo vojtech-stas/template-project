@@ -172,8 +172,8 @@ class TestRegisteredHooksAreCountable(_ScratchLogCase):
     each carry a ratio entry when the log holds their records."""
 
     def test_three_previously_invisible_streams_get_ratio_entries(self):
-        # "dashboard-autostart" was one of three example subjects at slice
-        # #1311's writing; its SessionStart registration is deleted per
+        # The deleted dashboard-spawn hook was one of three example subjects
+        # at slice #1311's writing; its SessionStart registration is deleted per
         # ADR-0088 D1 (slice #1481), so "session-start" — the surviving
         # SessionStart-registered, non-auto hook — stands in as the third
         # example. The invariant under test (three hooks beaconing under

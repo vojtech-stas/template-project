@@ -12,8 +12,8 @@ Tests assert:
 3. DECLARED-PARITY is NOT in CHECK_REGISTRY
 4. DORA-PANEL is NOT in CHECK_REGISTRY
 
-(Former item 5, "/api/dora is NOT a registered route in server.py", was
-retired with server.py itself per ADR-0088 D1 — slice #1481.)
+(Former item 5, "/api/dora is NOT a registered route in the HTTP server
+module", was retired along with that module per ADR-0088 D1 — slice #1481.)
 """
 
 import re

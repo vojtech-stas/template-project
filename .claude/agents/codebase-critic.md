@@ -40,8 +40,8 @@ If `WHOLE_REPO: true` is present → execute the protocol below and return with 
 - `.claude/skills/ship/SKILL.md` — the primary dispatcher (invokes agents, wires pipeline)
 - `.claude/agents/reviewer.md` — sole merge gate; its rubric cites many ADRs
 - `.claude/agents/codebase-critic.md` (this file) — to check self-consistency
-- `dashboard/server.py` — first ~100 lines (PIPELINE spec, KNOWN_CRITICS, check_docs* — the dashboard↔canonical seam the dashboard-re-impl class lives in)
-- `tools/ci-checks.sh` — the deterministic CI gate; cross-references dashboard + decisions
+- `dashboard/_constants.py` — the single-sourced `KNOWN_CRITICS` roster (ADR-0088 D4) — the roster-duplication seam the dashboard-re-impl class lives in
+- `tools/ci-checks.sh` — the deterministic CI gate; cross-references the dashboard/ health registry + decisions
 
 You may read additional files if a specific cross-subsystem seam becomes visible during the map pass (e.g., a new agent that cites an ADR in a way that seems off). Keep total additional reads ≤5 files.
 
@@ -56,7 +56,7 @@ These classes are distinct from the per-PRD rubric; they look for cross-PRD / cr
 **What it checks:** a subsystem's canonical definition (in an ADR, CLAUDE.md rule, or agent prompt) contradicts the actual behavior encoded in a different subsystem's file — a drift that spans subsystems and would not appear in any one PRD's diff.
 
 **Signal examples:**
-- CLAUDE.md claims N critics but `KNOWN_CRITICS` in `dashboard/server.py` or `decisions/README.md` reflects a different count.
+- CLAUDE.md claims N critics but `KNOWN_CRITICS` in `dashboard/_constants.py` or `decisions/README.md` reflects a different count.
 - `/ship` SKILL.md describes a dispatch step that a relevant ADR explicitly retired.
 - An agent's `description:` frontmatter claims a capability its body doesn't implement.
 - A reviewer rule cited in CLAUDE.md I6 isn't present in the reviewer agent's rubric.
@@ -68,7 +68,7 @@ These classes are distinct from the per-PRD rubric; they look for cross-PRD / cr
 **What it checks:** the same logical mechanism is implemented independently in two or more subsystem files, creating divergence risk. This is the dashboard-re-implements-audit-checks class.
 
 **Signal examples:**
-- Dashboard `server.py` re-implements checks that `tools/ci-checks.sh` or `dashboard/health.py` already define in the check registry.
+- `dashboard/discovery.py` and `dashboard/health.py` each hold a private copy of `KNOWN_CRITICS` instead of importing the single source in `dashboard/_constants.py` (the #1257/#1465 recurrence class).
 - Two agent files each define the same critic-loop contract inline rather than cross-referencing the canonical source.
 - A skill and an agent both embed the same ADR D-ID list with no shared reference.
 

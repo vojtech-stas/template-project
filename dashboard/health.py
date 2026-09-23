@@ -1,5 +1,5 @@
 """
-dashboard/health.py — health check helpers + /api/health TTL cache.
+dashboard/health.py — health check helpers + aggregate-payload TTL cache.
 
 Exports:
     check_docs1_adr_index_forward() -> dict
@@ -225,8 +225,9 @@ def _v3_trace_log_exists() -> bool:
 from _constants import KNOWN_CRITICS as _KNOWN_CRITICS  # noqa: E402
 
 # ---------------------------------------------------------------------------
-# /api/health TTL cache — health checks can take 1-2 s on cold start.
-# Background-thread + TTL cache pattern.
+# Aggregate health-payload TTL cache — health checks can take 1-2 s on cold
+# start. Background-thread + TTL cache pattern. Retained as a library shim
+# with no HTTP caller after ADR-0088 D1's server deletion (captured: #1491).
 # ---------------------------------------------------------------------------
 _health_cache: dict = {}       # {"data": {...}, "ts": float}
 _health_computing: bool = False
@@ -328,8 +329,9 @@ def _fetch_github_ci_conclusion(repo_root, sha=None) -> tuple:
     # Routed through gh_cache (ttl=30s, timeout=5s) so a slow gh degrades to
     # "unavailable" (which triggers the ci-checks.sh local fallback) rather than
     # blocking the request path for up to 20s (PRD #993 cr.3, slice #996).
-    # ttl=30s caches only within a long-running dashboard server process; promote.sh invokes
-    # --check RELEASE-READY as a fresh subprocess (empty cache) so the gate always reads LIVE GitHub ci (#986 honesty preserved).
+    # ttl=30s caches only within one long-running process; CLI invocations
+    # (including promote.sh's --check RELEASE-READY) each start a fresh
+    # subprocess (empty cache) so the gate always reads LIVE GitHub ci (#986 honesty preserved).
     try:
         _pr_rc, _pr_out = _health_gh_fetch(
             ["pr", "list", "--base", "develop", "--state", "merged",
@@ -2439,7 +2441,7 @@ def check_rule_coverage() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Spec-coverage check (slice #798 / ADR-0066 D2: SC-COVERAGE dashboard row)
+# Spec-coverage check (slice #798 / ADR-0066 D2: SC-COVERAGE health-registry row)
 # ---------------------------------------------------------------------------
 
 def check_spec_coverage() -> dict:
@@ -2672,7 +2674,7 @@ def check_critic_health() -> dict:
     hold all verdicts and named critics will show 0 verdicts — that is correct.
 
     Returns a substrate-compatible check dict with id="CRITIC-HEALTH" and a
-    per-critic breakdown in the "critics" key for the dashboard card.
+    per-critic breakdown in the "critics" key in the check's result.
     """
     try:
         # Lazy import to avoid circular deps (collector imports nothing from health)
@@ -5202,7 +5204,8 @@ def check_branch_topology() -> dict:
     Returns PASS when the topology is clean, WARN on advisory issues, FAIL on
     structural breaks. Always emits real data — never the "dormant" stub.
 
-    Extra fields for /api/promotion:
+    Extra diagnostic fields on the returned dict (beyond id/result/detail),
+    surfaced via `python3 dashboard/health.py --check BRANCH-TOPOLOGY`:
       develop_sha, main_sha, ahead, behind, main_is_ancestor
     """
     import json as _json
@@ -5456,7 +5459,7 @@ def check_release_ready() -> dict:
     #
     # Fallback: if gh is unavailable or no matching PR found, run local
     # ci-checks.sh — but label the detail "(local fallback — no GitHub ci
-    # run found)" so the source is unambiguous in the dashboard/CLI output.
+    # run found)" so the source is unambiguous in the CLI output.
     # -----------------------------------------------------------------------
     ci_override = os.environ.get("_RELEASE_READY_CI_RESULT", "").strip().upper()
     # gh_status is populated ONLY on the real (non-override) gh-query path
@@ -6109,9 +6112,9 @@ _STREAM_LIVENESS_DARK_MINUTES = 60  # always-on window (unchanged; mirrors
 # alarm, not a real outage. Two narrower classes carve out of the default
 # "always-on" bucket:
 #   - "session-scoped": streams registered under the SessionStart hook event
-#     (session-start.sh, dashboard-autostart.sh today; any future once-per-
-#     session hook is picked up automatically since classification keys off
-#     the settings.json event name, not a hardcoded stream-name list). Alive
+#     (session-start.sh today; any future once-per-session hook is picked up
+#     automatically since classification keys off the settings.json event
+#     name, not a hardcoded stream-name list). Alive
 #     iff the stream's own last beacon is within
 #     _STREAM_LIVENESS_SESSION_SKEW_MINUTES of the NEWEST beacon among all
 #     session-scoped streams (the "newest observed session" cluster) — never
@@ -7056,7 +7059,7 @@ CHECK_REGISTRY["PARITY"] = check_parity
 
 
 def _build_health_data() -> dict:
-    """Build the full /api/health payload synchronously.
+    """Build the full aggregate health-check payload synchronously.
 
     Called from the background thread; never from an HTTP handler.
 

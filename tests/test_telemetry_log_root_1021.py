@@ -279,8 +279,8 @@ class TestTelemetryLogRootServerUsage(unittest.TestCase):
     Verify that health.py imports and uses _telemetry_log_root for the
     hook/event log paths (structural check — not a live-server test).
 
-    (The parallel server.py sub-check was retired with server.py itself
-    per ADR-0088 D1 — slice #1481.)
+    (The parallel HTTP-server-module sub-check was retired along with that
+    module per ADR-0088 D1 — slice #1481.)
     """
 
     def test_health_py_imports_telemetry_root(self):
