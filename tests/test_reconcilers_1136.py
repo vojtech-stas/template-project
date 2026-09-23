@@ -447,5 +447,52 @@ class TestClosedPrdVsQa(_ReconcilerTestBase):
         self.assertTrue(callable(getattr(health, "check_closed_prd_vs_qa", None)))
 
 
+# ---------------------------------------------------------------------------
+# QUERY-HONESTY gate cross-effect on the reconcilers (round-2 fix, R-YAGNI
+# finding F1 / ADR-0087 D2): `_patch_gh`'s explicit `api_result` route is
+# exercised here (rather than deleted) -- a REST-canary-mismatched
+# `api_result` makes the QUERY-HONESTY attestation FAIL, which gates every
+# `--label`-bearing call through the seam as unconfirmed (ADR-0087 D2). Both
+# SLICE-VS-PR and CLOSED-PRD-VS-QA issue a `--label`-bearing call, so both
+# must degrade to an honest WARN -- never a silent PASS or a fabricated
+# FAIL. This is the unit-level form of PRD #1496 §2 criterion 11.
+# ---------------------------------------------------------------------------
+
+class TestQueryHonestyGatesReconcilers(_ReconcilerTestBase):
+    def test_mismatched_api_result_warns_slice_vs_pr(self):
+        health = _reimport("health")
+        # issue_list_result (1 item) disagrees with api_result (2 items) ->
+        # the QUERY-HONESTY attestation FAILs -> the seam's --label gate
+        # returns unconfirmed for the "issue list --label slice" call.
+        self._patch_gh(
+            health,
+            pr_list_result=_live(json.dumps([])),
+            issue_list_result=_live(json.dumps([{"number": 5001}])),
+            api_result=_live(json.dumps([{"number": 900001}, {"number": 900002}])),
+        )
+        self._write_spans([])
+
+        result = health.check_slice_vs_pr()
+
+        self.assertEqual(result.get("result"), "WARN", msg=result)
+        self.assertIn("unverifiable", result.get("detail", "").lower())
+
+    def test_mismatched_api_result_warns_closed_prd_vs_qa(self):
+        health = _reimport("health")
+        self._patch_gh(
+            health,
+            issue_list_result=_live(json.dumps(
+                [{"number": 8001, "closedAt": "2026-08-01T10:00:00Z"}]
+            )),
+            api_result=_live(json.dumps([{"number": 900001}, {"number": 900002}])),
+        )
+        self._write_spans([])
+
+        result = health.check_closed_prd_vs_qa()
+
+        self.assertEqual(result.get("result"), "WARN", msg=result)
+        self.assertIn("unverifiable", result.get("detail", "").lower())
+
+
 if __name__ == "__main__":
     unittest.main()
