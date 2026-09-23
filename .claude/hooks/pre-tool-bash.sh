@@ -64,10 +64,10 @@
 #     `python`, never `gh`, so the sanctioned wrapper invocation is never
 #     mis-denied.
 #   - `tools/promote.sh` invoked (as the clause's actual command, not a
-#     mention) from a SUBAGENT context — ADR-0076 D4 7b, reusing the
-#     identical `CLAUDE_AGENT_TYPE` env-var discriminator `pre-tool-edit.sh`
-#     already uses (~line 71) for its subagent-context skip; the
-#     orchestrator's own (main-agent, no CLAUDE_AGENT_TYPE) invocation passes
+#     mention) from a SUBAGENT context — ADR-0076 D4 7b, using the same
+#     discriminator `pre-tool-edit.sh` uses for its subagent-context skip:
+#     a non-empty `agent_id` in the hook's stdin payload (ADR-0091 D1); the
+#     orchestrator's own (main-thread, no `agent_id`) invocation passes
 #     through un-denied.
 # Warns (systemMessage, NOT denied):
 #   - `git commit ... -m ... WIP` (convention nudge; same clause-anchoring

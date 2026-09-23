@@ -150,7 +150,17 @@ def classify(cmd):
     }
 
 
-def decide(cmd, agent_type):
+def is_subagent(payload):
+    """ADR-0091 D1: a hook fired inside a subagent call carries a non-empty
+    `agent_id` in its stdin payload; the main thread's payload never does
+    (`agent_type` alone is not a marker -- an `--agent` session's main
+    thread carries it too). No environment variable carries this signal."""
+    if not isinstance(payload, dict):
+        return False
+    return bool(str(payload.get("agent_id") or "").strip())
+
+
+def decide(cmd, subagent):
     """Same priority-order cascade as the pre-consolidation bash script's
     sequential if/exit chain -- first match wins, byte-identical message
     text. Order: push-main deny > WIP warn > issue-create-label warn >
@@ -178,7 +188,7 @@ def decide(cmd, agent_type):
             'hand-created-slice class is caught deterministically via CI CHECK 19 '
             '+ the SLICE-VS-PR reconciler.'
         )
-    if flags["deny_promote_invocation"] and agent_type:
+    if flags["deny_promote_invocation"] and subagent:
         return "deny", (
             'tools/promote.sh may not run from a subagent context — promotion is '
             'a human-gated orchestrator action (see #880); only the orchestrator '
@@ -223,10 +233,11 @@ def main():
     try:
         payload = json.loads(raw)
         cmd = (payload.get("tool_input") or {}).get("command") or ""
+        subagent = is_subagent(payload)
     except Exception:
         cmd = ""
-    agent_type = os.environ.get("CLAUDE_AGENT_TYPE", "")
-    outcome, message = decide(cmd, agent_type)
+        subagent = False
+    outcome, message = decide(cmd, subagent)
     _write_outcome_beacon(os.environ.get("_PTB_BEACON_DIR", ""), outcome)
     print(outcome)
     if outcome == "deny":

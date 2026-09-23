@@ -11,9 +11,10 @@
 #  2b. Arm the single-terminal EXIT trap (ADR-0083 D1/D2): every one of the seven
 #      exit sites below ends in exactly one terminal beacon; ASK/DENY are
 #      completions (`status:"ok"` + additive `outcome`), never forged crashes.
-#  3. Subagent context skip (CLAUDE_AGENT_TYPE set) — exit 0; subagents ARE the PR pipeline.
-#  4. Parse stdin via python3: extract tool_input.file_path + session_id.
+#  3. Parse stdin via python3: extract tool_input.file_path + session_id + agent_id.
 #     On parse failure: emit ERROR beacon w/ session_id, exit 0 (ADR-0057 D1b/D2).
+#  4. Subagent context skip (payload `agent_id` non-empty, ADR-0091 D1) — exit 0;
+#     subagents ARE the PR pipeline.
 #  5. Allowlist on extracted file_path field (ADR-0057 D1c — field-based, not raw substring).
 #     Paths under tool-results / .claude/projects / .claude/logs → exit 0.
 #  6. jq-missing fallback — emit "ask" (cannot build JSON response without jq).
@@ -92,13 +93,7 @@ emit_deny() {
   exit 0
 }
 
-# Step 3: subagent context — allow (no emit). Subagents ARE the PR pipeline per ADR-0023 D3 step 1.
-# OQ-1 fallback: if CLAUDE_AGENT_TYPE unreliable on dogfood, comment out this block to always escalate.
-if [ -n "${CLAUDE_AGENT_TYPE:-}" ]; then
-  exit 0
-fi
-
-# Step 4: parse FULL stdin with python3 — extract file_path + session_id.
+# Step 3: parse FULL stdin with python3 — extract file_path + session_id + subagent flag.
 # ADR-0057 D1c: gating decisions match extracted JSON fields, never raw-stdin text.
 # ADR-0057 D1b/D2: on parser failure emit ERROR beacon with session_id and exit 0 (fail-open).
 _PY_OUT=$(export _PTE_STDIN="$STDIN_RAW"; python3 - <<'PYEOF' 2>/dev/null
@@ -108,7 +103,9 @@ try:
     payload = json.loads(raw)
     fp  = (payload.get("tool_input") or {}).get("file_path") or ""
     sid = payload.get("session_id") or ""
-    print(json.dumps({"ok": True, "file_path": fp, "session_id": sid}))
+    # ADR-0091 D1: a non-empty `agent_id` marks a hook fired inside a subagent.
+    sub = bool(str(payload.get("agent_id") or "").strip())
+    print(json.dumps({"ok": True, "file_path": fp, "session_id": sid, "subagent": sub}))
 except Exception as exc:
     # Best-effort session_id extraction even on corrupt JSON.
     m = re.search(r'"session_id"\s*:\s*"([^"]*)"', raw)
@@ -120,6 +117,7 @@ PYEOF
 _PY_OK=$(printf '%s' "$_PY_OUT" | python3 -c "import sys,json; d=json.load(sys.stdin); print('1' if d.get('ok') else '0')" 2>/dev/null || echo "0")
 FP=$(printf '%s' "$_PY_OUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('file_path',''))" 2>/dev/null || echo "")
 _SID=$(printf '%s' "$_PY_OUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('session_id',''))" 2>/dev/null || echo "")
+_SUBAGENT=$(printf '%s' "$_PY_OUT" | python3 -c "import sys,json; print('1' if json.load(sys.stdin).get('subagent') else '')" 2>/dev/null || echo "")
 # Bash-level session_id fallback: if python3 failed entirely _SID is empty; extract via sed.
 if [ -z "$_SID" ]; then
   _SID=$(printf '%s' "$STDIN_RAW" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1 2>/dev/null || echo "")
@@ -134,6 +132,12 @@ if [ "$_PY_OK" != "1" ]; then
   printf '{"hook":"pre-tool-edit","status":"ERROR","ts":"%s","session_id":"%s","reason":"%s"}\n' \
     "$(date -u -Iseconds 2>/dev/null)" "$_SID" "$_ERR_MSG" \
     >> "$_BEACON_DIR/hook-fires.jsonl" 2>/dev/null || true
+  exit 0
+fi
+
+# Step 4: subagent context — allow (no emit). Subagents ARE the PR pipeline per ADR-0023 D3 step 1.
+# The discriminator is the payload's `agent_id` (ADR-0091 D1); no environment variable carries it.
+if [ "$_SUBAGENT" = "1" ]; then
   exit 0
 fi
 

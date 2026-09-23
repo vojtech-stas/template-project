@@ -42,6 +42,10 @@ _SRG_ACTIVE=$(printf '%s' "$_SRG_STDIN" | python3 -c \
 _SRG_SID=$(printf '%s' "$_SRG_STDIN" | python3 -c \
   "import sys,json; print(json.load(sys.stdin).get('session_id',''))" \
   2>/dev/null || echo "")
+# ADR-0091 D1: a non-empty payload `agent_id` marks a hook fired inside a subagent.
+_SRG_SUBAGENT=$(printf '%s' "$_SRG_STDIN" | python3 -c \
+  "import sys,json; print('1' if str(json.load(sys.stdin).get('agent_id') or '').strip() else '')" \
+  2>/dev/null || echo "")
 
 # --- Beacon helpers (defined before first call site) ---
 
@@ -83,7 +87,7 @@ if [ "$_SRG_ACTIVE" = "true" ]; then
 fi
 
 # Skip subagent context — reviewer subagent's own Stop must not trigger loop.
-if [ -n "${CLAUDE_AGENT_TYPE:-}" ]; then
+if [ "$_SRG_SUBAGENT" = "1" ]; then
   emit_ok_beacon
 fi
 
