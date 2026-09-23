@@ -5709,29 +5709,34 @@ def check_branch_topology() -> dict:
         pr_unconfirmed = True
 
     # 6. Branch-protection advisory (via gh_cache — PRD #993 cr.3, slice #996)
-    # #1525 / same class as ADR-0087 D3: a failed or exception-raising fetch
-    # must never let the function fall through to PASS on a state it never
-    # confirmed -- bp_confirmed gates the result below.
+    # #1525 / same class as ADR-0087 D3: a failed or exception-raising fetch,
+    # or a confirmed source paired with an empty, unparsable, or
+    # `protected`-less payload, must never let the function fall through to
+    # PASS on a state it never confirmed -- bp_confirmed gates the result
+    # below, mirroring step 5's pr_unconfirmed handling above.
     bp_note = ""
     bp_confirmed = True
-    bp_unconfirmed_reason = ""
+    bp_source = "computing"
     try:
-        _bp_rc, _bp_out = _health_gh_fetch(
+        _bp_rc, _bp_out, _bp_source = _health_gh_fetch(
             ["api", f"repos/{{owner}}/{{repo}}/branches/{integration}"],
-            ttl=60.0, timeout=5.0,
+            ttl=60.0, timeout=5.0, with_source=True,
         )
-        if _bp_rc == 0 and _bp_out.strip():
-            bp = _json.loads(_bp_out)
-            protected = bp.get("protected", False)
-            bp_note = f" | branch-protection={'on' if protected else 'off (advisory: enable)'}"
-        else:
+        bp_source = _bp_source
+        if _bp_rc != 0:
             bp_confirmed = False
-            bp_unconfirmed_reason = "API unavailable"
-            bp_note = " | branch-protection: API unavailable (WARN)"
+        else:
+            try:
+                bp = _json.loads(_bp_out)
+                if not isinstance(bp, dict) or "protected" not in bp:
+                    raise ValueError("payload is not a dict with a protected field")
+            except Exception:
+                bp_confirmed = False
+            else:
+                protected = bp["protected"]
+                bp_note = f" | branch-protection={'on' if protected else 'off (advisory: enable)'}"
     except Exception:
         bp_confirmed = False
-        bp_unconfirmed_reason = "check skipped"
-        bp_note = " | branch-protection: check skipped"
 
     # Determine result
     ahead_str = str(ahead) if ahead >= 0 else "?"
@@ -5786,7 +5791,7 @@ def check_branch_topology() -> dict:
             "id": "BRANCH-TOPOLOGY",
             "result": "WARN",
             "detail": (
-                f"branch-protection fetch unconfirmed ({bp_unconfirmed_reason}); {base_detail}"
+                f"branch-protection fetch unconfirmed (source={bp_source}); {base_detail}"
             ),
             "develop_sha": develop_sha,
             "main_sha": main_sha,
