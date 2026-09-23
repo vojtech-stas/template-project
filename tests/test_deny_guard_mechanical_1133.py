@@ -10,10 +10,10 @@ Covers:
        wrapper invocation (`python tools/pipe/pr-merge <pr>`) is never denied
        -- its own internal `gh pr merge` subprocess call is invisible to this
        hook; only the literal Bash-tool command line is inspected.
-  7b — `tools/promote.sh` invoked from a SUBAGENT context (CLAUDE_AGENT_TYPE
-       env var set) is denied; the identical orchestrator-context invocation
-       (no CLAUDE_AGENT_TYPE) passes through un-denied -- reusing
-       pre-tool-edit.sh's existing subagent-context discriminator exactly.
+  7b — `tools/promote.sh` invoked from a SUBAGENT context (the hook payload
+       carries `agent_id`, ADR-0091 D1) is denied; the identical
+       orchestrator-context invocation (no `agent_id`) passes through
+       un-denied -- the same discriminator pre-tool-edit.sh uses.
   7c — `git push` targeting main via ALL refspec forms (`origin main`,
        `HEAD:main`, `refs/heads/main`, `:main`) is denied; pushes to OTHER
        branches (develop, feature branches) are NOT denied.
@@ -66,22 +66,23 @@ def _resolve_jq_dir():
 _JQ_DIR = _resolve_jq_dir()
 
 
-def _run_hook(command: str, extra_env: dict = None):
+def _run_hook(command: str, agent_id: str = None):
     """Invoke the hook with the JSON payload delivered via a real temp FILE
     (not an anonymous pipe) on stdin -- the hook's `jq ... </dev/stdin` read
     fails ("No such file or directory") when fed an anonymous pipe created by
     a non-MSYS parent process (python.exe); a genuine file redirection works
-    reliably across that boundary. `extra_env` overrides/adds env vars on top
-    of a CLAUDE_AGENT_TYPE-stripped copy of the current environment, isolating
-    the 7b discriminator test from whatever context this test runner itself
-    happens to carry."""
-    payload = json.dumps({"tool_input": {"command": command}})
+    reliably across that boundary. `agent_id`, when given, is put into the
+    payload exactly as Claude Code does for a hook fired inside a subagent
+    call (ADR-0091 D1) -- the 7b discriminator is read from the payload,
+    never from the environment."""
+    body = {"tool_input": {"command": command}}
+    if agent_id is not None:
+        body["agent_id"] = agent_id
+        body["agent_type"] = "implementer"
+    payload = json.dumps(body)
     env = os.environ.copy()
     if _JQ_DIR:
         env["PATH"] = _JQ_DIR + os.pathsep + env.get("PATH", "")
-    env.pop("CLAUDE_AGENT_TYPE", None)
-    if extra_env:
-        env.update(extra_env)
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
         f.write(payload)
         tmp_path = f.name
@@ -143,25 +144,24 @@ class Test7bPromoteSubagentContextDenied(unittest.TestCase):
     """ADR-0076 D4 7b: tools/promote.sh denied ONLY from a subagent context."""
 
     def test_promote_denied_in_implementer_subagent_context(self):
-        result = _run_hook("bash tools/promote.sh", extra_env={"CLAUDE_AGENT_TYPE": "implementer"})
+        result = _run_hook("bash tools/promote.sh", agent_id="agent-implementer-1133")
         self.assertEqual(result.returncode, 0)
         decision, out = _decision(result)
         self.assertEqual(decision, "deny", msg=f"expected deny in subagent context, got: {out}")
         self.assertIn("subagent context", out["hookSpecificOutput"]["permissionDecisionReason"])
 
     def test_promote_denied_in_reviewer_subagent_context(self):
-        """Any non-empty CLAUDE_AGENT_TYPE value triggers the deny -- the
-        discriminator is presence of the env var, not its specific value
-        (matches pre-tool-edit.sh's `[ -n "${CLAUDE_AGENT_TYPE:-}" ]` check)."""
-        result = _run_hook("bash tools/promote.sh", extra_env={"CLAUDE_AGENT_TYPE": "reviewer"})
+        """Any non-empty payload `agent_id` triggers the deny -- the
+        discriminator is its presence, not its specific value (the same
+        check pre-tool-edit.sh applies)."""
+        result = _run_hook("bash tools/promote.sh", agent_id="agent-reviewer-1133")
         decision, out = _decision(result)
         self.assertEqual(decision, "deny", msg=f"expected deny, got: {out}")
 
     def test_promote_not_denied_in_orchestrator_context(self):
-        """The orchestrator's own invocation (no CLAUDE_AGENT_TYPE set) must
-        pass through un-denied -- this is the exact discriminator
-        pre-tool-edit.sh already uses for its subagent-context skip
-        (~line 71), confirmed here to fire identically for PreToolUse(Bash)."""
+        """The orchestrator's own invocation (no `agent_id` in the payload)
+        must pass through un-denied -- the same discriminator pre-tool-edit.sh
+        uses for its subagent-context skip."""
         result = _run_hook("bash tools/promote.sh")
         self.assertEqual(result.returncode, 0)
         out = json.loads(result.stdout) if result.stdout.strip() else {}
@@ -322,14 +322,14 @@ class TestReviewerRound1FalsePositiveFixtures(unittest.TestCase):
     def test_7b_echo_mentioning_promote_sh_not_denied_even_in_subagent_context(self):
         result = _run_hook(
             'echo "tools/promote.sh must never run from a subagent context"',
-            extra_env={"CLAUDE_AGENT_TYPE": "implementer"},
+            agent_id="agent-implementer-1133",
         )
         self.assertEqual(result.returncode, 0)
         out = json.loads(result.stdout) if result.stdout.strip() else {}
         self.assertNotIn("hookSpecificOutput", out, msg=f"mention-only must not be denied: {out}")
 
     def test_7b_real_promote_sh_invocation_still_denied_in_subagent_context(self):
-        result = _run_hook("bash tools/promote.sh", extra_env={"CLAUDE_AGENT_TYPE": "implementer"})
+        result = _run_hook("bash tools/promote.sh", agent_id="agent-implementer-1133")
         self.assertEqual(result.returncode, 0)
         decision, out = _decision(result)
         self.assertEqual(decision, "deny", msg=f"real invocation must still deny in subagent context: {out}")

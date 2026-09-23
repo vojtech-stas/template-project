@@ -248,8 +248,7 @@ class _HookFireMixin:
         env = dict(os.environ)
         env["WORKFLOW_LOG_DIR"] = str(log_dir)
         env["CLAUDE_PROJECT_DIR"] = str(REPO_ROOT)
-        # These two would short-circuit the very paths under test.
-        env.pop("CLAUDE_AGENT_TYPE", None)
+        # This would short-circuit the very paths under test.
         env.pop("STOP_GATE_BYPASS", None)
         if path_override is not None:
             env["PATH"] = path_override
@@ -392,14 +391,13 @@ class TestPreToolEditTerminalBeacons(_HookFireMixin, unittest.TestCase):
     # --- site 3: subagent-context skip -------------------------------------
 
     def test_site_subagent_skip_emits_ok_terminal(self):
-        """Step 3 exits before any PATH-resolved tool is consulted, so bash is the
-        only reachability precondition (checked inside `_fire`)."""
-        proc, beacons = self._fire(
-            PRE_TOOL_EDIT,
-            self._payload("CLAUDE.md"),
-            self.HOOK,
-            extra_env={"CLAUDE_AGENT_TYPE": "implementer"},
-        )
+        """The skip reads the payload's `agent_id` (ADR-0091 D1), so it sits
+        after the step-3 python3 parse: without python3 the fire would stop at
+        the parser-failure terminal instead."""
+        self._require_toolchain(["python3"], "subagent-skip")
+        payload = dict(self._payload("CLAUDE.md"), agent_id="agent-live-fire-1310",
+                       agent_type="implementer")
+        proc, beacons = self._fire(PRE_TOOL_EDIT, payload, self.HOOK)
         self.assertEqual(proc.returncode, 0, f"stderr={proc.stderr}")
         self._assert_single_terminal(beacons, "ok", "", "subagent-skip")
 

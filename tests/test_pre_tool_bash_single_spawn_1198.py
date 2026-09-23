@@ -51,7 +51,6 @@ def _run_hook(command: str, log_dir: str, extra_env: dict = None):
     payload = json.dumps({"tool_input": {"command": command}})
     env = os.environ.copy()
     env["WORKFLOW_LOG_DIR"] = log_dir
-    env.pop("CLAUDE_AGENT_TYPE", None)
     if extra_env:
         env.update(extra_env)
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
