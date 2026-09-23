@@ -71,28 +71,46 @@ def _health_gh_fetch(
     *,
     ttl: float = 60.0,
     timeout: float = 5.0,
+    with_source: bool = False,
 ) -> tuple:
     """Route a gh call through gh_cache (degrade-not-block).
 
-    Returns (returncode: int, stdout: str) matching the existing ``_sp.run``
-    pattern used inside each check's inner helper:
-      - rc=0, stdout=<output>  → gh succeeded (source live/cache/stale)
-      - rc=1, stdout=""        → gh timed out / unavailable (computing sentinel)
+    Returns (returncode: int, stdout: str) by default, matching the existing
+    ``_sp.run`` pattern used inside each check's inner helper. Pass
+    ``with_source=True`` to additionally receive the provenance label as a
+    third tuple element: (returncode, stdout, source).
+
+    Provenance vocabulary is closed (ADR-0087 D1):
+      - confirmed   : "live" (this call succeeded) or "cache" (a fresh
+        cached success within ttl) — always paired with rc=0.
+      - unconfirmed : "stale" (gh failed on THIS call; a last-known value
+        exists) or "computing" (gh failed and no prior value exists) —
+        always paired with rc=1, stdout="". A "stale" answer means GitHub
+        failed right now; in a one-shot CLI process it proves nothing about
+        the present, so it is no longer read as success (this reverses the
+        PRD #993 mapping — ADR-0088 D1 deleted that mapping's only
+        consumer, the served dashboard row).
 
     When gh_cache is unavailable (import failed), falls back to direct
-    subprocess.run with a hard ``timeout`` cap so the stall is still bounded.
+    subprocess.run with a hard ``timeout`` cap so the stall is still
+    bounded; the fallback labels its answer "live" on rc=0 and "computing"
+    otherwise.
 
     Parameters
     ----------
-    args    : gh sub-command args (the "gh" binary is prepended by gh_cache).
-    ttl     : cache TTL in seconds (how long a fresh result is reused).
-    timeout : hard per-call timeout in seconds passed to gh_cache / subprocess.
+    args        : gh sub-command args (the "gh" binary is prepended by gh_cache).
+    ttl         : cache TTL in seconds (how long a fresh result is reused).
+    timeout     : hard per-call timeout in seconds passed to gh_cache / subprocess.
+    with_source : when True, return a 3-tuple including the provenance source.
     """
     if _GH_CACHE_AVAILABLE and _gh_fetch_impl is not None:
         result = _gh_fetch_impl(args, ttl=ttl, timeout=timeout)
-        if result.source == "computing" or result.value is None:
-            return 1, ""
-        return 0, result.value
+        source = result.source
+        if source in ("live", "cache"):
+            rc, out = 0, result.value
+        else:
+            rc, out = 1, ""
+        return (rc, out, source) if with_source else (rc, out)
     # Fallback: bounded subprocess (still better than unbounded)
     try:
         r = subprocess.run(
@@ -101,9 +119,13 @@ def _health_gh_fetch(
             errors="replace", timeout=timeout,
             cwd=str(_HEALTH_REPO_ROOT), stdin=subprocess.DEVNULL,
         )
-        return r.returncode, r.stdout or ""
+        if r.returncode == 0:
+            rc, out, source = 0, (r.stdout or ""), "live"
+        else:
+            rc, out, source = 1, "", "computing"
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError, Exception):
-        return 1, ""
+        rc, out, source = 1, "", "computing"
+    return (rc, out, source) if with_source else (rc, out)
 
 
 # ---------------------------------------------------------------------------
@@ -5417,7 +5439,9 @@ def check_release_ready() -> dict:
       (d) green-develop streak intact — no failing checkpoint since last promotion
           (uses main_green events in workflow-events.jsonl as the green-develop proxy
           until a full green-develop event stream is landed by migration slices)
-      (e) zero open needs-human items — gh issue list --label needs-human
+      (e) zero open, CONFIRMED needs-human items — gh issue list AND
+          gh pr list --label needs-human (issues + PRs, ADR-0087 D4);
+          holds on any unconfirmed source or unparsable payload (D3)
       (f) guardrail-path batch check — wired to check_meta_tripwire() (slice #840 / ADR-0070 D4)
 
     Returns:
@@ -5433,7 +5457,7 @@ def check_release_ready() -> dict:
       _RELEASE_READY_TESTS_RESULT        PASS|FAIL  (bypasses pytest)
       _RELEASE_READY_PROOF_INTEGRITY_RESULT  PASS|WARN|FAIL  (bypasses check_proof_integrity)
       _RELEASE_READY_STREAK_RESULT       PASS|FAIL  (bypasses event-log streak check)
-      _RELEASE_READY_NEEDS_HUMAN_COUNT   <int>      (bypasses gh issue list)
+      _RELEASE_READY_NEEDS_HUMAN_COUNT   <int>      (bypasses gh issue list + gh pr list)
       _META_TRIPWIRE_RESULT_OVERRIDE     PASS|FAIL|WARN  (bypasses check_meta_tripwire for (f))
       _RELEASE_READY_FORCE_FAIL          1          (forces verdict false; for promote.sh guard tests)
     """
@@ -5642,36 +5666,102 @@ def check_release_ready() -> dict:
         }
 
     # -----------------------------------------------------------------------
-    # (e) Zero open needs-human items
+    # (e) A confirmed zero open needs-human items — issues AND pull requests
+    # (ADR-0087 D3: the gate holds unless the count is CONFIRMED — an
+    # unconfirmed source, an unparsable payload, an exception, or a
+    # non-integer injection all hold it now; a "treat as 0" default used to
+    # let an unreachable GitHub read as a clean queue. ADR-0087 D4: the
+    # count spans issues and pull requests — CLAUDE.md I5 puts the
+    # `needs-human` label on PRs too, but only `gh issue list` was queried.)
     # -----------------------------------------------------------------------
     nh_override = os.environ.get("_RELEASE_READY_NEEDS_HUMAN_COUNT", "").strip()
     if nh_override:
         try:
             nh_count = int(nh_override)
+            nh_confirmed = True
             nh_detail = f"needs-human count (injected): {nh_count}"
         except ValueError:
             nh_count = 0
-            nh_detail = f"needs-human count override parse error (default 0)"
+            nh_confirmed = False
+            nh_detail = (
+                "needs-human count unconfirmed (source=test-injection: "
+                f"_RELEASE_READY_NEEDS_HUMAN_COUNT={nh_override!r} is not an integer)"
+            )
     else:
         # Routed through gh_cache (ttl=30s, timeout=5s) — PRD #993 cr.3, slice #996.
         # Short TTL so stale cached counts don't hold the gate on the wrong value.
-        try:
-            _nh_rc, _nh_out = _health_gh_fetch(
-                ["issue", "list", "--label", "needs-human",
-                 "--state", "open", "--json", "number"],
-                ttl=30.0, timeout=5.0,
-            )
-            if _nh_rc == 0 and _nh_out.strip():
-                issues = _json.loads(_nh_out)
-                nh_count = len(issues)
-                nh_detail = f"needs-human open: {nh_count}"
-            else:
-                # gh unavailable or timeout → treat as 0 to avoid false holds
-                nh_count = 0
-                nh_detail = "gh issue list unavailable (timeout/cache miss; treat as 0)"
-        except Exception as exc:
-            nh_count = 0
-            nh_detail = f"needs-human check error (treat as 0): {exc}"
+        # Two legs, issues and PRs; both must be a CONFIRMED, parseable JSON
+        # list before the sum counts as observed (ADR-0087 D2's QUERY-HONESTY
+        # attestation, once slice 2 wires it, is consumed transparently here
+        # via the seam's source label — no edit needed at this call site).
+        nh_confirmed = True
+        nh_count = 0
+        nh_legs = []
+        # ADR-0083 D5 (advisory): name the observation and the states
+        # consistent with it, not a single guessed cause.
+        _unconfirmed_explanations = {
+            "computing": "GitHub unreachable, unauthenticated, rate-limited or timed out",
+            "stale": "GitHub unreachable, unauthenticated, rate-limited or timed out",
+            "unverified": "label-filtered path failed QUERY-HONESTY",
+        }
+        for _leg_label, _leg_args in (
+            ("issues", ["issue", "list", "--label", "needs-human",
+                        "--state", "open", "--json", "number"]),
+            ("PRs", ["pr", "list", "--label", "needs-human",
+                     "--state", "open", "--json", "number"]),
+        ):
+            try:
+                _leg_rc, _leg_out, _leg_source = _health_gh_fetch(
+                    _leg_args, ttl=30.0, timeout=5.0, with_source=True,
+                )
+            except Exception as exc:
+                nh_confirmed = False
+                nh_legs.append(f"{_leg_label} check error: {exc}")
+                continue
+            if _leg_rc != 0:
+                nh_confirmed = False
+                _explain = _unconfirmed_explanations.get(_leg_source)
+                if _explain:
+                    nh_legs.append(
+                        f"{_leg_label} unconfirmed (source={_leg_source}: {_explain})"
+                    )
+                else:
+                    nh_legs.append(f"{_leg_label} unconfirmed (source={_leg_source})")
+                continue
+            try:
+                # ADR-0087 D3: confirmed means a confirmed source AND a
+                # payload that parses as a JSON list. An empty (or
+                # whitespace-only) string does NOT parse as one — do not
+                # substitute [] for it, or a confirmed-source leg with no
+                # payload reads as a confirmed zero instead of holding.
+                _leg_items = _json.loads(_leg_out)
+                if not isinstance(_leg_items, list):
+                    raise ValueError("payload is not a JSON list")
+            except Exception as exc:
+                nh_confirmed = False
+                nh_legs.append(
+                    f"{_leg_label} unconfirmed (source={_leg_source}: "
+                    f"unparsable payload: {exc})"
+                )
+                continue
+            nh_count += len(_leg_items)
+            nh_legs.append(f"{_leg_label}={len(_leg_items)} (source={_leg_source})")
+
+        if nh_confirmed:
+            nh_detail = f"needs-human open: {nh_count} [{'; '.join(nh_legs)}]"
+        else:
+            nh_detail = "; ".join(nh_legs)
+
+    if not nh_confirmed:
+        return {
+            "id": "RELEASE-READY",
+            "result": "WARN",
+            "verdict": "false",
+            "detail": (
+                f"gate held: condition (e) needs-human count unconfirmed — {nh_detail}"
+            ),
+            "first_failing_condition": "e",
+        }
 
     if nh_count > 0:
         return {
