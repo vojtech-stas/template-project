@@ -5,15 +5,19 @@
 #   Bring a fresh clone of this repo to a usable state in one command.
 #   Run this once after `git clone`. Re-running is safe (idempotent).
 #
-# Scope (per ADR-0008 D6, slice #60; extended by ADR-0030 D1+D2):
+# Scope (per ADR-0008 D6, slice #60; extended by ADR-0030 D1+D2;
+# renumbered by ADR-0089 D2, slice #1511):
 #   1. Sanity: confirm we're inside a git repo + `gh` is authenticated.
 #   2. Create the 8 repo-level labels (skip if they already exist).
 #   3. Install local git hooks (`git config core.hooksPath .githooks`).
 #   4. Detect the GitHub Project v2 board (manual hint if missing).
-#   5. Apply branch protection R1+R2 on `develop` (warn-and-proceed if no admin).
-#   6. python3 presence check (warn-only; required by event logger).
-#   7. jq install — idempotent winget/brew/apt (ADR-0030 D1).
-#   8. Playwright Python library install (pip install playwright; ADR-0050 D1).
+#   5. Create the configured integration branch from the release tip, when
+#      origin lacks it (ADR-0089 D2; idempotent, never forced).
+#   6. Apply branch protection R1+R2+R4 to BOTH configured branches
+#      (warn-and-proceed if no admin, or if the release branch is absent).
+#   7. python3 presence check (warn-only; required by event logger).
+#   8. jq install — idempotent winget/brew/apt (ADR-0030 D1).
+#   9. Playwright Python library install (pip install playwright; ADR-0050 D1).
 #
 # Explicit DEFERRALS (NOT done here):
 #   - Matt Pocock skills install                    — user-level concern
@@ -253,9 +257,46 @@ else
     note "⚠ project board: skipped (gh not ready)"
 fi
 
-# ---- step 5: branch protection R1 + R2 on develop --------------------------
+# ---- step 5: create the integration branch from the release tip ----------
 
-step 5 "branch protection R1+R2+R4 on develop"
+step 5 "create integration branch from release tip (idempotent)"
+
+# ADR-0089 D2: a repo built from this template starts with only its default
+# (release) branch. Before applying protection (next step), ensure the
+# configured integration branch exists on origin, created at the release
+# branch's tip. Non-destructive: a plain (never forced) ref-to-ref push, so
+# it can never overwrite existing history. Skips — never invents a base —
+# when the release branch itself is absent from origin.
+#
+# Located relative to THIS script's own path (S1-c / ADR-0089), never via
+# `$REPO_ROOT/tools/...` of the cwd repo.
+_BOOTSTRAP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INTEGRATION_BRANCH=$(python3 "$_BOOTSTRAP_DIR/tools/pipeline_config.py" integration 2>/dev/null) || INTEGRATION_BRANCH=""
+RELEASE_BRANCH=$(python3 "$_BOOTSTRAP_DIR/tools/pipeline_config.py" release 2>/dev/null) || RELEASE_BRANCH=""
+
+if [[ -z "$INTEGRATION_BRANCH" || -z "$RELEASE_BRANCH" ]]; then
+    warn "could not resolve branch roles (tools/pipeline_config.py failed); skipping integration-branch creation."
+    note "⚠ integration branch: skipped (role resolution failed)"
+elif git ls-remote --exit-code --heads origin "$INTEGRATION_BRANCH" >/dev/null 2>&1; then
+    log "integration branch '$INTEGRATION_BRANCH' already exists on origin; skipping."
+    note "✓ integration branch: already exists ($INTEGRATION_BRANCH)"
+elif ! git ls-remote --exit-code --heads origin "$RELEASE_BRANCH" >/dev/null 2>&1; then
+    warn "release branch '$RELEASE_BRANCH' not found on origin; cannot create '$INTEGRATION_BRANCH' from it. skipping."
+    note "⚠ integration branch: skipped (release branch '$RELEASE_BRANCH' absent)"
+else
+    git fetch origin "$RELEASE_BRANCH" >/dev/null 2>&1 || true
+    if git push origin "refs/remotes/origin/${RELEASE_BRANCH}:refs/heads/${INTEGRATION_BRANCH}" 2>/dev/null; then
+        log "created integration branch '$INTEGRATION_BRANCH' at the tip of '$RELEASE_BRANCH'."
+        note "✓ integration branch: created ($INTEGRATION_BRANCH from $RELEASE_BRANCH)"
+    else
+        warn "failed to create integration branch '$INTEGRATION_BRANCH' from '$RELEASE_BRANCH'."
+        note "⚠ integration branch: creation failed"
+    fi
+fi
+
+# ---- step 6: branch protection R1+R2+R4 on both configured branches ------
+
+step 6 "branch protection R1+R2+R4 on both configured branches"
 
 # R1 = require PR (required_pull_request_reviews block present, count=0).
 # R2 = no force-push, no deletion (allow_force_pushes=false, allow_deletions=false).
@@ -268,10 +309,16 @@ step 5 "branch protection R1+R2+R4 on develop"
 # the summary line tells them what happened.
 #
 # R4 (required status checks) — enable is OWNER-RUN after this PRD's slices
-# merge AND the CI workflow has produced a named check run on develop.
-# Do NOT enable mid-PRD: it would block this PRD's own merges.
+# merge AND the CI workflow has produced a named check run on the integration
+# branch. Do NOT enable mid-PRD: it would block this PRD's own merges.
 # The context "ci" matches the GitHub Actions job name in
 # .github/workflows/ci.yml (ADR-0042 D2).
+#
+# ADR-0089 D2: the SAME payload is applied to BOTH configured branches — the
+# integration branch (this repo's live shape, unchanged) and the release
+# branch (newly realizing ADR-0075 D5 gate (1) on every host that runs
+# bootstrap). enforce_admins stays false on both, so tools/promote.sh's admin
+# fast-forward keeps working.
 BP_BODY='{
   "required_status_checks": { "strict": true, "checks": [ { "context": "ci" } ] },
   "enforce_admins": false,
@@ -284,33 +331,53 @@ BP_BODY='{
   "allow_deletions": false
 }'
 
-if [[ "$GH_OK" -eq 1 && -n "$ORIGIN_SLUG" ]]; then
-    # Endpoint is deliberately slash-less: a leading "/repos/..." gets rewritten
-    # to "C:/Program Files/Git/repos/..." by MSYS path conversion on Windows
-    # Git Bash, yielding "invalid API endpoint" (ADR-0030 hardening class).
-    # gh treats the slash-less form identically on every platform.
-    BP_ERR=$(printf '%s' "$BP_BODY" \
-        | gh api -X PUT "repos/${ORIGIN_SLUG}/branches/develop/protection" --input - 2>&1 >/dev/null)
-    BP_RC=$?
-    if [[ "$BP_RC" -eq 0 ]]; then
-        log "branch protection applied to 'develop' (R1+R2)."
-        note "✓ branch protection: R1+R2 applied to develop"
-    elif printf '%s' "$BP_ERR" | grep -qi "upgrade to github pro"; then
-        warn "branch protection unavailable: private repos need GitHub Pro (or make the repo public); skipping."
-        note "⚠ branch protection: skipped (plan does not cover private-repo protection)"
+# put_branch_protection <branch>
+#   PUTs BP_BODY to <branch>'s protection endpoint; warns and notes the
+#   outcome. Endpoint is deliberately slash-less: a leading "/repos/..."
+#   gets rewritten to "C:/Program Files/Git/repos/..." by MSYS path
+#   conversion on Windows Git Bash, yielding "invalid API endpoint"
+#   (ADR-0030 hardening class). gh treats the slash-less form identically
+#   on every platform.
+put_branch_protection() {
+    local branch="$1"
+    local err rc
+    err=$(printf '%s' "$BP_BODY" \
+        | gh api -X PUT "repos/${ORIGIN_SLUG}/branches/${branch}/protection" --input - 2>&1 >/dev/null)
+    rc=$?
+    if [[ "$rc" -eq 0 ]]; then
+        log "branch protection applied to '$branch' (R1+R2+R4)."
+        note "✓ branch protection: R1+R2+R4 applied to $branch"
+    elif printf '%s' "$err" | grep -qi "upgrade to github pro"; then
+        warn "branch protection unavailable for '$branch': private repos need GitHub Pro (or make the repo public); skipping."
+        note "⚠ branch protection ($branch): skipped (plan does not cover private-repo protection)"
     else
-        warn "branch protection failed; skipping. gh said: ${BP_ERR:-<no stderr captured>}"
+        warn "branch protection failed for '$branch'; skipping. gh said: ${err:-<no stderr captured>}"
         warn "if you're a maintainer, retry with a token that has 'repo' admin scope."
-        note "⚠ branch protection: skipped (see warning above)"
+        note "⚠ branch protection ($branch): skipped (see warning above)"
+    fi
+}
+
+if [[ "$GH_OK" -eq 1 && -n "$ORIGIN_SLUG" ]]; then
+    if [[ -n "$INTEGRATION_BRANCH" ]]; then
+        put_branch_protection "$INTEGRATION_BRANCH"
+    else
+        warn "skipping integration-branch protection (role resolution failed)."
+        note "⚠ branch protection (integration): skipped (role resolution failed)"
+    fi
+    if [[ -n "$RELEASE_BRANCH" ]] && git ls-remote --exit-code --heads origin "$RELEASE_BRANCH" >/dev/null 2>&1; then
+        put_branch_protection "$RELEASE_BRANCH"
+    else
+        warn "release branch absent from origin or unresolved; skipping its branch protection."
+        note "⚠ branch protection (release): skipped (branch absent or unresolved)"
     fi
 else
     warn "skipping branch protection (gh not ready or origin slug unresolved)."
     note "⚠ branch protection: skipped (gh not ready)"
 fi
 
-# ---- step 6: python3 presence check (warn-only) ---------------------------
+# ---- step 7: python3 presence check (warn-only) ---------------------------
 
-step 6 "python3 presence check (warn-only)"
+step 7 "python3 presence check (warn-only)"
 
 # python3 is required by the canonical workflow event logger
 # (.claude/hooks/log-tool-event.sh calls python3 for JSON emission) and by
@@ -325,9 +392,9 @@ else
     note "⚠ python3: missing (install for event logger + Playwright qa-tester)"
 fi
 
-# ---- step 7: jq install (per ADR-0030 D1) ---------------------------------
+# ---- step 8: jq install (per ADR-0030 D1) ---------------------------------
 
-step 7 "jq install (idempotent; cross-platform)"
+step 8 "jq install (idempotent; cross-platform)"
 
 # jq is required by:
 #   - .claude/hooks/pre-tool-edit.sh (parses tool_input.file_path JSON)
@@ -407,9 +474,9 @@ else
     fi
 fi
 
-# ---- step 8: Playwright Python library install (per ADR-0050 D1) ----------
+# ---- step 9: Playwright Python library install (per ADR-0050 D1) ----------
 
-step 8 "Playwright Python library install (pip install playwright — idempotent)"
+step 9 "Playwright Python library install (pip install playwright — idempotent)"
 
 # ADR-0050 D1 reinstates Playwright as the qa-tester browser driver, replacing
 # Claude_Preview MCP. The driver is now the Playwright Python LIBRARY driving
@@ -424,7 +491,9 @@ step 8 "Playwright Python library install (pip install playwright — idempotent
 #
 # Supersedes: the prior ADR-0049 D1 note (Claude_Preview was harness-provided;
 # no pip install was needed). ADR-0049 D1/D2 are now superseded by ADR-0050.
-# The step number (8) is preserved for audit-trail continuity (do not renumber).
+# The step was numbered 8 from ADR-0050 D1 through ADR-0077's ceremony-
+# overhead reduction; ADR-0089 D2's new integration-branch-creation step
+# (step 5) shifted every step after step 4 down by one — this step is now 9.
 if command -v pip >/dev/null 2>&1 || command -v pip3 >/dev/null 2>&1; then
     PIP_CMD="pip"
     command -v pip >/dev/null 2>&1 || PIP_CMD="pip3"
@@ -443,9 +512,9 @@ else
     note "⚠ Playwright library: pip missing — install pip then run 'pip install playwright'"
 fi
 
-# ---- step 9: label-sync drift warning (ADR-0068 D1) -------------------------
+# ---- step 10: label-sync drift warning (ADR-0068 D1) ------------------------
 
-step 9 "label-sync drift check (declared vs live)"
+step 10 "label-sync drift check (declared vs live)"
 
 # Warn if the labels declared in LABELS[] above differ from labels present on
 # the live repo. Drift = bootstrap.sh drifted from the live label set (observed
