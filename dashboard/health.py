@@ -24,7 +24,6 @@ Exports:
     check_capture_slo() -> dict          (slice #767: capture liveness SLO)
     check_hook_integrity() -> dict       (slice #767: hook attempt-vs-ok ratio)
     check_hook_liveness() -> dict        (slice #849: hook-layer dark detection via beacon lag)
-    check_stale_server() -> dict         (slice #907/ADR-0071 D5: server sha vs HEAD freshness check)
     check_isolation_group() -> dict      (slice #767: worktree orphan/drift check)
     check_rule_coverage() -> dict        (slice #768/ADR-0056 D3: rule coverage ratio)
     check_spec_coverage() -> dict        (slice #798/ADR-0066 D2: per-PRD criterion coverage)
@@ -1496,11 +1495,10 @@ _CHECK_GROUP_MAP: dict = {
     "RELEASE-READY": "Release gates",
     "R-SENSITIVE-DETECTOR": "Release gates",
     "META-TRIPWIRE": "Release gates",
-    # Session hygiene — log rotation, untracked files, required labels, dead routes
+    # Session hygiene — log rotation, untracked files, required labels
     "UNTRACKED-SIZE": "Session hygiene",
     "LOG-ROTATION": "Session hygiene",
     "REQUIRED-LABELS": "Session hygiene",
-    "DEAD-ROUTES": "Session hygiene",
     "SESSION-INJECTION": "Session hygiene",
 }
 
@@ -1584,7 +1582,6 @@ PURPOSE_GROUP_MAP: dict = {
     "UNTRACKED-SIZE":    "Isolation/hygiene",
     "LOG-ROTATION":      "Isolation/hygiene",
     "REQUIRED-LABELS":   "Isolation/hygiene",
-    "DEAD-ROUTES":       "Isolation/hygiene",
     "SESSION-INJECTION": "Isolation/hygiene",
     "STALE-BRANCHES":    "Isolation/hygiene",
     "TESTS-COLLECTED":   "Isolation/hygiene",
@@ -4800,154 +4797,6 @@ def check_frontmatter_coverage() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Stale-server check (ADR-0071 D5 — slice #907)
-# ---------------------------------------------------------------------------
-
-def check_stale_server() -> dict:
-    """STALE-SERVER: dashboard server sha vs git HEAD (is the server fresh?).
-
-    Compares the sha reported by /api/meta against the current git HEAD.
-    PASS  when server sha == HEAD (server loaded current code).
-    FAIL  when sha differs from HEAD OR /api/meta reports stale=True.
-    FAIL  (occupied=True) when something answers at the dashboard port but
-          fails the identity check — non-200 status, non-JSON body, or a
-          missing "sha" field. A foreign listener squatting the port is
-          NEVER conflated with "no server running" (#1184 incident fix).
-    WARN  when the server is genuinely not reachable at all (connection
-          refused/timeout — no server running is not stale).
-
-    Supports env-var overrides for offline testing:
-      _STALE_SERVER_META_OVERRIDE  — JSON string for the /api/meta response body
-        (empty string = simulate unreachable / connection error).
-      _STALE_SERVER_HEAD_OVERRIDE  — HEAD sha string (overrides git rev-parse).
-
-    Per ADR-0071 D5 (server-staleness claim); surfaces the #726 staleness
-    condition as an honest registry row. Identity-verifying per the #1184
-    root-cause incident (slice #1189): an HTTP error response means SOMETHING
-    answered — that is never the same as no server running.
-    """
-    import json as _json
-    import urllib.request as _urllib_request
-    import urllib.error as _urllib_error
-
-    # --- 1. Get HEAD sha ---
-    head_override = os.environ.get("_STALE_SERVER_HEAD_OVERRIDE", "")
-    if head_override:
-        head_sha = head_override.strip()
-    else:
-        try:
-            r = subprocess.run(
-                ["git", "-C", str(_HEALTH_REPO_ROOT), "rev-parse", "HEAD"],
-                capture_output=True, text=True, timeout=10,
-            )
-            head_sha = r.stdout.strip() if r.returncode == 0 else ""
-        except Exception:
-            head_sha = ""
-
-    if not head_sha:
-        return {
-            "id": "STALE-SERVER",
-            "result": "WARN",
-            "detail": "could not determine git HEAD sha; check skipped",
-        }
-
-    # --- 2. Fetch /api/meta from running server ---
-    meta_override = os.environ.get("_STALE_SERVER_META_OVERRIDE", None)
-    if meta_override is not None:
-        # Test injection path
-        if meta_override == "":
-            # Simulate unreachable server
-            return {
-                "id": "STALE-SERVER",
-                "result": "WARN",
-                "detail": "dashboard server not reachable (no server running is not stale)",
-            }
-        try:
-            meta = _json.loads(meta_override)
-        except Exception as exc:
-            return {
-                "id": "STALE-SERVER",
-                "result": "WARN",
-                "detail": f"meta override parse error: {exc}",
-            }
-    else:
-        # Production path: try localhost:8765 (the canonical dashboard port).
-        # Identity-verifying (#1184 fix): HTTPError means SOMETHING answered
-        # at this port — it must be classified occupied, never "unreachable".
-        # HTTPError is a URLError subclass, so it is caught BEFORE the
-        # generic URLError/OSError branch (which is genuine no-listener).
-        try:
-            with _urllib_request.urlopen(
-                "http://localhost:8765/api/meta", timeout=3
-            ) as resp:
-                meta = _json.loads(resp.read().decode("utf-8"))
-        except _urllib_error.HTTPError as exc:
-            return {
-                "id": "STALE-SERVER",
-                "result": "FAIL",
-                "occupied": True,
-                "detail": (
-                    f"occupied by a foreign listener: HTTP {exc.code} answering "
-                    f"/api/meta at localhost:8765 (not a project-claude dashboard)"
-                ),
-            }
-        except (_urllib_error.URLError, OSError):
-            return {
-                "id": "STALE-SERVER",
-                "result": "WARN",
-                "detail": "dashboard server not reachable at localhost:8765 (no server running is not stale)",
-            }
-        except Exception as exc:
-            # Includes JSON parse failures — a 200 response with a
-            # non-conforming body is also "occupied", not unreachable.
-            return {
-                "id": "STALE-SERVER",
-                "result": "FAIL",
-                "occupied": True,
-                "detail": f"occupied by a foreign listener: non-conforming /api/meta response ({exc})",
-            }
-
-    # --- 3. Compare sha and stale flag ---
-    server_sha = meta.get("sha", "")
-    server_stale_flag = bool(meta.get("stale", False))
-
-    if not server_sha:
-        return {
-            "id": "STALE-SERVER",
-            "result": "FAIL",
-            "occupied": True,
-            "detail": "occupied by a foreign listener: /api/meta did not return a sha field",
-        }
-
-    if server_stale_flag or server_sha != head_sha:
-        reason = []
-        if server_stale_flag:
-            reason.append("server reports stale=True")
-        if server_sha != head_sha:
-            reason.append(
-                f"server sha {server_sha[:12]} != HEAD {head_sha[:12]}"
-            )
-        return {
-            "id": "STALE-SERVER",
-            "result": "FAIL",
-            "detail": (
-                "stale server detected: " + "; ".join(reason)
-                + " — restart dashboard to load current code"
-            ),
-            "server_sha": server_sha,
-            "head_sha": head_sha,
-        }
-
-    return {
-        "id": "STALE-SERVER",
-        "result": "PASS",
-        "detail": f"server sha {server_sha[:12]} matches HEAD (server is fresh)",
-        "server_sha": server_sha,
-        "head_sha": head_sha,
-    }
-
-
-# ---------------------------------------------------------------------------
 # Hygiene registry checks (ADR-0068 D1) — wave-4 slice #818
 # ---------------------------------------------------------------------------
 
@@ -5199,82 +5048,6 @@ def check_required_labels() -> dict:
         ),
         "missing": [],
     }
-
-
-def check_dead_routes() -> dict:
-    """DEAD-ROUTES: API routes served but never fetched by the frontend.
-
-    Implements ADR-0068 D1. Scans dashboard/server.py for registered API routes
-    (lines with @app.route('/api/...')) then checks dashboard/index.html for
-    fetch('/api/...') calls. Routes served but never fetched = dead surface.
-    Honest day-one: pre-existing dead routes are the starting value, not a FAIL.
-    """
-    server_py = _HEALTH_REPO_ROOT / "dashboard" / "server.py"
-    index_html = _HEALTH_REPO_ROOT / "dashboard" / "index.html"
-
-    if not server_py.exists():
-        return {"id": "DEAD-ROUTES", "result": "WARN",
-                "detail": "dashboard/server.py not found"}
-    if not index_html.exists():
-        return {"id": "DEAD-ROUTES", "result": "WARN",
-                "detail": "dashboard/index.html not found"}
-
-    try:
-        server_text = _read_file(server_py)
-        html_text = _read_file(index_html)
-
-        # Extract routes from server.py.
-        # Supports two patterns:
-        #   1. elif path == "/api/..."  (custom HTTPHandler dispatch)
-        #   2. @app.route('/api/...')   (Flask-style decorator)
-        served_routes = set(re.findall(
-            r'''elif\s+path\s*==\s*['"](/api/[^'"]+)['"]''',
-            server_text
-        ))
-        served_routes |= set(re.findall(
-            r'''@app\.route\(['"](/api/[^'"]+)['"]''',
-            server_text
-        ))
-        # Extract fetch targets from index.html: fetch('/api/...') or fetch(`/api/...`)
-        fetched_routes = set(re.findall(
-            r'''fetch\([`'"]([/][^`'"?]+)''',
-            html_text
-        ))
-        # Normalize: strip trailing slashes
-        served_normalized = {r.rstrip("/") for r in served_routes}
-        fetched_normalized = {r.rstrip("/") for r in fetched_routes}
-
-        dead = sorted(served_normalized - fetched_normalized)
-        total_served = len(served_normalized)
-
-        if dead:
-            return {
-                "id": "DEAD-ROUTES",
-                "result": "WARN",
-                "detail": (
-                    f"{len(dead)}/{total_served} route(s) served but not fetched "
-                    f"by index.html: {dead[:5]}"
-                    + (" ..." if len(dead) > 5 else "")
-                    + " (detectors-report per ADR-0068 D1)"
-                ),
-                "dead_count": len(dead),
-                "dead_routes": dead[:10],
-                "total_served": total_served,
-            }
-        return {
-            "id": "DEAD-ROUTES",
-            "result": "PASS",
-            "detail": (
-                f"all {total_served} served /api/* routes are fetched "
-                f"by index.html (ADR-0068 D1)"
-            ),
-            "dead_count": 0,
-            "dead_routes": [],
-            "total_served": total_served,
-        }
-    except Exception as exc:
-        return {"id": "DEAD-ROUTES", "result": "WARN",
-                "detail": f"check failed: {exc}"}
 
 
 def check_session_injection() -> dict:
@@ -7124,7 +6897,6 @@ CHECK_REGISTRY: dict[str, callable] = {
     "LOG-ROTATION":      check_log_rotation,
     "STALE-BRANCHES":    check_stale_branches,
     "REQUIRED-LABELS":   check_required_labels,
-    "DEAD-ROUTES":       check_dead_routes,
     "SESSION-INJECTION": check_session_injection,
     # model-frontmatter invariant check (ADR-0027 D1; fleet-economics removed per ADR-0071 D2)
     "FRONTMATTER-COVERAGE": check_frontmatter_coverage,
@@ -7149,8 +6921,6 @@ CHECK_REGISTRY: dict[str, callable] = {
     "PROOF-INTEGRITY": check_proof_integrity,
     # Guardrail-machinery promotion meta-tripwire (ADR-0070 D4 — slice #840)
     "META-TRIPWIRE": check_meta_tripwire,
-    # Server-staleness check (ADR-0071 D5 — slice #907)
-    "STALE-SERVER": check_stale_server,
     # Audit-subagents aggregate check (PRD #919 slice #921 — replaces /audit-subagents skill)
     "AS-AUDIT": check_audit_subagents,
     # Queue-drain run-ledger integrity (ADR-0085 D6 — PRD #1326 slice #1329)
@@ -7350,7 +7120,6 @@ def _build_health_data() -> dict:
         check_log_rotation(),
         check_stale_branches(),
         check_required_labels(),
-        check_dead_routes(),
         check_session_injection(),
         check_deploy_handshake(),
     ])
