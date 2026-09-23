@@ -2,7 +2,8 @@
 Regression tests for issue #846 — measurement layer honesty.
 
 Three defects fixed in this slice:
-  1. dashboard-autostart.sh never checks for stale sha — it just checks HTTP 200.
+  1. the since-deleted SessionStart dashboard-spawn hook (ADR-0088 D1) never
+     checked for stale sha — it just checked HTTP 200.
   2. stop-reviewer-gate.sh emits attempt but no ok beacon on success paths.
   3. Hooks use local-time `date -Iseconds`; must be UTC `date -u -Iseconds`.
 
@@ -43,8 +44,9 @@ class TestUTCTimestamps(unittest.TestCase):
     # Hook files that must not contain bare `date -Iseconds`
     # Hook files that must not contain bare `date -Iseconds`
     # Note: log-event.sh removed from list (deleted per PRD #876 slice #877)
+    # Note: the former SessionStart dashboard-spawn hook was removed from
+    # this list (deleted per ADR-0088 D1)
     HOOK_FILES = [
-        "dashboard-autostart.sh",
         "user-prompt-submit.sh",
         "pre-tool-edit.sh",
         "log-tool-event.sh",
