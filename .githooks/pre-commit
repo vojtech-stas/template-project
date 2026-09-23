@@ -43,8 +43,17 @@ if [ -z "$branch" ]; then
     exit 0
 fi
 
-if [ "$branch" = "main" ]; then
-    echo "pre-commit: ERROR: direct commits to 'main' are not allowed." >&2
+# Resolve the configured release branch (ADR-0089 D1), located relative to
+# THIS script's own path (S1-c: `.githooks/` scripts use `$(dirname "$0")`).
+# A resolver failure takes this hook's existing warn-and-allow fail-open
+# path (ADR-0004 D3 layer 1) — never a fallback literal.
+_pc_dir=$(dirname "$0")
+release=$(python3 "$_pc_dir/../tools/pipeline_config.py" release 2>/dev/null) || release=""
+
+if [ -z "$release" ]; then
+    echo "pre-commit: warning: could not resolve the release branch (tools/pipeline_config.py failed); allowing commit per fail-open policy. See ADR-0004 D3." >&2
+elif [ "$branch" = "$release" ]; then
+    echo "pre-commit: ERROR: direct commits to '$release' are not allowed." >&2
     echo "pre-commit: Use a feature branch matching <type>/<issue#>-<slug> instead, e.g.:" >&2
     echo "pre-commit:   git checkout -b feat/42-add-something" >&2
     echo "pre-commit: See CLAUDE.md cross-cutting rule #4 and ADR-0004 D3." >&2

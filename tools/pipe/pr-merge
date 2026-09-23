@@ -96,6 +96,7 @@ _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 _TOOLS_DIR = os.path.dirname(_THIS_DIR)
 _TRACE_PY = os.path.join(_TOOLS_DIR, "trace.py")
 _RECORD_GREEN = os.path.join(_THIS_DIR, "record-green")
+_PIPELINE_CONFIG_PY = os.path.join(_TOOLS_DIR, "pipeline_config.py")
 
 MAX_ATTEMPTS = 3
 BUDGET_S = float(os.environ.get("PR_MERGE_BUDGET_S", "90"))
@@ -104,6 +105,17 @@ POLL_INTERVAL_S = float(os.environ.get("PR_MERGE_POLL_INTERVAL_S", "5"))
 
 def _load_trace():
     spec = importlib.util.spec_from_file_location("trace_v3", _TRACE_PY)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _load_pipeline_config():
+    # S1-c: located relative to THIS file (_TOOLS_DIR above), never via
+    # $REPO_ROOT or `git rev-parse --show-toplevel` of the cwd repo.
+    spec = importlib.util.spec_from_file_location(
+        "pipeline_config", _PIPELINE_CONFIG_PY
+    )
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
@@ -213,11 +225,12 @@ def _chain_record_green(deadline, sha=None):
     invocation already holds from the GitHub REST API, passed straight
     through as record-green's explicit sha argument so the chained call
     certifies the sha that was actually just merged -- never a local
-    `origin/develop` ref that can be stale by the time this fires (the
-    ci-trust fast path, #1163, made the chain fire 2-6s post-merge, which
-    widened that exposure). When `sha` is falsy (e.g. the GitHub API
-    response omitted merge_commit_sha), falls back to record-green's own
-    no-arg fetch-then-resolve path, preserving prior behavior."""
+    `origin/<integration>` ref (the configured integration branch,
+    ADR-0089 D1) that can be stale by the time this fires (the ci-trust
+    fast path, #1163, made the chain fire 2-6s post-merge, which widened
+    that exposure). When `sha` is falsy (e.g. the GitHub API response
+    omitted merge_commit_sha), falls back to record-green's own no-arg
+    fetch-then-resolve path, preserving prior behavior."""
     remaining = deadline - time.monotonic()
     if remaining <= 0:
         print(
@@ -243,9 +256,10 @@ def _chain_record_green(deadline, sha=None):
     if result.returncode == 0:
         print("pr-merge: record-green chained -- develop_green recorded")
     else:
+        integration = _load_pipeline_config().integration_branch()
         print(
             f"pr-merge: record-green chained -- evaluation FAILED "
-            f"(exit={result.returncode}); develop is NOT green (see "
+            f"(exit={result.returncode}); {integration} is NOT green (see "
             "record-green output above)",
             file=sys.stderr,
         )
