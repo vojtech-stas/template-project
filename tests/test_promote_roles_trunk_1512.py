@@ -42,7 +42,6 @@ except ImportError:
 REPO_ROOT = Path(__file__).parent.parent
 PROMOTE_SH = REPO_ROOT / "tools" / "promote.sh"
 TRACE_PY = REPO_ROOT / "tools" / "trace.py"
-PIPELINE_CONFIG_PY = REPO_ROOT / "tools" / "pipeline_config.py"
 
 
 def _to_bash_path(win_path: str) -> str:
@@ -88,7 +87,6 @@ def _make_isolated_trunk_release_repo(parent_tmp: str):
     import shutil as _shutil
     os.makedirs(os.path.join(work, "tools"), exist_ok=True)
     _shutil.copy(str(TRACE_PY), os.path.join(work, "tools", "trace.py"))
-    _shutil.copy(str(PIPELINE_CONFIG_PY), os.path.join(work, "tools", "pipeline_config.py"))
 
     current = subprocess.run(
         ["git", "-C", work, "rev-parse", "--abbrev-ref", "HEAD"],
@@ -147,15 +145,12 @@ class TestPromoteRolesTrunkRelease(unittest.TestCase):
         self.trace_log = os.path.join(self.tmp, "trace-v3.jsonl")
 
         self.env = os.environ.copy()
-        # NOTE: unlike test_promote_v3_span_1083.py, MSYS_NO_PATHCONV is
-        # deliberately NOT set here -- it disables MSYS's automatic
-        # POSIX-to-Windows path conversion for arguments passed to native
-        # (non-MSYS) executables, which breaks promote.sh's new
-        # `$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)` + `python3
-        # "$_DIR/pipeline_config.py"` resolver call (S1-c) -- `pwd` returns a
-        # POSIX-style path that native python3.exe needs auto-converted.
-        # Matches tests/test_worktree_guard_trunk_1511.py's own env, which
-        # never sets this var for the same reason.
+        # NOTE: unlike test_promote_v3_span_1083.py, MSYS_NO_PATHCONV is not
+        # set here, and the resolver call does not depend on it either way:
+        # promote.sh locates pipeline_config.py relative to its own path
+        # (S1-c) via `pwd -W`, a native-form path, precisely so the python3
+        # call still resolves under MSYS_NO_PATHCONV=1. The resolver is
+        # loaded from THIS checkout's tools/, never from the sandbox repo.
         self.env["_PROMOTE_SH_SKIP_PUSH"] = "1"
         self.env["TRACE_LOG_OVERRIDE"] = self.trace_log
 

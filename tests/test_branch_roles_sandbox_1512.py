@@ -45,7 +45,6 @@ except ImportError:
 REPO_ROOT = Path(__file__).parent.parent
 PRE_COMMIT = REPO_ROOT / ".githooks" / "pre-commit"
 PRE_TOOL_BASH = REPO_ROOT / ".claude" / "hooks" / "pre-tool-bash.sh"
-PIPELINE_CONFIG_PY = REPO_ROOT / "tools" / "pipeline_config.py"
 DASHBOARD_DIR = REPO_ROOT / "dashboard"
 
 
@@ -53,28 +52,6 @@ def _git(*args, cwd=None, check=True):
     return subprocess.run(
         ["git"] + list(args), cwd=cwd, check=check, capture_output=True, text=True,
     )
-
-
-def _resolve_jq_dir():
-    """Mirrors test_deny_guard_mechanical_1133.py's helper exactly."""
-    try:
-        found = subprocess.run(
-            ["bash", "-lc", "command -v jq"], capture_output=True, text=True, timeout=10,
-        )
-        if found.returncode != 0 or not found.stdout.strip():
-            return None
-        posix_path = found.stdout.strip()
-        win = subprocess.run(
-            ["bash", "-lc", f"cygpath -w '{posix_path}'"], capture_output=True, text=True, timeout=10,
-        )
-        if win.returncode != 0 or not win.stdout.strip():
-            return None
-        return str(Path(win.stdout.strip()).parent)
-    except Exception:
-        return None
-
-
-_JQ_DIR = _resolve_jq_dir()
 
 
 def _make_trunk_release_sandbox(parent_tmp: str, both_branches_on_origin: bool = True):
@@ -134,7 +111,6 @@ class TestCriterion12PreCommitRejectsReleaseBranch(unittest.TestCase):
         self.assertNotIn("direct commits to 'main'", result.stderr)
 
 
-@unittest.skipUnless(_JQ_DIR is not None, "jq not visible to the hook's bash context — soft-degrades without it")
 class TestCriterion13PreToolBashDeniesPushRelease(unittest.TestCase):
     """PRD #1500 §2 criterion 13: the PreToolUse(Bash) hook denies
     `git push origin release` when the sandbox's conf names 'release' as
@@ -150,8 +126,6 @@ class TestCriterion13PreToolBashDeniesPushRelease(unittest.TestCase):
     def _run_hook(self, command: str):
         payload = json.dumps({"tool_input": {"command": command}})
         env = os.environ.copy()
-        if _JQ_DIR:
-            env["PATH"] = _JQ_DIR + os.pathsep + env.get("PATH", "")
         env.pop("CLAUDE_AGENT_TYPE", None)
         env["WORKFLOW_LOG_DIR"] = self.beacon_dir
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
@@ -183,7 +157,6 @@ class TestCriterion13PreToolBashDeniesPushRelease(unittest.TestCase):
         self.assertNotIn("hookSpecificOutput", out, msg=f"push to trunk must not be denied: {out}")
 
 
-@unittest.skipUnless(_JQ_DIR is not None, "jq not visible to the hook's bash context — soft-degrades without it")
 class TestCriterion14MalformedConfErrorBeacon(unittest.TestCase):
     """PRD #1500 §2 criterion 14 (= S2-14): a malformed .claude/pipeline.conf
     makes the PreToolUse(Bash) hook append exactly ONE 'status':'ERROR'
@@ -204,8 +177,6 @@ class TestCriterion14MalformedConfErrorBeacon(unittest.TestCase):
     def _run_hook(self, command: str):
         payload = json.dumps({"tool_input": {"command": command}})
         env = os.environ.copy()
-        if _JQ_DIR:
-            env["PATH"] = _JQ_DIR + os.pathsep + env.get("PATH", "")
         env.pop("CLAUDE_AGENT_TYPE", None)
         env["WORKFLOW_LOG_DIR"] = self.beacon_dir
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
