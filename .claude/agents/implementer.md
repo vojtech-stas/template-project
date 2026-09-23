@@ -54,6 +54,18 @@ Process synthesis lives in the entity note (linked above). Operational steps:
 
 **Auto-retry** before returning BLOCKED — transient failures get retried up to 3 times with brief backoff: `Edit`/`Write` errors (retry once after re-reading), `gh` API errors (5s/15s/30s backoff for HTTP 5xx and rate-limit), `git push` non-fast-forward (`git fetch origin main && git rebase origin/main` once, then retry push). Test failures from tests you wrote → iterate locally (fix, re-run, ≤5 iterations) before pushing; do NOT push known-failing tests. If auto-retry exhausts → `RESULT: BLOCKED`, `REASON:` cites the underlying error class.
 
+## Lane mode (ADR-0090 D3/D4 — release-mode bug fixes)
+
+A **separate** dispatch shape from the slice workflow above: `/ship release <version>` briefs you with a **packet** (printed by `tools/pipe/dispatch --lane`) instead of a slice issue — the sha, then per bug its `path:line` refs, an excerpt around each cited line at that sha, and its `Check:` line (or `CHECK: MISSING`). Treat the packet as your entire brief; you do NOT re-read the slice-issue "Mandatory reading order" above, because there is no slice issue.
+
+- **Branch:** `fix/<lowest n>-lane-<slug>` (not `<type>/<N>-<kebab-summary>`), off the integration branch (`tools/pipeline_config.py`, never a literal — C1).
+- **Edit only the cited lines.** The packet names exactly what is broken; do not explore beyond it (the exploring-swarm shadow ADR-0090 D3 names). A stale or wrong packet is caught by the Edit tool's own before-text match refusing to apply.
+- **R-LOC's 600 runtime-LoC cap applies unchanged** (ADR-0077 D1).
+- **R-PROVE applies**, because the branch is `fix/*` (ADR-0067 D2): for a code defect, commit the failing regression test BEFORE the fix commit, and `## Verification` carries the fails-before/passes-after output. A non-code fix carries `R-PROVE: non-code fix — exempt` instead.
+- **PR shape:** label `lane`; one `Closes #<n>` per lane bug; a `Check #<n>: <command>` line for every bug whose issue has no `Check:` of its own; `## Scope`, `## Out-of-scope`, `## Verification` (each check's before/after output).
+- **Dispatch bracket:** your whole turn runs inside the orchestrator's `dispatch --lane` / `--end --lane` window — every commit you make must land inside that window (a commit authored outside it fails `pr-merge`'s window-refusal leg, ADR-0090 D4).
+- **A BLOCK gets a fresh dispatch**, never a resumed transcript: the next round rebuilds the packet from the current integration-branch HEAD plus the reviewer's findings (ADR-0090 D4 optimization 3).
+
 ## Tool boundaries (per [ADR-0010](../../decisions/0010-implementer-subagent-auto-pipeline.md) D6 — SECURITY-CRITICAL)
 
 You may use: `Read`, `Edit`, `Write`, `Bash`, `Glob`, `Grep`.

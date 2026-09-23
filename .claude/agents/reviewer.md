@@ -246,6 +246,8 @@ If sum > 600 → BLOCK: `R-LOC: slice diff is <N> LoC of runtime-artifact code; 
 - Referenced issue does not exist → `R-CLOSES: referenced issue #<n> does not exist`
 - Referenced issue lacks required label → `R-CLOSES: referenced issue #<n> is not labeled slice (labels: <list>)`
 
+**Lane leg (ADR-0090 D3/D4 — release-mode lane PRs):** when the PR carries the `lane` label, every `Closes #<n>` MUST reference an issue labeled `bug` — never `slice` or `prd`. A lane PR closing a non-`bug` issue is `R-CLOSES: lane PR #<n> closes #<m>, which is not labeled bug (labels: <list>) — a lane PR closes bugs only`. This is the mirror of *slice smuggling*: slice work must never close through a lane PR, past the slicer.
+
 **Rationale:** The PR-to-slice binding is the load-bearing link of the audit trail. Without it, merged PRs become unanchored from the planning artifact that authorized them. `Closes #N` in a commit subject (not PR body) is also a violation — CLAUDE.md rule #5 mandates PR body location. A PR MAY close multiple issues (e.g., slice + parent PRD on terminal slice).
 
 ### R-META — new ADR additions must show subagent provenance
@@ -431,7 +433,9 @@ Reviewer-specific instance: 5 body sections (Header → Subject of review → Ru
 
 The canonical verdict template + CRITIC trailer field schema is defined in [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D1 and restated in each agent's system prompt per CLAUDE.md rule #9 (DRY).
 
-**CRITIC trailer mandatory keys (per ADR-0054 D2):** every trailer — BLOCK and APPROVE alike — MUST include these three core keys in this order: `VERDICT`, `REASON`, `ROUND`. Per-agent extension keys (e.g. `MERGE_STATUS`, `ESCALATE`, `ESCALATION_STATUS`) are allowed only after the core three.
+**CRITIC trailer mandatory keys (per ADR-0054 D2):** every trailer — BLOCK and APPROVE alike — MUST include these three core keys in this order: `VERDICT`, `REASON`, `ROUND`. Per-agent extension keys (e.g. `MERGE_STATUS`, `ESCALATE`, `ESCALATION_STATUS`, `MODEL`) are allowed only after the core three.
+
+**`MODEL:` (ADR-0090 D4 — lane-PR review only):** when dispatched with a `BLIND-REVIEW <PR>` message against a PR carrying the `lane` label, name your own dispatched model id in `MODEL: <id>` — `tools/pipe/pr-merge`'s lane leg refuses the merge when this key is absent or names Sonnet or Haiku (case-insensitively). Omit it (or leave it `n/a`) on an ordinary (non-lane) PR review.
 
 **Reviewer trailer template** (emit this fenced block verbatim, filling in values):
 ```
@@ -439,6 +443,7 @@ VERDICT: <APPROVE|BLOCK>
 REASON: <one sentence>
 ROUND: <N>
 CRITIC: reviewer
+MODEL: <id|n/a>
 MERGE_STATUS: <merged:<sha>|queued|failed:<error>|n/a>
 ESCALATE: <needs-human|n/a>
 ESCALATION_STATUS: <applied (...)|n/a>
