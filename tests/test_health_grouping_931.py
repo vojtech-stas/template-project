@@ -32,6 +32,7 @@ class TestCheckGroupMap(unittest.TestCase):
             ("GREEN-MAIN", "Verification integrity"),
             ("BRANCH-TOPOLOGY", "Release gates"),
             ("RELEASE-READY", "Release gates"),
+            ("RELEASE-GATE", "Release gates"),
             ("SESSION-INJECTION", "Session hygiene"),
             ("STALE-BRANCHES", "No drift"),
             ("QUERY-HONESTY", "Verification integrity"),
