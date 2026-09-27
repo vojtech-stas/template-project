@@ -84,7 +84,7 @@ Enter this mode on the normative trigger set — **"drain the queue"**, **"/ship
 
 Absent either qualifier, the drain is unbounded and runs to queue exhaustion or a park.
 
-A third, **release**, sub-form — **`/ship release <version> lanes <N>`** — enters **QD11** instead: a version-scoped drain over one milestone's bugs, file-lane dispatched, never the plain per-item lane model above (ADR-0090 D2).
+A third, **release**, sub-form — **`/ship release <version>`**, or **`/ship release <version> lanes <N>`** bounded to N lanes — enters **QD11** instead: a version-scoped drain over one milestone's bugs, file-lane dispatched, never the plain per-item lane model above (ADR-0090 D2).
 
 ### QD2. Queue assembly
 
@@ -184,7 +184,7 @@ No triage verdict relaxes any of these: the drain **never** creates `.claude/PRO
 
 ### QD11. Release mode
 
-Per [ADR-0090](../../../decisions/0090-release-mode.md) D1–D4. `/ship release <version> lanes <N>` is a queue-drain sub-form whose work set is one milestone's bugs and admitted features — never the plain per-item lane model QD6 describes. This slice ships the `lanes N` bounded form only (no unbounded release drain yet).
+Per [ADR-0090](../../../decisions/0090-release-mode.md) D1–D4. `/ship release <version> [lanes <N>]` is a queue-drain sub-form whose work set is one milestone's bugs and admitted features — never the plain per-item lane model QD6 describes. Unbounded, `/ship release <version>` runs every lane of the plan and then the terminal (step 12); `lanes <N>` stops after the first N lanes in plan order and skips the terminal.
 
 **Interim, until #1529's mechanical fix lands:** only orchestrator-supervised lanes run. The orchestrator watches every builder and reviewer round of a lane itself; no lane runs unattended, because until then `pr-merge` cannot tell a builder's self-posted verdict or self-opened dispatch window from the real ones. (#1529 was first routed to slice #1507, which shipped without it; the interim holds until #1529 itself closes.)
 
@@ -195,10 +195,14 @@ Per [ADR-0090](../../../decisions/0090-release-mode.md) D1–D4. `/ship release 
 5. **The dispatch bracket.** For each lane round: `tools/pipe/dispatch --lane <branch> --milestone <V> --model sonnet <n>…` immediately before the builder's `Agent` call (it prints the packet — sha, per-bug `path:line` refs and excerpt, `Check:` line — the builder's brief), then `tools/pipe/dispatch --end --lane <branch> --result <r>` immediately after that dispatch returns. Each round is a **fresh** `implementer` dispatch (`model: "sonnet"`, `isolation: "worktree"`) briefed with the packet and `implementer.md`'s Lane mode — never a resumed transcript.
 6. **Review.** Every round gets a fresh reviewer, dispatched with `model: "opus"`, `isolation: "worktree"` and only the `BLIND-REVIEW <PR>` message (ADR-0060 D1) — it never sees the packet and re-derives each fix.
 7. **Merge.** `tools/pipe/pr-merge` on the reviewer's APPROVE — its lane legs (MODEL: refusal, window refusal, close-on-merge) are described in `pr-merge`'s own docstring, not repeated here.
-8. **Verify.** `tools/release.py verify <n>…` runs each bug's check against the integration branch HEAD after merge. `UNCONFIRMED #<n>` means a gh read failed, not that the check is missing: re-run it.
+8. **Verify.** `tools/release.py verify --reopen <n>…` runs each bug's check against the integration branch HEAD after merge. A closed bug whose line is `FAIL` or `MISSING` is reopened with its verify output posted on it, and goes back into the plan. `UNCONFIRMED #<n>` means a gh read failed, not that the check is missing: the bug stays closed and is not reopened, so re-run `verify` until it answers.
 9. **Ledger fields.** Write exactly one `item_start`/`item_done` pair per **bug** (never per lane — a lane can hold many bugs), and `triaged.lane` carries the lane branch name as a non-empty string (DRAIN-LEDGER release mode, [`dashboard/health.py`](../../../dashboard/health.py) `check_drain_ledger`).
 10. **Exclusive lanes run alone.** A bug with no cited path (an exclusive lane) never runs concurrently with any other lane — it is the one case release mode still serializes.
 11. **Sub-lanes run one after another.** Lanes that share a `group` id come from one file group and can touch the same files, so at most one of them is in flight. Take them in plan order, and dispatch the next only after the previous one's PR has merged, so its packet is built from an integration branch that already carries that merge. Every sub-lane counts as one lane toward the cap of 15.
+12. **Terminal (unbounded form only).** When no lane is left to dispatch and none is in flight:
+    1. Re-run `tools/release.py freeze <V> --next <W> --features <list>` with the **same** `--features` list as at release start. It sweeps this run's own new captures, slices posted since, and any class the owner flipped (ADR-0090 D1). A refusal here names an unclassified issue: classify it, then re-run.
+    2. Run `tools/release.py verify --reopen <n>…` over every bug the run closed. Any bug it reopens, and any bug the re-freeze admitted, goes back through steps 3–11.
+    3. Read `python3 dashboard/health.py --check RELEASE-GATE`. `PASS: RELEASE-GATE <V>` is the success terminal: report it to the owner, who alone promotes and tags. `WARN: RELEASE-GATE <V> … hold` names what still holds the version: a bug escalated to the owner holds it and ends the run as a hold; any other holding issue is autonomous work, so go back to step 3. `unconfirmed` proves nothing either way: re-read it, never report it as PASS.
 
 ## Whole-repo macro audit — session-scoped background spawn (ADR-0051 D1–D4)
 
@@ -499,7 +503,7 @@ evidence for this run; note it explicitly in the step 7 final report.
 - [ADR-0002](../../../decisions/0002-autonomous-merge-policy.md) — reviewer auto-merge on APPROVE; the handoff target after implementer SUCCESS.
 - [ADR-0076](../../../decisions/0076-guarded-verb-pipeline-engine.md) — D1 (verbs are the sole sanctioned path for mechanical pipeline transitions); step 5b/5c's `python tools/pipe/dispatch <slice>` / `--end` calls are the walking-skeleton repoint (slice #1129).
 - [ADR-0085](../../../decisions/0085-queue-drain-mode.md) — D1 (queue-drain is an entry mode on `/ship`, never a second orchestrator; plan-only and bounded sub-forms — superseded in part by [ADR-0090](../../../decisions/0090-release-mode.md) D2's release work-set/routing), D2 (reasonable-engineer triage litmus; label-and-continue escalation on `needs-human-check`), D4 (a durable per-run drain ledger, separate from trace-v3), D5 (fix-in-run: trivial-lane discoveries land inside the drain run — superseded in part by [ADR-0090](../../../decisions/0090-release-mode.md) D5's in-run-fix rider, slice 4).
-- [ADR-0090](../../../decisions/0090-release-mode.md) — D1 (a version is a frozen milestone of every open bug plus the owner's named features; `freeze`), D2 (`/ship release <version>` is a queue-drain sub-form; QD11), D3 (disjoint file lanes, script-built packets, ≤15 lanes in flight), D4 (a lane PR is gated like a slice PR, reviewed by a strong model, verified by script).
+- [ADR-0090](../../../decisions/0090-release-mode.md) — D1 (a version is a frozen milestone of every open bug plus the owner's named features; `freeze`; the `RELEASE-GATE` finish line), D2 (`/ship release <version>` is a queue-drain sub-form; QD11), D3 (disjoint file lanes, script-built packets, ≤15 lanes in flight), D4 (a lane PR is gated like a slice PR, reviewed by a strong model, verified by script).
 - [ADR-0051](../../../decisions/0051-whole-repo-macro-audit-cadence.md) — D1 (whole-repo macro-audit cadence: auto-launches at `/ship` start, once per session, non-blocking), D2 (mechanism is `codebase-critic` whole-repo mode — no new critic), D3 (background dispatch + harvest-on-completion), D4 (once-per-session marker guard).
 - Sibling skills the chain calls: [`.claude/skills/to-prd/SKILL.md`](../to-prd/SKILL.md), [`.claude/skills/to-issues/SKILL.md`](../to-issues/SKILL.md). Subagent dispatched at stage 4: [`.claude/agents/implementer.md`](../../agents/implementer.md). Subagent dispatched at step 6: [`.claude/agents/qa-tester.md`](../../agents/qa-tester.md) in production-verify mode.
 

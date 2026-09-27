@@ -26,7 +26,7 @@ Full role synthesis (joint-APPROVE gate rationale, shared-counter invariant, dow
    - On **either-critic BLOCK with `ROUND == 3`** (or `ESCALATE: needs-human` in either verdict) → STOP. Do NOT post the PRD. Do NOT commit the ADR. Per I5 escalation, apply `needs-human` to the draft tracking artifact (or the posted PRD if already posted) and post a summary comment with both verdicts attached.
 
 6. **Publish** (only after joint APPROVE):
-   - PRD → `gh issue create --label prd`. Title format: `PRD: <one-line feature summary>`.
+   - PRD → `gh issue create --label prd --label <class>`. Title format: `PRD: <one-line feature summary>`. `<class>` is the PRD's class label ([ADR-0090](../../../decisions/0090-release-mode.md) D1): `bug` when the PRD repairs something that breaks the system's own promise (docs, rules, ADRs and doc drift included), otherwise `feature`. Exactly one, at creation; its slices inherit it.
    - Any drafted ADR(s) → write to `decisions/NNNN-<slug>.md`. Ship in slice 1's PR per [ADR-0003](../../../decisions/0003-autonomous-pipeline-with-critics.md) D8 — NOT separately posted as issues.
    - Append the **pipeline metadata footer** to the PRD body: `> **Pipeline metadata** — Approved by prd-critic round <N>/3.` — extended to `; adr-critic round <N>/3 (ADR-NNNN)` when an ADR was drafted. Round numbers match by construction (shared counter).
 
