@@ -13,11 +13,13 @@ Four subcommands:
     non-residual issue carries neither or both class labels, or a listed
     number does not name a non-residual `feature` issue (ADR-0090 D1).
 
-  lanes <V> [--evidence <sweep.json>] [--priority <file>]
+  lanes <V> [--evidence <sweep.json>] [--priority <file>] [--max-per-lane <n>]
     Prints the lane plan for <V>'s open `bug` issues as JSON: bugs that
-    share a cited path (directly or through a chain) share one lane; a
-    bug with no cited path runs `exclusive`. No split yet (slice 2 adds
-    the per-lane bug-limit split) (ADR-0090 D3).
+    share a cited path (directly or through a chain) share one file group;
+    a bug with no cited path runs `exclusive`. A group of more than
+    `--max-per-lane` bugs (default 10) splits, by issue-number order, into
+    sub-lanes that all carry the group's `group` id and run one after
+    another (ADR-0090 D3).
 
   packet --sha <sha> <n>...
     Prints the lane packet for the given bug numbers at `<sha>`: the sha,
@@ -56,6 +58,10 @@ from pathlib import Path
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 
 TRUSTED_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
+
+# The per-lane bug limit (PRD #1501 §6): `lanes` splits a larger file group
+# into sub-lanes of at most this many bugs. `--max-per-lane` overrides it.
+DEFAULT_MAX_PER_LANE = 10
 
 # A backtick-quoted `path:line` or `path:start-end` ref.
 _REF_RE = re.compile(r"`([\w./\\-]+):(\d+)(?:-(\d+))?`")
@@ -480,6 +486,11 @@ def _load_priority(path):
 
 
 def _cmd_lanes(args):
+    # A caller that builds its own Namespace without the flag gets the default.
+    max_per_lane = getattr(args, "max_per_lane", DEFAULT_MAX_PER_LANE)
+    if max_per_lane < 1:
+        print("release.py lanes: refused — --max-per-lane must be at least 1", file=sys.stderr)
+        return 1
     owner_repo = _remote_owner_repo()
     if not owner_repo:
         print("release.py lanes: refused — could not resolve owner/repo from origin", file=sys.stderr)
@@ -559,14 +570,21 @@ def _cmd_lanes(args):
         exclusive = len(paths) == 0
         lowest = members_sorted[0]
         slug = _slugify(paths[0]) if paths else "misc"
-        lane_id = f"fix/{lowest}-lane-{slug}"
-        lanes.append({
-            "lane": lane_id,
-            "group": None if exclusive else lane_id,
-            "exclusive": exclusive,
-            "issues": members_sorted,
-            "paths": paths,
-        })
+        group_id = f"fix/{lowest}-lane-{slug}"
+        # A group over the per-lane limit splits into consecutive chunks of
+        # its issue-number order: the same bugs always give the same chunks,
+        # so a re-plan never moves a bug under a second branch name. Every
+        # sub-lane keeps the group's id, which marks them to run one after
+        # another (ADR-0090 D3); the first sub-lane's branch is the group id.
+        for i in range(0, len(members_sorted), max_per_lane):
+            chunk = members_sorted[i:i + max_per_lane]
+            lanes.append({
+                "lane": f"fix/{chunk[0]}-lane-{slug}",
+                "group": None if exclusive else group_id,
+                "exclusive": exclusive,
+                "issues": chunk,
+                "paths": sorted(set().union(*(issue_paths[m] for m in chunk))),
+            })
 
     def rank(lane):
         ranks = [priority_rank.get(m) for m in lane["issues"]]
@@ -672,8 +690,8 @@ def _find_lane_pr_for_issue(owner, repo, num, repo_url):
     `source.issue` carries the PR's `body`, `labels`, `author_association`
     and `pull_request.merged_at`. Never the search index, which answers
     empty with success under a renamed slug and lags a fresh merge (the
-    ADR-0087 context, #1510). Never the (deferred, criterion 27) closing
-    comment, which keeps the SPIDR fallback available (constraint 6).
+    ADR-0087 context, #1510). Never the closing comment `pr-merge` posts
+    (criterion 27): the timeline alone finds the PR (constraint 6).
     Labels are filtered here, never via `--label` (C4).
 
     Only a PR of `repo_url` (the issue's own canonical `repository_url`)
@@ -804,6 +822,7 @@ def main(argv=None):
     p_lanes.add_argument("version")
     p_lanes.add_argument("--evidence", default=None)
     p_lanes.add_argument("--priority", default=None)
+    p_lanes.add_argument("--max-per-lane", type=int, default=DEFAULT_MAX_PER_LANE)
     p_lanes.set_defaults(func=_cmd_lanes)
 
     p_packet = sub.add_parser("packet")

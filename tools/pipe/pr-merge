@@ -88,12 +88,13 @@ extra gh call on an ordinary PR:
   - Window refusal (criterion 25) — every non-merge commit on the lane's
     head branch must fall inside a recorded `dispatch`->`dispatch_end`
     window on trace_id `lane-<headRefName>`.
-  - Close-on-merge (criterion 26 only — criterion 27's closing comment is
-    deferred to slice 2 per the SPIDR note): on confirmed merge, every
-    issue named on a whole `Closes #<n>` line of the PR body is closed (no
-    comment; a `closes #<n>` inside prose closes nothing), after merge
-    confirmation and before the span append, never on the already-recorded
-    idempotence shortcut.
+  - Close-on-merge (criteria 26 and 27): on confirmed merge, every issue
+    named on a whole `Closes #<n>` line of the PR body is closed (a
+    `closes #<n>` inside prose closes nothing), and each issue it closed
+    gets a comment giving the PR number and the merge sha; an issue whose
+    close fails gets no comment and is named on stderr. This runs after
+    merge confirmation and before the span append, never on the
+    already-recorded idempotence shortcut.
 
 Env overrides (test seam; production defaults are sane real-world values):
   PR_MERGE_BUDGET_S        (default 90) — overall wall-clock budget for ONE
@@ -534,13 +535,41 @@ def _assert_lane_window_or_refuse(pr, view):
 
 
 def _close_lane_issues(view):
-    """Criterion 26 ONLY (criterion 27's closing comment is deferred to
-    slice 2 per the SPIDR note / A10): close every issue named on a whole
-    `Closes #<n>` line of the lane PR's body (`_LANE_CLOSES_RE`) --
-    issue-close only, never a comment."""
+    """Criterion 26: close every issue named on a whole `Closes #<n>` line
+    of the lane PR's body (`_LANE_CLOSES_RE`). Returns the numbers it
+    closed. An issue whose close fails is named on stderr and left out, so
+    it stays open and gets no closing comment."""
     body = (view or {}).get("body", "") or ""
+    closed = []
     for num in _LANE_CLOSES_RE.findall(body):
-        _run_gh(["issue", "close", num])
+        res = _run_gh(["issue", "close", num])
+        if res.returncode != 0:
+            print(
+                f"pr-merge: closing #{num} failed (gh exit {res.returncode}); "
+                f"#{num} stays open, with no closing comment",
+                file=sys.stderr,
+            )
+            continue
+        closed.append(num)
+    return closed
+
+
+def _comment_on_closed_lane_issues(pr, closed, sha):
+    """Criterion 27: on each issue `_close_lane_issues` closed, post a
+    comment giving the lane PR number and the merge sha. A failed comment
+    is named on stderr and never changes the exit code: the merge is
+    already confirmed."""
+    merge_sha = sha or "not reported by the GitHub API"
+    for num in closed:
+        res = _run_gh([
+            "issue", "comment", num, "--body",
+            f"Closed by lane PR #{pr} on merge (merge sha {merge_sha}).",
+        ])
+        if res.returncode != 0:
+            print(
+                f"pr-merge: closed #{num}, but its closing comment failed (gh exit {res.returncode})",
+                file=sys.stderr,
+            )
 
 
 def _do_confirm(pr, deadline, start):
@@ -577,7 +606,7 @@ def _do_confirm(pr, deadline, start):
         return 0
 
     if _is_lane_pr(view):
-        _close_lane_issues(view)
+        _comment_on_closed_lane_issues(pr, _close_lane_issues(view), sha)
 
     dur_ms = int((time.monotonic() - start) * 1000)
     attrs = {"pr": pr, "sha": sha} if sha else {"pr": pr}
@@ -655,7 +684,7 @@ def _do_default(pr, deadline, start):
         return 3
 
     if _is_lane_pr(view):
-        _close_lane_issues(view)
+        _comment_on_closed_lane_issues(pr, _close_lane_issues(view), sha)
 
     dur_ms = int((time.monotonic() - start) * 1000)
     attrs = {"pr": pr, "sha": sha} if sha else {"pr": pr}
