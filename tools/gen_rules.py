@@ -179,9 +179,14 @@ SCOPE_PATHS: dict[str, str] = {
 # are all per-decision partial, so `superseded_by` stays empty on each source
 # ADR and no rule_id drops: the delta is +1, measured from the baseline on
 # `develop` at the commit this merge reconciles against (95).
-# Breakdown: CAP(8) + COM(2) + CRI(5) + DOC(6) + GLO(4) + HOK(9) +
-#            ISO(6) + OUT(5) + PIP(33) + REG(3) + SLI(3) + VER(12) = 96
-RULE_IDS_BASELINE: int = 96
+# ADR-0091 (bug #1546 lane PR) adds 1 new HOK-* id (HOK-010). Its two
+# supersessions (ADR-0023 D3, ADR-0029 D3) are per-decision partial, so
+# `superseded_by: []` stays on both and no rule_id drops (HOK-003 stays):
+# the delta is +1, measured from the baseline on the integration branch at
+# the commit this lane rebased onto (96).
+# Breakdown: CAP(8) + COM(2) + CRI(5) + DOC(6) + GLO(4) + HOK(10) +
+#            ISO(6) + OUT(5) + PIP(33) + REG(3) + SLI(3) + VER(12) = 97
+RULE_IDS_BASELINE: int = 97
 
 # ---------------------------------------------------------------------------
 # Frontmatter parser (stdlib, no PyYAML)
@@ -680,6 +685,14 @@ _RULE_STATEMENTS: dict[str, str] = {
         "MAY inject deterministic, read-only command output into session context. The hard "
         "line is unchanged: hooks NEVER auto-invoke skills or subagents (ADR-0057 D4, "
         "source=CLAUDE.md #12)."
+    ),
+    # ADR-0091: subagent-context discriminator — D1
+    "HOK-010": (
+        "A hook is in subagent context exactly when its stdin payload carries a non-empty "
+        "`agent_id`, read from the hook's full-payload parse; `agent_type` alone never marks "
+        "a subagent (an `--agent` session's main thread carries it), no environment variable "
+        "carries the signal (Claude Code sets none), and a test of a subagent path feeds the "
+        "payload field, never a faked environment (ADR-0091 D1)."
     ),
     # -----------------------------------------------------------------------
     # slicing scope (ADR-0005, ADR-0013)

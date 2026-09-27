@@ -74,13 +74,13 @@ _JQ_DIR = _resolve_jq_dir()
 def _run_hook(command: str, extra_env: dict = None):
     """Invoke the hook with the JSON payload delivered via a real temp FILE
     on stdin (mirrors test_deny_guard_mechanical_1133.py's helper exactly).
-    `extra_env` overrides/adds env vars on top of a CLAUDE_AGENT_TYPE-stripped
-    copy of the current environment."""
+    `extra_env` overrides/adds env vars on top of a copy of the current
+    environment. The payload carries no `agent_id`, so every fire is
+    main-thread (orchestrator) context (ADR-0091 D1)."""
     payload = json.dumps({"tool_input": {"command": command}})
     env = os.environ.copy()
     if _JQ_DIR:
         env["PATH"] = _JQ_DIR + os.pathsep + env.get("PATH", "")
-    env.pop("CLAUDE_AGENT_TYPE", None)
     if extra_env:
         env.update(extra_env)
     with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
@@ -223,7 +223,7 @@ class Test7eSanctionedVerbsPassThroughUntouched(unittest.TestCase):
         self._assert_clean_pass("python tools/pipe/prd-close 1127")
 
     def test_promote_sh_orchestrator_context_passes(self):
-        """No CLAUDE_AGENT_TYPE set -- the sanctioned orchestrator procedure
+        """No `agent_id` in the payload -- the sanctioned orchestrator procedure
         (already covered by test_deny_guard_mechanical_1133.py; repeated here
         for a complete per-verb 7e demo in one dedicated location)."""
         self._assert_clean_pass("bash tools/promote.sh")

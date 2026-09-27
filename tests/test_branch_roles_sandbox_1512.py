@@ -132,7 +132,6 @@ class TestCriterion13PreToolBashDeniesPushRelease(unittest.TestCase):
     def _run_hook(self, command: str):
         payload = json.dumps({"tool_input": {"command": command}})
         env = os.environ.copy()
-        env.pop("CLAUDE_AGENT_TYPE", None)
         env["WORKFLOW_LOG_DIR"] = self.beacon_dir
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
             f.write(payload)
@@ -183,7 +182,6 @@ class TestCriterion14MalformedConfErrorBeacon(unittest.TestCase):
     def _run_hook(self, command: str):
         payload = json.dumps({"tool_input": {"command": command}})
         env = os.environ.copy()
-        env.pop("CLAUDE_AGENT_TYPE", None)
         env["WORKFLOW_LOG_DIR"] = self.beacon_dir
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False, encoding="utf-8") as f:
             f.write(payload)
