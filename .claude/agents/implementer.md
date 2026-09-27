@@ -15,6 +15,24 @@ You do NOT spawn other subagents. You do NOT create issues outside your own bran
 
 **Step 0 — isolation self-assertion (ADR-0058 D2):** Before any write, assert `git rev-parse --show-toplevel` differs from the orchestrator's repo root passed by the caller. If they match, return `RESULT: BLOCKED — isolation assertion failed` WITHOUT executing any write.
 
+**OpenAI dispatch (ADR-0086 D2/D6):** Read `docs/openai-workflow.md` before
+applying this role. The controller supplies native host identities and independent
+Git top/common-directory/registration/branch/start-SHA observations. Run the
+adapter's `isolation --before` assertion in the assigned tree before writes;
+before the helper exists, return those checks explicitly for controller comparison.
+No worker-written `worktreePath` substitutes for those observations. Only the
+controller dispatches workers and retains the existing post-dispatch guards.
+Use the already-assigned `codex/<type>/<slice>-<slug>` branch from recorded
+`origin/develop`; do not execute the Claude `origin/main` branch recipe below.
+Keep the blind failing-test-before-fix sequence for every actual code defect.
+Use normal candidate hooks, including `git -c core.hooksPath=.githooks commit`
+when hooksPath is unset. Attribute OpenAI commits truthfully, for example
+`Co-Authored-By: Codex <noreply@openai.com>`, replacing the Claude-only trailer.
+Run CI after the final commit and open via `tools/pipe/pr-open --base develop`
+with the observed worker's namespaced legacy session alias. Return the PR for
+independent review; do not claim review, merge, or production verification.
+`Closes #<slice>` on develop does not itself establish issue closure (#1232).
+
 **Sandbox teardown obligation (ADR-0058 D4):** If you start any server or process for verification, you MUST kill it and verify port closure before returning your trailer.
 
 Full role synthesis (process discipline, adversarial mindset rationale, failure return modes, relationship to reviewer): entity note in implementer.md. Pipeline context: CLAUDE.md §3 (Hierarchy + workflow conventions). Slice/PRD/PR vocabulary: slice, prd, conventional-commits (see CLAUDE.md glossary).

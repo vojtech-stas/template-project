@@ -13,6 +13,38 @@ Per [ADR-0020](../../decisions/0020-qa-automation-writer-executor.md) D1 + D3 (D
 
 Full role synthesis (process detail, dogfood discipline, PROVISIONAL_PASS capture flow, output-shape detail, adversarial-mindset rationale, failure return modes, relationship to writer): this file. Topic context: qa-automation, output-shapes. Generator-trailer vocabulary: generator-trailer (see CLAUDE.md glossary).
 
+## OpenAI execution boundary (ADR-0086 D3/D6)
+
+Read docs/openai-workflow.md and use only the native tools actually exposed.
+The controller dispatches an independent qa-tester; regenerate every proof on
+the tested merged SHA. Implementer artifacts cannot supply QA evidence.
+For ALL routes, substitute the controller-correlated native host receipt for
+Claude workflow-events identity lookup only. A receipt is not hook-fire proof.
+Set PROOF_SOURCE to the receipt's codex:<worker-id>@<started_at>; retain ENV,
+complete verdict and all route assertions. The controller checks native final
+result/command IDs, untruncated outputs, independent identities, and artifact
+bytes through tools/openai_workflow.py qa-verify before recording PASS.
+The adapter's prd-close path revalidates proof and current child completion.
+No direct OpenAI PASS/closure call to a legacy verb is permitted.
+
+Use the controller's explicit durable proof root outside disposable worktrees;
+never fall back to your worktree root. Return portable relative artifact names
+inside that root for the adapter, with captured bytes and host references.
+Keep raw host records private; publish sanitized excerpts and portable artifacts.
+Every accepted command follows the exercise boundary, matches the tested SHA,
+and is at most 30 minutes old. Rerun stale or revision-invalidated checks.
+Absent native hooks remain unverified in slice 1; no invented Claude events.
+
+Slice #1440 requires static + command-run + browser. In a real dashboard session,
+click both Run-board and health-strip Refresh, inspect recorded slice/PR data
+and #health-strip-content, retain screenshot AND rendered text, console results,
+and /api/meta SHA/start-time handshake. Unrelated health failures stay visible.
+Use the observed browser capability with the same interaction/proof obligations;
+unavailable tools yield PROVISIONAL, not a weaker-route PASS.
+Before an overlapping merge, the controller/reviewer must perform #1435's live
+overlap gate and preserve DASH_OPEN_BROWSER opt-in (any nonempty value, even 0).
+Instruction loading, source resolution and preflight never start browser/server.
+
 ## Mode-selection contract (per ADR-0025 D1 + ADR-0037 D2)
 
 Three mutually-exclusive modes — selection driven by the caller's invocation prompt:
@@ -270,6 +302,7 @@ If prompt contains both `production-verify mode` AND `ui-mode`/`bash-mode` token
 | `tools/**`, `.claude/skills/**` | **command-run** | command output excerpt + exit codes |
 | `decisions/**`, `docs/**`, `README.md` | **static** | grep count= |
 | `.github/workflows/**`, `tools/ci-checks.sh` | **command-run + failing-canary** | the command-run proof PLUS a deliberately-failing canary shown to fail before the green run |
+| `AGENTS.md`, `.agents/**` | **command-run + static** | resolver/router command output + exit codes AND static source assertions with grep count= |
 
 **Negative-path escalation rows (ADR-0061 D4):**
 - PRs touching `.claude/hooks/**` or `.claude/settings.json`: require a **happy-path proof AND an induced-failure proof** — the ERROR beacon's verbatim line must be shown firing, not merely described (ADR-0083 D4(a)). A happy-path-only proof is insufficient for hook-fire changes.

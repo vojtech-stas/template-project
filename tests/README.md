@@ -25,6 +25,14 @@ python -m unittest discover -s tests -p "test_*.py"
 
 ## CI integration
 
+OpenAI slice-1 contracts: `python -m unittest tests.test_openai_workflow
+tests.test_openai_skills -v` (one command). The tests cover deterministic router
+parity, resolver and preflight refusals, typed-branch consumers, independent
+isolation, artifact/host correspondence and zero downstream verification/closure
+calls on invalid proof. Disposable fixtures are not production evidence. Compare
+the full base/candidate suites with identical prerequisites and isolated logs;
+existing failures are not permission to add failures, errors or skips.
+
 `tools/ci-checks.sh` runs the suite automatically as CHECK 12 when `tests/`
 exists. Under pytest, a quarantined test (an active entry in
 `tests/quarantine.txt`) still runs and its outcome stays visible in the

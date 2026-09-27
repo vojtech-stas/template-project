@@ -54,6 +54,12 @@ The middle is glued together by one command: **`/ship`**. After `/grill-me`, you
 
 ## 5-Minute Quickstart
 
+**Codex / ChatGPT:** start with [AGENTS.md](AGENTS.md) and the
+[OpenAI workflow guide](docs/openai-workflow.md). The current D6 inventory is one
+generated ship router over the same canonical procedures. Native hooks and full
+skill discovery are pending; plain chat without repository, shell and independent
+worker access is a planning/handoff environment, not a verified delivery runner.
+
 A literal walkthrough of the first full feature cycle. Pick something tiny — e.g., a `/say-hello` skill that prints a greeting. (Real PRDs are bigger; we use `/say-hello` here purely to make the example fit in 5 minutes.)
 
 **1. Clone + bootstrap (one-time, ~30 seconds):**
@@ -358,7 +364,7 @@ Claude Code session hooks configured in `.claude/settings.json` (scripts in `.cl
 
 ### Architecture Decision Records
 
-[`decisions/`](decisions/) holds 86 ADR(s). See [`decisions/README.md`](decisions/README.md) for the full index.
+[`decisions/`](decisions/) holds 87 ADR(s). See [`decisions/README.md`](decisions/README.md) for the full index.
 
 ## Subagent-quality maintenance
 
@@ -378,7 +384,7 @@ To add a term, edit that section directly in a normal reviewer-gated PR, followi
 
 Walking-skeleton phase. The pipeline is being built incrementally **on the project itself** — dogfooding from day one. The autonomous loop now ships PRDs end-to-end with all five stages live: `/grill-me` → `to-prd`+critics → `to-issues`+slicer-critic → `implementer`+`reviewer` (per slice, DAG-batched) → `/qa-plan` at acceptance. All operational content lives in skills + subagents + CLAUDE.md + ADRs per [ADR-0032](decisions/0032-workflow-only-architecture.md).
 
-> **Auto-generated component counts** (as of last generator run): 6 skill(s), 6 critic(s) + 3 generator(s), 7 hook(s), 86 ADR(s).
+> **Auto-generated component counts** (as of last generator run): 6 skill(s), 6 critic(s) + 3 generator(s), 7 hook(s), 87 ADR(s).
 
 ## License
 

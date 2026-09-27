@@ -53,6 +53,12 @@ The middle is glued together by one command: **`/ship`**. After `/grill-me`, you
 
 ## 5-Minute Quickstart
 
+**Codex / ChatGPT:** start with [AGENTS.md](AGENTS.md) and the
+[OpenAI workflow guide](docs/openai-workflow.md). The current D6 inventory is one
+generated ship router over the same canonical procedures. Native hooks and full
+skill discovery are pending; plain chat without repository, shell and independent
+worker access is a planning/handoff environment, not a verified delivery runner.
+
 A literal walkthrough of the first full feature cycle. Pick something tiny — e.g., a `/say-hello` skill that prints a greeting. (Real PRDs are bigger; we use `/say-hello` here purely to make the example fit in 5 minutes.)
 
 **1. Clone + bootstrap (one-time, ~30 seconds):**
