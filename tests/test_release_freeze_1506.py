@@ -19,8 +19,8 @@ Covers PRD #1501 §2 criteria 6-11:
   10 (release_freeze_creates_milestones): a missing <V> or <W> is created.
   11 (release_freeze_idempotent): a residual, an issue in a milestone
     other than <V>/<W>, and an issue already correctly placed each get no
-    milestone-changing call (the "run freeze twice" clause is deferred to
-    slice 2 per the SPIDR fallback, A10).
+    milestone-changing call (the "run freeze twice" clause, deferred under
+    A10, is covered by tests/test_release_freeze_rerun_1507.py).
 """
 import json
 import os

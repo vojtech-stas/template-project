@@ -301,13 +301,18 @@ def _cmd_end(slice_num, result):
 
 def _fetch_integration_sha():
     """Resolve the configured integration branch (never a literal — C1),
-    fetch it, and return `(branch, sha)`, or `(branch, None)` on failure."""
+    fetch it, and return `(branch, sha)`, or `(branch, None)` when the fetch
+    or the rev-parse fails. A failed fetch is never answered from the local
+    `origin/<branch>` ref: that ref can predate the latest merge, and a
+    packet excerpted from it would not be fresh (criterion 22)."""
     pc = _load_pipeline_config()
     branch = pc.integration_branch()
-    subprocess.run(
+    fetch = subprocess.run(
         ["git", "fetch", "origin", branch],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
+    if fetch.returncode != 0:
+        return branch, None
     res = subprocess.run(
         ["git", "rev-parse", f"origin/{branch}"],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
@@ -354,9 +359,13 @@ def _cmd_dispatch_lane(branch, milestone, model, issue_numbers):
         print(f"dispatch: refused — lane issue(s) invalid: {', '.join(bad)}", file=sys.stderr)
         return 1
 
-    _int_branch, sha = _fetch_integration_sha()
+    int_branch, sha = _fetch_integration_sha()
     if not sha:
-        print("dispatch: refused — could not resolve the integration branch's sha", file=sys.stderr)
+        print(
+            f"dispatch: refused -- could not fetch origin/{int_branch} and resolve its sha "
+            "(a packet from the local ref could be stale); no span written",
+            file=sys.stderr,
+        )
         return 1
 
     try:

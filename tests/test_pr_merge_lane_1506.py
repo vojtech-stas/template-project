@@ -10,15 +10,16 @@ a REAL throwaway origin+develop-branch git repo built under pytest's
 tmp_path (rule #21), mirroring tests/test_dispatch_lane_1506.py's harness —
 never a network call.
 
-Covers PRD #1501 §2 criteria 24-26 (criterion 27's closing comment is
-deferred to slice 2 per the SPIDR note / A10):
+Covers PRD #1501 §2 criteria 24-26 (criterion 27's closing comment, which
+slice #1507 delivers, is covered by
+tests/test_pr_merge_lane_closing_comment_1507.py):
   24 (pr_merge_lane_model): a lane PR whose latest APPROVE comment lacks a
      `MODEL:` line, or names Sonnet/Haiku, is refused before any merge call.
   25 (pr_merge_lane_windows): a lane PR with a non-merge commit authored
      outside every `dispatch`->`dispatch_end` window on trace_id
      `lane-<headRefName>` is refused before any merge call.
   26 (pr_merge_lane_closes): on a confirmed lane-PR merge, every
-     `Closes #<n>` issue in the body is closed (no comment) — after merge
+     `Closes #<n>` issue in the body is closed — after merge
      confirmation, before the span append, never on the already-recorded
      idempotence shortcut.
 
@@ -302,28 +303,27 @@ class TestPrMergeLaneWindows(PrMergeLaneTestBase):
 # ---------------------------------------------------------------------------
 
 class TestPrMergeLaneCloses(PrMergeLaneTestBase):
-    def test_pr_merge_lane_closes_issues_on_confirmed_merge_no_comment(self):
+    def test_pr_merge_lane_closes_issues_on_confirmed_merge(self):
         self._push_head_branch("fix/901-lane-f")
         log_path = os.path.join(self.tmp, "trace-v3.jsonl")
         marker = os.path.join(self.tmp, "gh_calls.marker")
         view = _lane_view(["lane"], "fix/901-lane-f", closes=(910, 911),
                            approve_body="VERDICT: APPROVE\nMODEL: opus-5.5\nROUND: 1\nCRITIC: reviewer")
+        # Budget 0: the merge is confirmed on the first poll and record-green
+        # is never chained; this test is about the close only.
         result = self._run(["901"], {
             "TRACE_LOG_OVERRIDE": log_path,
             "FAKE_GH_VIEW_JSON": json.dumps(view),
             "FAKE_GH_MERGE_EXIT": "0",
             "FAKE_GH_API_JSON": json.dumps({"merged": True, "merge_commit_sha": "d00dad"}),
             "FAKE_GH_MARKER_FILE": marker,
-            "PR_MERGE_BUDGET_S": "10",
-            "RECORD_GREEN_CI_STATUS": "fail",
-            "RECORD_GREEN_TEST_LOG_PATH": os.path.join(self.tmp, "workflow-events.jsonl"),
+            "PR_MERGE_BUDGET_S": "0",
         })
         self.assertEqual(result.returncode, 0, f"stdout={result.stdout!r} stderr={result.stderr!r}")
+        self.assertIn("record-green NOT chained", result.stderr)
         calls = _read_marker(marker)
         close_calls = [c for c in calls if c.startswith("issue close")]
         self.assertEqual(sorted(close_calls), ["issue close 910", "issue close 911"])
-        comment_calls = [c for c in calls if c.startswith("issue comment")]
-        self.assertEqual(comment_calls, [], "criterion 27's closing comment is deferred to slice 2")
 
     def test_pr_merge_lane_closes_confirm_mode(self):
         self._push_head_branch("fix/902-lane-g")

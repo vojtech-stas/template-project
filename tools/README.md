@@ -72,9 +72,12 @@ and the owner's listed `feature`s (with their slices) to milestone `<V>`,
 moves every other open feature to `<W>`; refuses on any unclassified open
 issue, naming it.
 
-**`lanes <V> [--evidence <sweep.json>] [--priority <file>]`** — groups `<V>`'s
-lane-bound bugs into disjoint file-path groups; a bug with no cited path runs
-exclusively. This slice ships the bounded `N`-lane form only.
+**`lanes <V> [--evidence <sweep.json>] [--priority <file>] [--max-per-lane <n>]`**
+— groups `<V>`'s lane-bound bugs into disjoint file-path groups; a bug with no
+cited path runs exclusively. A group of more than `--max-per-lane` bugs
+(default 10) splits, in issue-number order, into sub-lanes that share the
+group's `group` id and run one after another; the same bugs always split the
+same way. This slice ships the bounded `N`-lane form only.
 
 **`packet --sha <sha> <n>…`** (its builder is invoked internally by
 `tools/pipe/dispatch --lane`) — builds a lane's dispatch brief: the sha, then
