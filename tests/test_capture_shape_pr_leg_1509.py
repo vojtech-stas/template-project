@@ -72,6 +72,28 @@ def _route_issues_empty_pr_list(pr_payload):
     return _route
 
 
+def _route_issues_pr_read_failed():
+    def _route(args):
+        if args[:2] == list(_EMPTY_ISSUES_ROUTE_PREFIX):
+            return (0, "[]", "live")
+        if args[:2] == ["pr", "list"]:
+            return (1, "", "live")
+        raise AssertionError(f"unexpected gh call: {args}")
+
+    return _route
+
+
+def _route_issues_pr_unparsable():
+    def _route(args):
+        if args[:2] == list(_EMPTY_ISSUES_ROUTE_PREFIX):
+            return (0, "[]", "live")
+        if args[:2] == ["pr", "list"]:
+            return (0, "not-json{", "live")
+        raise AssertionError(f"unexpected gh call: {args}")
+
+    return _route
+
+
 def test_capture_shape_pr_records():
     """Criterion 38: a merged PR after T0 with all three headings and the
     `root-cause` label counts as conforming, reported `pr-records: 1/1`."""
@@ -123,3 +145,67 @@ def test_capture_shape_pr_truncated():
     r = health.check_capture_shape()
     assert "pr-records: unconfirmed (truncated)" in r["detail"], r["detail"]
     assert r["result"] == "WARN", r
+
+
+def test_capture_shape_pr_read_failed():
+    """PR-leg gh read failure (rc != 0) is reported unconfirmed by source,
+    never collapsed into a confirmed empty/zero count, and the row is
+    non-PASS (C4)."""
+    health = _reimport_health()
+    health._health_gh_fetch = _stub_router(_route_issues_pr_read_failed())
+    r = health.check_capture_shape()
+    assert "pr-records: unconfirmed (source=live)" in r["detail"], r["detail"]
+    assert r["result"] != "PASS", r
+
+
+def test_capture_shape_pr_unparsable_payload():
+    """PR-leg payload that fails to parse as JSON is reported unconfirmed,
+    never collapsed into a confirmed count, and the row is non-PASS (C4)."""
+    health = _reimport_health()
+    health._health_gh_fetch = _stub_router(_route_issues_pr_unparsable())
+    r = health.check_capture_shape()
+    assert "pr-records: unconfirmed" in r["detail"], r["detail"]
+    assert "unparsable payload" in r["detail"], r["detail"]
+    assert r["result"] != "PASS", r
+
+
+def test_capture_shape_pr_before_t0_excluded():
+    """A PR merged at or before T0 contributes nothing to the count: with no
+    other PRs in the read, the leg reports pr-records: 0/0 rather than
+    counting it (ADR-0090 D5 — the PR leg only judges PRs merged after T0)."""
+    health = _reimport_health()
+    t0 = health._CAPTURE_SHAPE_PR_GRANDFATHER_UNTIL
+    prs = [{
+        "number": 9310,
+        "body": _CONFORMING_BODY,
+        "labels": [{"name": "root-cause"}],
+        "mergedAt": t0,
+    }]
+    health._health_gh_fetch = _stub_router(_route_issues_empty_pr_list(prs))
+    r = health.check_capture_shape()
+    assert "pr-records: 0/0" in r["detail"], r["detail"]
+
+
+def test_capture_shape_pr_after_t0_counted():
+    """A PR merged after T0 is counted; a PR merged at T0 in the same read
+    is excluded, so only the after-T0 one contributes to the total."""
+    health = _reimport_health()
+    t0 = health._CAPTURE_SHAPE_PR_GRANDFATHER_UNTIL
+    prs = [
+        {
+            "number": 9311,
+            "body": _CONFORMING_BODY,
+            "labels": [{"name": "root-cause"}],
+            "mergedAt": t0,
+        },
+        {
+            "number": 9312,
+            "body": _CONFORMING_BODY,
+            "labels": [{"name": "root-cause"}],
+            "mergedAt": "2026-09-24T10:00:00Z",
+        },
+    ]
+    health._health_gh_fetch = _stub_router(_route_issues_empty_pr_list(prs))
+    r = health.check_capture_shape()
+    assert "pr-records: 1/1" in r["detail"], r["detail"]
+    assert 9311 not in r["pr_non_conformers"], r
