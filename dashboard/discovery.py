@@ -156,7 +156,7 @@ def _read_hook_description(cmd: str) -> str:
     """
     m = re.search(r'hooks/([a-z0-9_-]+\.sh)', cmd)
     if m:
-        script_path = _DISCOVERY_REPO_ROOT / ".claude" / "hooks" / m.group(1)
+        script_path = _DISCOVERY_REPO_ROOT / ".claude" / "pipeline" / "hooks" / m.group(1)
         if script_path.exists():
             try:
                 lines = script_path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -236,7 +236,7 @@ def _read_hook_purpose(cmd: str) -> str:
     m = re.search(r'hooks/([a-z0-9_-]+\.sh)', cmd)
     if not m:
         return ""
-    script_path = _DISCOVERY_REPO_ROOT / ".claude" / "hooks" / m.group(1)
+    script_path = _DISCOVERY_REPO_ROOT / ".claude" / "pipeline" / "hooks" / m.group(1)
     if not script_path.exists():
         return ""
     try:

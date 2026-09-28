@@ -354,13 +354,13 @@ Specialist agents under `.claude/pipeline/agents/` (ADR-0092 D1):
 
 Claude Code session hooks configured in `.claude/settings.json` (scripts in `.claude/pipeline/hooks/`):
 
-- **[`session-start`](.claude/pipeline/hooks/session-start.sh)** (`SessionStart`) — bash "${CLAUDE_PROJECT_DIR:-$(dirname "$(git rev-parse --path-format=absolute --
-- **[`user-prompt-submit`](.claude/pipeline/hooks/user-prompt-submit.sh)** (`UserPromptSubmit`) — bash "${CLAUDE_PROJECT_DIR:-$(dirname "$(git rev-parse --path-format=absolute --
-- **[`pre-tool-edit`](.claude/pipeline/hooks/pre-tool-edit.sh)** (`PreToolUse · Edit|MultiEdit|Write`) — bash "${CLAUDE_PROJECT_DIR:-$(dirname "$(git rev-parse --path-format=absolute --
-- **[`pre-tool-bash`](.claude/pipeline/hooks/pre-tool-bash.sh)** (`PreToolUse · Bash`) — bash "${CLAUDE_PROJECT_DIR:-$(dirname "$(git rev-parse --path-format=absolute --
-- **[`auto`](.claude/pipeline/hooks/log-tool-event.sh)** (`PreToolUse · Agent|Skill`) — bash "${CLAUDE_PROJECT_DIR:-$(dirname "$(git rev-parse --path-format=absolute --
-- **[`auto`](.claude/pipeline/hooks/log-tool-event.sh)** (`PostToolUse · Agent|Bash|AskUserQuestion|Edit|MultiEdit|Write`) — bash "${CLAUDE_PROJECT_DIR:-$(dirname "$(git rev-parse --path-format=absolute --
-- **[`stop-reviewer-gate`](.claude/pipeline/hooks/stop-reviewer-gate.sh)** (`Stop`) — bash "${CLAUDE_PROJECT_DIR:-$(dirname "$(git rev-parse --path-format=absolute --
+- **[`session-start`](.claude/pipeline/hooks/session-start.sh)** (`SessionStart`) — session-start.sh — deterministic read-only session context injection.
+- **[`user-prompt-submit`](.claude/pipeline/hooks/user-prompt-submit.sh)** (`UserPromptSubmit`) — UserPromptSubmit hook — nudge feature-request prompts toward /grill-me per ADR-0023 D5.
+- **[`pre-tool-edit`](.claude/pipeline/hooks/pre-tool-edit.sh)** (`PreToolUse · Edit|MultiEdit|Write`) — PreToolUse(Edit|MultiEdit|Write) hook — extended per ADR-0028 with spec-gate;
+- **[`pre-tool-bash`](.claude/pipeline/hooks/pre-tool-bash.sh)** (`PreToolUse · Bash`) — PreToolUse(Bash) hook — deny-guard for dangerous git ops and incident-backed pipeline bypasses.
+- **[`auto`](.claude/pipeline/hooks/log-tool-event.sh)** (`PreToolUse · Agent|Skill`) — log-tool-event.sh — parameterized python3-based hook logger (PRD #668 slice #669).
+- **[`auto`](.claude/pipeline/hooks/log-tool-event.sh)** (`PostToolUse · Agent|Bash|AskUserQuestion|Edit|MultiEdit|Write`) — log-tool-event.sh — parameterized python3-based hook logger (PRD #668 slice #669).
+- **[`stop-reviewer-gate`](.claude/pipeline/hooks/stop-reviewer-gate.sh)** (`Stop`) — Stop event hook — block session-stop if in-flight PR lacks reviewer subagent APPROVE per ADR-0029.
 
 ### Architecture Decision Records
 

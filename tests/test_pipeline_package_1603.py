@@ -18,6 +18,7 @@ Runner: stdlib unittest + pytest compatible.
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -28,6 +29,26 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 PACKAGE_ROOT = REPO_ROOT / ".claude" / "pipeline"
 PACKAGE_PY = PACKAGE_ROOT / "tools" / "package.py"
 ROOT_STUB_PY = REPO_ROOT / "tools" / "pipeline_config.py"
+
+# Noop shim body for bootstrap.sh's external-tool dependencies (S1-e: never
+# touch the network or a real package manager). Mirrors
+# tests/test_bootstrap_branch_protection_1294.py's _NOOP_SHIM_BODY.
+_NOOP_SHIM_BODY = "#!/bin/bash\nexit 0\n"
+
+
+def _write_bootstrap_shims(shim_dir: Path) -> str:
+    """Write noop shims for gh/pip/pip3/winget/brew/apt-get into `shim_dir`
+    and return a PATH string with `shim_dir` prepended. `gh` as a bare noop
+    (exit 0) is sufficient here: with no `origin` remote configured in H,
+    `resolve_origin_slug` fails closed (empty ORIGIN_SLUG) regardless of
+    GH_OK, so every GitHub-touching step warns-and-skips; step 3 (git
+    hooks) is a pure local `git config` unconditional on both."""
+    shim_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("gh", "pip", "pip3", "winget", "brew", "apt-get"):
+        shim = shim_dir / name
+        shim.write_text(_NOOP_SHIM_BODY, encoding="utf-8", newline="\n")
+        shim.chmod(shim.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    return str(shim_dir) + os.pathsep + os.environ.get("PATH", "")
 
 
 def _git(args, cwd, check=True, env=None):
@@ -792,10 +813,13 @@ class TestConsumerSweep(unittest.TestCase):
 
 
 class TestEndToEndPublishInstallUpgrade(PackageSandboxMixin, unittest.TestCase):
-    """The walking-skeleton test: P1 (publish), P2' = P2 steps 1/2/4 without
-    bootstrap (bash .claude/pipeline/bootstrap.sh does not exist until
-    slice 3), then an upgrade rehearsal via `package.py upgrade` directly
-    (the `pipeline-upgrade` PR/merge-commit mode is W5, not this slice)."""
+    """The walking-skeleton test: P1 (publish), full P2 (install.sh, then
+    step 3 `bash .claude/pipeline/bootstrap.sh` with pip/pip3/winget/brew/
+    apt-get/gh shims — slice #1605 makes bootstrap.sh a package path for the
+    first time, closing the round-1 finding on PR #1629 that this test's
+    docstring/body still said bootstrap "does not exist until slice 3"),
+    then an upgrade rehearsal via `package.py upgrade` directly (the
+    `pipeline-upgrade` PR/merge-commit mode is W5, not this slice)."""
 
     def test_publish_install_upgrade_walking_skeleton(self):
         w = self._build_publisher("2.0.0")
@@ -832,6 +856,27 @@ class TestEndToEndPublishInstallUpgrade(PackageSandboxMixin, unittest.TestCase):
         # criterion 30: pipeline.conf carries package_source.
         conf = (h / ".claude" / "pipeline.conf").read_text(encoding="utf-8")
         self.assertIn(f"package_source={u_path}", conf)
+
+        # P2 step 3: bash .claude/pipeline/bootstrap.sh (now a package path,
+        # slice #1605) against H, with pip/pip3/winget/brew/apt-get/gh
+        # shimmed noop (S1-e: never touch the network or a real package
+        # manager). H has no `origin` remote, so every GitHub-touching step
+        # warns-and-skips (resolve_origin_slug fails closed); step 3's own
+        # `git config core.hooksPath` is unconditional and purely local.
+        shim_path = _write_bootstrap_shims(self.tmp / "bootstrap-shims")
+        bootstrap_env = os.environ.copy()
+        bootstrap_env["PATH"] = shim_path
+        r = subprocess.run(
+            ["bash", str(h / ".claude" / "pipeline" / "bootstrap.sh")],
+            cwd=str(h), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", env=bootstrap_env, timeout=120,
+        )
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+        # criterion 33: core.hooksPath now points at the package's own
+        # githooks directory.
+        hooks_path = _git(["config", "--local", "--get", "core.hooksPath"], h).stdout.strip()
+        self.assertEqual(hooks_path, ".claude/pipeline/githooks")
 
         # criterion 31/32: mode() is host in H, home in this checkout's package.
         r = _run_package(["check"], h)  # sanity: check runs at all in host mode

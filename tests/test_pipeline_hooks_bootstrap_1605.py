@@ -185,6 +185,74 @@ class TestGuardrailMembershipExtended(unittest.TestCase):
                 self.assertTrue(health._is_guardrail_path(path), path)
 
 
+class TestRouteTableClassifiesMovedHooks(unittest.TestCase):
+    """dashboard/health.py's `_ROUTE_TABLE` (PROOF-PRESENCE, ADR-0061 D1)
+    still routes hook changes to hook-fire proof after the move (reviewer
+    round-1 finding 2 on PR #1629: a PR touching only
+    `.claude/pipeline/hooks/**` used to classify to an empty route set,
+    fail-opening the exact risk this slice names)."""
+
+    def test_classify_route_covers_package_hooks_and_bootstrap(self):
+        from dashboard import health
+
+        self.assertIn(
+            "hook-fire",
+            health._classify_route([".claude/pipeline/hooks/pre-tool-bash.sh"]),
+        )
+        self.assertIn(
+            "hook-fire",
+            health._classify_route([".claude/pipeline/hooks/settings-hooks.json"]),
+        )
+        # Pre-move path stays routed too (a promotion diff spanning the move
+        # still names it).
+        self.assertIn(
+            "hook-fire",
+            health._classify_route([".claude/hooks/pre-tool-bash.sh"]),
+        )
+        self.assertIn(
+            "static",
+            health._classify_route([".claude/pipeline/bootstrap.sh"]),
+        )
+
+
+class TestDiscoveryReadsHookHeaderFromPackagePath(unittest.TestCase):
+    """dashboard/discovery.py's `_read_hook_description`/`_read_hook_purpose`
+    resolve a hook script's header comment from its MOVED path (reviewer
+    round-1 finding 3 on PR #1629: these two helpers still built
+    `.claude/hooks/<name>.sh`, found nothing there post-move, and fell back
+    to a raw-command-fragment description for every hook in the generated
+    README)."""
+
+    def test_read_hook_description_finds_header_at_package_path(self):
+        from dashboard import discovery
+
+        cmd = 'bash "${CLAUDE_PROJECT_DIR}/.claude/pipeline/hooks/session-start.sh"'
+        description = discovery._read_hook_description(cmd)
+        # session-start.sh's own header comment (not a raw command fragment).
+        self.assertNotIn("CLAUDE_PROJECT_DIR", description)
+        self.assertNotEqual(description, cmd[:80])
+
+    def test_read_hook_purpose_finds_header_at_package_path(self):
+        from dashboard import discovery
+
+        cmd = 'bash "${CLAUDE_PROJECT_DIR}/.claude/pipeline/hooks/session-start.sh"'
+        purpose = discovery._read_hook_purpose(cmd)
+        self.assertTrue(purpose, "expected a non-empty header-comment purpose")
+        self.assertNotIn("CLAUDE_PROJECT_DIR", purpose)
+
+    def test_discover_hooks_descriptions_are_not_raw_command_fragments(self):
+        from dashboard import discovery
+
+        hooks = discovery.discover_hooks()
+        self.assertTrue(hooks, "expected at least one discovered hook")
+        for h in hooks:
+            if h.get("path", "").startswith(".claude/pipeline/hooks/"):
+                self.assertNotIn(
+                    "CLAUDE_PROJECT_DIR", h.get("description", ""),
+                    msg=f"{h['name']!r} description looks like a raw command fragment: {h!r}",
+                )
+
+
 class TestCheck29HooksGithooksBootstrapCanaries(unittest.TestCase):
     """CHECK 29 arm (a): a branch-literal canary in a package hook, githook
     and bootstrap.sh is caught, and the bare pre-move roots are no longer
@@ -273,8 +341,20 @@ class TestLabelsAndHooksPath(unittest.TestCase):
 
 
 class TestCheck27SubjectCountParity(unittest.TestCase):
-    """CHECK 27's hook/py subject globs, retargeted at the package, still
-    find every moved hook script (no silent narrowing to an empty set)."""
+    """CHECK 27's hook/py subject globs, retargeted at the package, find
+    EXACTLY the file count BASE (develop before slice #1605, commit 8f90d21)
+    held at `.claude/hooks/`: 7 `.sh` + 1 `.py` -- an EXACT count, not a
+    `>=` floor, so a silent drop (or a silent duplicate-collection bug)
+    would be caught, not just a total narrowing to an empty set."""
+
+    # BASE count at .claude/hooks/ before this slice's move (verified via
+    # `git ls-tree -r --name-only 8f90d21 -- .claude/hooks`): lib-root.sh,
+    # log-tool-event.sh, pre-tool-bash.sh, pre-tool-edit.sh, session-start.sh,
+    # stop-reviewer-gate.sh, user-prompt-submit.sh (7 .sh) +
+    # pre-tool-bash-classify.py (1 .py). This slice moves files; it adds or
+    # removes none, so the moved-to count must equal the pre-move count.
+    _BASE_SH_COUNT = 7
+    _BASE_PY_COUNT = 1
 
     def test_check27_globs_find_moved_hooks(self):
         import glob
@@ -287,8 +367,8 @@ class TestCheck27SubjectCountParity(unittest.TestCase):
             py_files = sorted(glob.glob(".claude/pipeline/hooks/*.py"))
         finally:
             os.chdir(cwd)
-        self.assertGreaterEqual(len(sh_files), 6, sh_files)
-        self.assertGreaterEqual(len(py_files), 1, py_files)
+        self.assertEqual(len(sh_files), self._BASE_SH_COUNT, sh_files)
+        self.assertEqual(len(py_files), self._BASE_PY_COUNT, py_files)
 
 
 class TestPackageCheckPasses(unittest.TestCase):
