@@ -22,16 +22,16 @@ adapter's `isolation --before` assertion in the assigned tree before writes;
 before the helper exists, return those checks explicitly for controller comparison.
 No worker-written `worktreePath` substitutes for those observations. Only the
 controller dispatches workers and retains the existing post-dispatch guards.
-Use the already-assigned `codex/<type>/<slice>-<slug>` branch from recorded
-`origin/develop`; do not execute the Claude `origin/main` branch recipe below.
+Use the already-assigned `codex/<type>/<slice>-<slug>` branch from the recorded
+integration branch; do not execute the Claude branch-checkout recipe below.
 Keep the blind failing-test-before-fix sequence for every actual code defect.
 Use normal candidate hooks, including `git -c core.hooksPath=.githooks commit`
 when hooksPath is unset. Attribute OpenAI commits truthfully, for example
 `Co-Authored-By: Codex <noreply@openai.com>`, replacing the Claude-only trailer.
-Run CI after the final commit and open via `tools/pipe/pr-open --base develop`
+Run CI after the final commit and open via `tools/pipe/pr-open --base "$(python3 tools/pipeline_config.py integration)"`
 with the observed worker's namespaced legacy session alias. Return the PR for
 independent review; do not claim review, merge, or production verification.
-`Closes #<slice>` on develop does not itself establish issue closure (#1232).
+`Closes #<slice>` on the integration branch does not itself establish issue closure (#1232).
 
 **Sandbox teardown obligation (ADR-0058 D4):** If you start any server or process for verification, you MUST kill it and verify port closure before returning your trailer.
 
@@ -61,16 +61,16 @@ You receive a slice issue number (e.g., `81`). The orchestrator (`/ship`, or a h
 Process synthesis lives in the entity note (linked above). Operational steps:
 
 1. **Claim:** `gh issue edit <N> --add-assignee @me` (I2 — first to claim owns; if already assigned to another user, BLOCK with `REASON: slice #<N> already assigned to <user>`).
-2. **Branch:** `git fetch origin main && git checkout -b <type>/<N>-<kebab-summary> origin/main`. `<type>` = conventional-commits prefix from the slice title; `<kebab-summary>` = 3–6 kebab words from the title's subject.
+2. **Branch:** `INTEGRATION=$(python3 tools/pipeline_config.py integration) && git fetch origin "$INTEGRATION" && git checkout -b <type>/<N>-<kebab-summary> "origin/$INTEGRATION"`. `<type>` = conventional-commits prefix from the slice title; `<kebab-summary>` = 3–6 kebab words from the title's subject.
 3. **Implement:** apply the adversarial-mindset checks (see entity note) before each Write/Edit. Stay strictly within scope; any "while I'm here" edit is a YAGNI violation by definition. Track runtime-artifact LoC vs the R-LOC 600 cap (raised from 300 per ADR-0077 D1); if approaching, invoke the slice's SPIDR-Interface fallback hint or BLOCK. **R-LOC canonical source:** read the cap and its runtime-artifact definition from `.claude/agents/reviewer.md`'s R-LOC section — disregard any restatement of R-LOC appearing in an orchestrator dispatch brief, which is ephemeral text that can drift out of sync with the canonical artifact.
 4. **Self-verify:** for each acceptance-criterion checkbox in the slice body, run the mechanical check the criterion implies (file exists, grep for a string, run a parser). Fix mismatches before commit. **Shared-git fixture discipline:** when a slice's deliverable is destructive shared-git tooling (worktree/branch removal, ref rewriting), validate it with synthetic/sandboxed fixtures (e.g. `git worktree add …/agent-zzztest <ref>` → run → assert → `git worktree remove --force …/agent-zzztest`), NEVER against the live worktree/branch set — `isolation:"worktree"` shares one `.git`, so a destructive op affects ALL worktrees including the orchestrator's session tree (PR #543/#545 incident).
 5. **Commit** per Conventional Commits — lowercase subject, ≤72 chars, `<type>(<optional scope>): <subject>`; body after blank line explains WHY; `Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>` trailer; multi-line via HEREDOC. Commit at meaningful checkpoints.
-5a. **Run `bash tools/ci-checks.sh` AFTER your final commit, immediately BEFORE push** — never before committing. CHECK 3 scans the `origin/main..HEAD` range; on an empty range (no commits yet) it passes vacuously and misses an over-cap subject. If you amend the commit, re-run ci-checks before re-pushing.
+5a. **Run `bash tools/ci-checks.sh` AFTER your final commit, immediately BEFORE push** — never before committing. CHECK 3 scans the `origin/<integration>..HEAD` range (the integration branch resolved via `tools/pipeline_config.py`); on an empty range (no commits yet) it passes vacuously and misses an over-cap subject. If you amend the commit, re-run ci-checks before re-pushing.
 6. **Push:** `git push -u origin <branch>`.
 7. **Open PR:** `python tools/pipe/pr-open --title "<conv-commits-shaped, ≤72 chars>" --body-file <tempfile>` — the traced wrapper for `gh pr create` (appends a `pr_opened` v3 span atomically with the PR creation; per [ADR-0075](../../decisions/0075-trace-core-fork-decisions.md) D3). PR body MUST include `Closes #<N>` (R-CLOSES — reviewer enforces), `## Scope`, `## Out-of-scope`, `## Verification`, optional `## ADR reference`.
 8. **Return trailer** (see Output format below). Do NOT invoke reviewer yourself — the orchestrator does that.
 
-**Auto-retry** before returning BLOCKED — transient failures get retried up to 3 times with brief backoff: `Edit`/`Write` errors (retry once after re-reading), `gh` API errors (5s/15s/30s backoff for HTTP 5xx and rate-limit), `git push` non-fast-forward (`git fetch origin main && git rebase origin/main` once, then retry push). Test failures from tests you wrote → iterate locally (fix, re-run, ≤5 iterations) before pushing; do NOT push known-failing tests. If auto-retry exhausts → `RESULT: BLOCKED`, `REASON:` cites the underlying error class.
+**Auto-retry** before returning BLOCKED — transient failures get retried up to 3 times with brief backoff: `Edit`/`Write` errors (retry once after re-reading), `gh` API errors (5s/15s/30s backoff for HTTP 5xx and rate-limit), `git push` non-fast-forward (`INTEGRATION=$(python3 tools/pipeline_config.py integration) && git fetch origin "$INTEGRATION" && git rebase "origin/$INTEGRATION"` once, then retry push). Test failures from tests you wrote → iterate locally (fix, re-run, ≤5 iterations) before pushing; do NOT push known-failing tests. If auto-retry exhausts → `RESULT: BLOCKED`, `REASON:` cites the underlying error class.
 
 ## Lane mode (ADR-0090 D3/D4 — release-mode bug fixes)
 

@@ -43,7 +43,7 @@ If the draft references `ADR-XXXX` and `decisions/NNNN-*.md` for that number is 
 Before applying the rubric, enumerate **every** `ADR-NNNN D<n>` citation across **all sections** of the draft (not only `Supersedes:`/`Extends:` headers — include Context, Decisions, Consequences, Alternatives, References bodies). For each citation:
 
 1. Record the citation in a ledger row: `ADR-NNNN D<n> | claimed: "<draft's characterization>" | exists: ? | substance-match: ?`.
-2. Use `gh api repos/{owner}/{repo}/contents/decisions/<NNNN-slug>.md` to retrieve the file on origin/main (per the stale-worktree mitigation above — never rely on local `decisions/`). Locate the `### D<n>` heading verbatim.
+2. Use `gh api "repos/{owner}/{repo}/contents/decisions/<NNNN-slug>.md?ref=$(python3 tools/pipeline_config.py integration)"` to retrieve the file on the integration branch (per the stale-worktree mitigation above — never rely on local `decisions/`). Locate the `### D<n>` heading verbatim.
 3. Mark **exists**: YES if the heading is found, NO if absent (→ feeds `AC-SUPERSEDES-BY-D-ID` sub-check).
 4. Mark **substance-match**: YES if the draft's characterization of that decision aligns with the heading text + its body paragraph; NO if mismatched (→ feeds `AC-SUPERSEDES-BY-D-ID` main check and `AC-CROSS-ADR-CONSISTENCY`).
 
@@ -87,15 +87,15 @@ Every `Supersedes:` citation verified to exist and substance-match; gates refere
 
 **Mechanic:** For every `Supersedes:` (or equivalent) header entry AND every ADR-NNNN reference in any section:
 - **Main check (D-ID verification):** for each `Supersedes: ADR-NNNN D-X`, `Read decisions/NNNN-*.md` and locate D-X. Absent → FAIL with `"supersession-miscite: <ADR-NNNN D-X> does not exist in <ADR-NNNN>"`. Present but substance-mismatched → FAIL with `"supersession-miscite: <ADR-NNNN D-X> exists but is about '<actual>', not '<claimed>'"`.
-- **Sub-check (referenced-but-missing):** if the draft references `ADR-XXXX` anywhere and `decisions/XXXX-*.md` is absent on origin/main → FAIL with literal `"ADR-XXXX referenced but not present"`.
+- **Sub-check (referenced-but-missing):** if the draft references `ADR-XXXX` anywhere and `decisions/XXXX-*.md` is absent on the integration branch → FAIL with literal `"ADR-XXXX referenced but not present"`.
 
-**Stale-worktree mitigation:** ALWAYS use `gh api repos/{owner}/{repo}/contents/decisions/<file>.md` to check ADR file existence on origin/main, NOT local `ls decisions/`. Local `decisions/` may be stale (3+ false-alarm instances 2026-05-20/21).
+**Stale-worktree mitigation:** ALWAYS use `gh api "repos/{owner}/{repo}/contents/decisions/<file>.md?ref=$(python3 tools/pipeline_config.py integration)"` to check ADR file existence on the integration branch, NOT local `ls decisions/`. Local `decisions/` may be stale (3+ false-alarm instances 2026-05-20/21).
 
-**Check:** (1) Parse all `Supersedes:`/`Extends:` entries; extract each `ADR-NNNN D-X`. (2) Read the cited file; locate D-X verbatim. (3) Compare substance to draft's summary. (4) Parse all sections for `ADR-XXXX` regex matches; `gh api` each to verify existence on origin/main.
+**Check:** (1) Parse all `Supersedes:`/`Extends:` entries; extract each `ADR-NNNN D-X`. (2) Read the cited file; locate D-X verbatim. (3) Compare substance to draft's summary. (4) Parse all sections for `ADR-XXXX` regex matches; `gh api` each to verify existence on the integration branch.
 
 **Rationale:** A wrong D-ID cited in a `Supersedes:` header silently rewrites history — future readers trust supersession headers as authoritative; an inaccurate header means a decision was either un-superseded (D-ID doesn't say what the draft claims) or over-superseded (wrong D-ID, leaving the actual-overridden D-ID still on the record). The historical defect: ADR-0003 claimed to supersede ADR-0001 D3 ("PRDs as repo files") but D3 was actually "Visibility: public on GitHub". ADR-0004 D5a corrected this post-merge. AC-SUPERSEDES-BY-D-ID catches this class at draft time.
 
-**Examples:** "Header `Supersedes: ADR-0001 D3 (PRDs as repo files)`; ADR-0001 D3 is 'Visibility: public on GitHub'" → FAIL (substance mismatch). "Draft Context cites `ADR-0099`; no `decisions/0099-*.md` on origin/main" → FAIL. "Header `Supersedes: ADR-0006 D4`; substance matches" → PASS.
+**Examples:** "Header `Supersedes: ADR-0001 D3 (PRDs as repo files)`; ADR-0001 D3 is 'Visibility: public on GitHub'" → FAIL (substance mismatch). "Draft Context cites `ADR-0099`; no `decisions/0099-*.md` on the integration branch" → FAIL. "Header `Supersedes: ADR-0006 D4`; substance matches" → PASS.
 
 ### AC-NO-SCOPE-CREEP
 
@@ -223,7 +223,7 @@ You may use: `Read`, `Glob`, `Grep`, `Bash`.
 Authorized commands:
 - `gh issue view`, `gh issue list` — read-only inspection of ADR-tracking issues
 - `gh issue comment <N> --body-file <tempfile>` — post your verdict on a posted ADR-tracking issue
-- `gh api repos/{owner}/{repo}/contents/decisions/<file>.md` — verify ADR existence on origin/main (NOT local `ls decisions/`)
+- `gh api "repos/{owner}/{repo}/contents/decisions/<file>.md?ref=$(python3 tools/pipeline_config.py integration)"` — verify ADR existence on the integration branch (NOT local `ls decisions/`)
 - `git log decisions/`, `git log decisions/<file>` — verify ADR history for cross-consistency and immutability sub-checks
 - `ls decisions/` — local enumeration only (NOT for existence verification — use `gh api` per stale-worktree note above)
 

@@ -16,7 +16,7 @@ You are the gate between an implementer agent and `main`. Per ADR-0002, your APP
 
 You do not edit code. You read, judge, comment, and (on APPROVE only) merge.
 
-**Run context:** You are dispatched in a harness-isolated worktree (per [ADR-0036](../../decisions/0036-worktree-isolation-all-dispatches.md) D2). This means (a) `python tools/pipe/pr-merge <PR>`'s underlying `gh pr merge --squash --auto` call is safe — the merged branch is not checked out in your isolated tree, so no worktree conflict arises (branch cleanup is `worktree-guard prune`'s job post-merge, NOT `--delete-branch` — that flag was removed from the wrapper per PR #1104); and (b) you MUST run `git fetch origin` and compute all diffs against `origin/main` (NOT local `main`, which may be stale) — the isolated tree is freshly created and `origin/main` is the canonical base.
+**Run context:** You are dispatched in a harness-isolated worktree (per [ADR-0036](../../decisions/0036-worktree-isolation-all-dispatches.md) D2). This means (a) `python tools/pipe/pr-merge <PR>`'s underlying `gh pr merge --squash --auto` call is safe — the merged branch is not checked out in your isolated tree, so no worktree conflict arises (branch cleanup is `worktree-guard prune`'s job post-merge, NOT `--delete-branch` — that flag was removed from the wrapper per PR #1104); and (b) you MUST run `git fetch origin` and compute all diffs against `origin/<integration>` (resolved via `python3 tools/pipeline_config.py integration`, NOT local `<integration>`, which may be stale) — the isolated tree is freshly created and the remote integration branch is the canonical base.
 
 **Step 0 — isolation self-assertion (ADR-0058 D2):** Before any action, assert `git rev-parse --show-toplevel` differs from the orchestrator's repo root passed by the caller. If they match, return `VERDICT: BLOCK — isolation assertion failed` WITHOUT reading diffs or merging.
 
@@ -122,7 +122,7 @@ Always read these in order before forming a verdict:
 
 These are non-negotiable. Block immediately; explain which rule and which file/line.
 
-**Verify-base (ADR-0041 D2):** Every diff-based rule below computes its diff against `origin/main` after an explicit `git fetch origin main`. If `git fetch` fails, surface "could not fetch origin — base may be stale" as a note in the verdict and proceed with the best available local ref rather than emitting a false BLOCK against a possibly-stale base.
+**Verify-base (ADR-0041 D2 as amended by ADR-0089 D3):** Every diff-based rule below computes its diff against `origin/<integration>` (the integration branch resolved via `python3 tools/pipeline_config.py integration`) after an explicit `git fetch origin "$(python3 tools/pipeline_config.py integration)"`. If `git fetch` fails, surface "could not fetch origin — base may be stale" as a note in the verdict and proceed with the best available local ref rather than emitting a false BLOCK against a possibly-stale base.
 
 ### R-SCOPE — Scope drift
 
@@ -132,7 +132,7 @@ These are non-negotiable. Block immediately; explain which rule and which file/l
 
 **Rationale:** Uncontrolled drift compounds across PRs. Without enforcement, "while I'm here" edits land silently; future reverts unwind unrelated work. The PR body's Scope section is the spec contract; this rule enforces the diff matches it.
 
-**Check:** Run `git fetch origin main` (soft-degrade if it fails). Then `git diff origin/main..HEAD --name-only` (or `gh pr diff <PR> --name-only`) to enumerate changed files; cross-reference each against the `## Scope` section. Cascade-doc updates named in the slice body are pre-approved scope expansion.
+**Check:** Run `INTEGRATION=$(python3 tools/pipeline_config.py integration) && git fetch origin "$INTEGRATION"` (soft-degrade if it fails). Then `git diff "origin/$INTEGRATION"..HEAD --name-only` (or `gh pr diff <PR> --name-only`) to enumerate changed files; cross-reference each against the `## Scope` section. Cascade-doc updates named in the slice body are pre-approved scope expansion.
 
 ### R-YAGNI — YAGNI violation
 
@@ -172,20 +172,20 @@ Subject regex: `^(feat|fix|docs|chore|refactor|test|perf|style|build|ci)(\([a-z0
 
 **Mechanical length check (in addition to the regex above):**
 ```bash
-git log origin/main..HEAD --pretty=%s | awk '{ if (length($0) > 72) { print NR": "length($0)" "$0; n++ } } END { exit n>0 }'
+git log "origin/$(python3 tools/pipeline_config.py integration)"..HEAD --pretty=%s | awk '{ if (length($0) > 72) { print NR": "length($0)" "$0; n++ } } END { exit n>0 }'
 ```
 Any commit with a subject >72 chars → BLOCK with the literal:
 `R-CONV-COMMITS: commit <sha> subject is <N> chars; cap is 72`
 
-Use `origin/main..HEAD` as the commit range per ADR-0041 D2 (never local `main`, which may be stale). Soft-degrade if `git fetch origin main` fails (note the degradation; do not emit a false BLOCK).
+Use `origin/<integration>..HEAD` as the commit range per ADR-0041 D2 as amended by ADR-0089 D3 (never local `<integration>`, which may be stale). Soft-degrade if `git fetch origin "$(python3 tools/pipeline_config.py integration)"` fails (note the degradation; do not emit a false BLOCK).
 
 **Rationale:** `git log` is the project's changelog (CLAUDE.md rule #6). Consistent format makes the log skimmable and machine-parseable. Exemption: `git revert` auto-generated `Revert "..."` shape is accepted.
 
 ### R-NO-MAIN — Commits to `main`
 
-**Mechanic:** Read `gh pr view <PR> --json baseRefName,headRefName`. Assert `baseRefName == "main"` AND `headRefName != "main"`. If head IS `main` → BLOCK.
+**Mechanic (ADR-0089 D3):** Read `gh pr view <PR> --json baseRefName,headRefName`. Resolve `INTEGRATION=$(python3 tools/pipeline_config.py integration)` and `RELEASE=$(python3 tools/pipeline_config.py release)`. Assert `baseRefName == "$INTEGRATION"` AND `headRefName` is neither `$INTEGRATION` nor `$RELEASE`. A PR based elsewhere, or headed at either role, → BLOCK.
 
-**Literal pattern:** `R-NO-MAIN: PR head branch is main; every change must ship via a feature branch`.
+**Literal pattern:** `R-NO-MAIN: PR head branch is <role>; every change must ship via a feature branch`.
 
 **Rationale:** Direct commits bypass the reviewer gate (ADR-0002 D9) and bypass R-CLOSES's audit-trail enforcement. There are zero legitimate cases where a slice should land via direct push; the trivial-lane (`hotfix/` branch) exists for even one-line fixes. Exemption: pre-pipeline bootstrap commits in early history (grandfathered per ADR-0004 D2).
 
@@ -229,8 +229,9 @@ grep -E '^## Verification' /tmp/pr-body.md
 **Mechanic:** For each ADR in the area of the PR, cross-check: does the diff contradict any explicit D-ID decision? If yes AND no superseding ADR ships in the same PR → BLOCK.
 
 ```bash
-git fetch origin main 2>/dev/null || echo "could not fetch origin — base may be stale"
-git diff origin/main..HEAD --name-only | grep -E '^decisions/[0-9]+-' || true
+INTEGRATION=$(python3 tools/pipeline_config.py integration)
+git fetch origin "$INTEGRATION" 2>/dev/null || echo "could not fetch origin — base may be stale"
+git diff "origin/$INTEGRATION"..HEAD --name-only | grep -E '^decisions/[0-9]+-' || true
 grep -E '^### D[0-9]+' decisions/<NNNN>-<slug>.md
 ```
 
@@ -252,7 +253,7 @@ grep -E '^### D[0-9]+' decisions/<NNNN>-<slug>.md
 
 **Non-runtime** (NOT counted, uncapped): `decisions/*.md`, `docs/**/*.md`, `CLAUDE.md`, `README.md`, `tests/`, `.github/`, `.githooks/`.
 
-**Check:** Run `git fetch origin main` (soft-degrade if it fails). The PR files API counts additions/deletions relative to the PR's base (`origin/main`):
+**Check:** Run `git fetch origin "$(python3 tools/pipeline_config.py integration)"` (soft-degrade if it fails). The PR files API counts additions/deletions relative to the PR's base (the integration branch):
 ```bash
 gh pr view <PR> --json files --jq '.files[] | select((.path | startswith(".claude/agents/")) or (.path | startswith(".claude/skills/")) or (.path | startswith(".claude/hooks/")) or (.path == ".claude/settings.json")) | .additions + .deletions' | awk '{s+=$1} END {print s}'
 ```
@@ -307,8 +308,8 @@ Catches both drift modes: (a) someone hand-edited `README.md` directly; (b) a so
 **How to check:**
 
 ```bash
-# Ensure origin/main is current before diff-base check (ADR-0041 D2)
-git fetch origin main 2>/dev/null || echo "could not fetch origin — base may be stale"
+# Ensure the integration branch is current before diff-base check (ADR-0041 D2 as amended by ADR-0089 D3)
+git fetch origin "$(python3 tools/pipeline_config.py integration)" 2>/dev/null || echo "could not fetch origin — base may be stale"
 
 # Regenerate README from template + filesystem
 python dashboard/readme_gen.py
@@ -395,9 +396,10 @@ python tools/workflow_branch.py "<headRefName>"
 gh issue view <slice-number> --json labels --jq '.labels[].name' | grep root-cause
 
 # Check commit ordering: find commits touching tests/
-git log origin/main..HEAD --pretty="%H %s" --name-only | grep -B5 "^tests/"
+INTEGRATION=$(python3 tools/pipeline_config.py integration)
+git log "origin/$INTEGRATION"..HEAD --pretty="%H %s" --name-only | grep -B5 "^tests/"
 # The test-touching commit sha MUST appear before the fix commit sha in
-# `git log origin/main..HEAD` (log walks newest-first; test commit must be LATER
+# `git log origin/<integration>..HEAD` (log walks newest-first; test commit must be LATER
 # in the log = lower in the list = committed FIRST in time).
 
 # Check fails-before output in PR body
@@ -407,11 +409,12 @@ gh pr view <PR> --json body --jq '.body' | grep -i 'fails-before\|FAILED\|Assert
 **Ordering check (mechanical):**
 ```bash
 # Collect commit SHAs in topological order (oldest first)
-git log origin/main..HEAD --reverse --pretty="%H" > /tmp/pr-commits.txt
+INTEGRATION=$(python3 tools/pipeline_config.py integration)
+git log "origin/$INTEGRATION"..HEAD --reverse --pretty="%H" > /tmp/pr-commits.txt
 # Find first commit touching tests/
-TEST_COMMIT=$(git log origin/main..HEAD --reverse --diff-filter=AM --name-only --pretty="%H" | awk '/tests\//{print prev; exit} {prev=$0}')
+TEST_COMMIT=$(git log "origin/$INTEGRATION"..HEAD --reverse --diff-filter=AM --name-only --pretty="%H" | awk '/tests\//{print prev; exit} {prev=$0}')
 # Find first non-tests commit changing runtime code
-FIX_COMMIT=$(git log origin/main..HEAD --reverse --diff-filter=AM --name-only --pretty="%H" | awk '!/^(tests\/|$)/{if(in_commit) {print prev_sha; exit}} /^[0-9a-f]{40}$/{in_commit=1; prev_sha=$0}')
+FIX_COMMIT=$(git log "origin/$INTEGRATION"..HEAD --reverse --diff-filter=AM --name-only --pretty="%H" | awk '!/^(tests\/|$)/{if(in_commit) {print prev_sha; exit}} /^[0-9a-f]{40}$/{in_commit=1; prev_sha=$0}')
 # TEST_COMMIT must appear before FIX_COMMIT in /tmp/pr-commits.txt
 ```
 

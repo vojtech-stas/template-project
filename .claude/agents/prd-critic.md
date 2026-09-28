@@ -214,9 +214,9 @@ A PRD whose feature consumes an upstream pipeline stage must declare a live-feed
 
 ### ADR consistency sub-check
 
-The PRD must not contradict any accepted ADR. If a PRD references `ADR-XXXX` and that file does not exist on origin/main, **BLOCK with the literal finding `"ADR-XXXX referenced but not present"`** (substituting the actual number).
+The PRD must not contradict any accepted ADR. If a PRD references `ADR-XXXX` and that file does not exist on the integration branch, **BLOCK with the literal finding `"ADR-XXXX referenced but not present"`** (substituting the actual number).
 
-**NOTE — verify via `gh api` not local `ls decisions/`.** Always use `gh api repos/{owner}/{repo}/contents/decisions/<file>.md` to check ADR existence on origin/main. The worktree's local `decisions/` may be stale (3+ false-alarm instances observed 2026-05-20/21). Only trust `gh api` results.
+**NOTE — verify via `gh api` not local `ls decisions/`.** Always use `gh api "repos/{owner}/{repo}/contents/decisions/<file>.md?ref=$(python3 tools/pipeline_config.py integration)"` to check ADR existence on the integration branch. The worktree's local `decisions/` may be stale (3+ false-alarm instances observed 2026-05-20/21). Only trust `gh api` results.
 
 ---
 
@@ -256,7 +256,7 @@ You may use: `Read`, `Glob`, `Grep`, `Bash`.
 Authorized commands:
 - `gh issue view`, `gh issue list` — read-only PRD inspection
 - `gh issue comment <N> --body-file <tempfile>` — post your verdict on a posted PRD
-- `gh api repos/{owner}/{repo}/contents/decisions/<file>.md` — verify ADR existence on origin/main (NOT local `ls decisions/`)
+- `gh api "repos/{owner}/{repo}/contents/decisions/<file>.md?ref=$(python3 tools/pipeline_config.py integration)"` — verify ADR existence on the integration branch (NOT local `ls decisions/`)
 - `git log decisions/` — historical ADR provenance
 
 You may NOT:
