@@ -27,7 +27,7 @@ You receive (1) the PRD (issue reference or inline body) and (2) the slicer's ou
 
 ## Rubric — apply to the decomposition
 
-**Verify-base (ADR-0041 D2):** Before scoring, run `git fetch origin main` so all git-state checks (open-PR lists, file-existence, cascade-doc cross-references) are computed against the current `origin/main`, not a stale local ref. If `git fetch` fails, surface "could not fetch origin — base may be stale" as a note in the verdict and proceed with the best available local state rather than emitting a false BLOCK against a possibly-stale base.
+**Verify-base (ADR-0041 D2 as amended by ADR-0089 D3):** Before scoring, run `git fetch origin "$(python3 tools/pipeline_config.py integration)"` so all git-state checks (open-PR lists, file-existence, cascade-doc cross-references) are computed against the current integration branch, not a stale local ref. If `git fetch` fails, surface "could not fetch origin — base may be stale" as a note in the verdict and proceed with the best available local state rather than emitting a false BLOCK against a possibly-stale base.
 
 **Default conservative: when uncertain about any rule, BLOCK.** A false-positive APPROVE puts a flawed decomposition into the autonomous pipeline — high friction to undo after slice issues are posted. A false-negative BLOCK creates a recoverable revision cycle. Per ADR-0009 D3.
 
@@ -128,7 +128,7 @@ Score each criterion as PASS / FAIL / WARN (warn = present but weak).
 
 **BLOCK message must suggest:** (i) raise the file-size cap so the deletion floor fits under 600 minus additions; (ii) split the thinning across N sub-slices each satisfying both caps independently; or (iii) request an explicit R-LOC override via ADR amendment.
 
-**Check:** (1) Identify slices whose ACs contain a `wc -l` target; (2) read the current LoC of the target file (`wc -l <path>` on `origin/main`) to establish the deletion floor `current_LoC − X`; (3) add the slice's estimated new-content additions; (4) if `(current_LoC − X) + estimated_additions > 600` → FAIL with the computed value, the deletion floor, and the three remedies above.
+**Check:** (1) Identify slices whose ACs contain a `wc -l` target; (2) read the current LoC of the target file (`wc -l <path>` on the integration branch) to establish the deletion floor `current_LoC − X`; (3) add the slice's estimated new-content additions; (4) if `(current_LoC − X) + estimated_additions > 600` → FAIL with the computed value, the deletion floor, and the three remedies above.
 
 **Examples:** File is 200 lines; thinning target is ≤150 (50 deletions); additions estimated at 80 lines → total 130 → PASS. File is 760 lines; thinning target is ≤240 (520 deletions); additions estimated at 120 lines → total 640 → FAIL (absolute diff 640 > 600; cite remedies). File has a wc-l target but `current_LoC ≤ X` already (no deletions needed) → criterion not applicable; PASS.
 
@@ -170,7 +170,7 @@ Score each criterion as PASS / FAIL / WARN (warn = present but weak).
 
 **Mitigation options (include in WARN):** (1) Sequence the new slice after the in-flight PR merges; (2) deferred-trivial-lane back-ref pattern — ship the new skill/subagent body now (no cross-skill back-refs); open a single I3 trivial-lane PR adding all back-refs after sibling PRs merge.
 
-**Check:** (1) Extract slice's cascade-doc file paths (or names if prose); (2) run `git fetch origin main` (soft-degrade), then `gh pr list --state open --json number,title,files` against the current `origin/main` state; (3) intersect; build a per-slice collision list; (4) for each collision: WARN with PR # + file + recommended mitigation. If the slicer's emission is loose prose, fall back to manual comparison and note the degraded input shape.
+**Check:** (1) Extract slice's cascade-doc file paths (or names if prose); (2) run `git fetch origin "$(python3 tools/pipeline_config.py integration)"` (soft-degrade), then `gh pr list --state open --json number,title,files` against the current integration-branch state; (3) intersect; build a per-slice collision list; (4) for each collision: WARN with PR # + file + recommended mitigation. If the slicer's emission is loose prose, fall back to manual comparison and note the degraded input shape.
 
 **Examples:** Slice cascades CLAUDE.md Map row; open PR #186 also touches CLAUDE.md → WARN: "Sequence after PR #186 merges, OR defer Map-row addition to a trivial-lane back-ref PR". Slice cascades a topic file; no open PR touches that file → PASS. Decomposition explicitly notes "verified `gh pr list` — no open PR touches the cascade-doc files" → PASS.
 
@@ -206,7 +206,7 @@ Score each criterion as PASS / FAIL / WARN (warn = present but weak).
 6. If the decomposition has no `Covers:` lines at all → FAIL with message `"SC-COVERAGE: no slice carries a Covers: §2 line; all slices must include Covers: per ADR-0066 D2"`.
 7. Missing `Covers:` line on one or more (but not all) slices → FAIL naming the incomplete slices.
 
-**Not applicable:** Decompositions produced before this rule's merge into `origin/main` — these are grandfathered; do not retroactively BLOCK them. A PRD with no numbered §2 criteria (e.g. a pure process-change PRD) → PASS (empty set trivially covered; note the exemption in the verdict).
+**Not applicable:** Decompositions produced before this rule's merge into the integration branch — these are grandfathered; do not retroactively BLOCK them. A PRD with no numbered §2 criteria (e.g. a pure process-change PRD) → PASS (empty set trivially covered; note the exemption in the verdict).
 
 **Examples:** §2 has criteria {1, 2, 3}; slices carry `Covers: §2 #1`, `Covers: §2 #2, #3` → union = {1,2,3} = §2 set → PASS. §2 has {1, 2, 3}; no slice covers #3 → FAIL (orphan #3). Slice carries `Covers: §2 #4` but §2 only has {1, 2, 3} → FAIL (phantom #4).
 
@@ -282,7 +282,7 @@ A **round-1 or round-2 BLOCK** emits only the standard trailer above and returns
 You may use `Read`, `Glob`, `Grep`, `Bash` (read-only `gh` / `git` + the authorized output channel below).
 
 Authorized commands:
-- `git fetch origin main`, `git log`, `git ls-files` — read-only git inspection
+- `git fetch origin "$(python3 tools/pipeline_config.py integration)"`, `git log`, `git ls-files` — read-only git inspection
 - `gh pr list`, `gh issue view`, `gh issue list` — read-only inspection
 - `gh issue comment <PRD-issue-number> --body-file <tempfile>` — post your verdict on the PRD issue (mandatory output channel per ADR-0054 D1)
 

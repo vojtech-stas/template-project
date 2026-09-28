@@ -17,6 +17,7 @@ import sys
 if str(Path(__file__).resolve().parent.parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tools import gen_rules
+from tools.pipeline_config import integration_branch
 from tools.workflow_branch import classify, requires_regression
 
 GLOBAL_SOURCES = ("CLAUDE.md", ".claude/generated/_global.md",
@@ -469,7 +470,7 @@ def live_coordinates(e, bundle, close=False):
     require(json.loads(repo)["nameWithOwner"] == e.data["repository"], "wrong live repository")
     repository = e.data["repository"]
     pr = gh_json(e.root, repository, f"pulls/{bundle['pr']}")
-    require(pr["merged"] and pr["base"]["ref"] == "develop"
+    require(pr["merged"] and pr["base"]["ref"] == integration_branch(str(e.root))
             and pr["merge_commit_sha"] == bundle["tested_sha"], "PR not delivered on tested SHA")
     branch = classify(pr["head"]["ref"])
     require(branch.valid and branch.namespaced and branch.issue == bundle["slice"],

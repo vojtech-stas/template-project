@@ -130,7 +130,7 @@ FINDINGS_COUNT: <integer ≥ 0>
 
 `/ship` passes you:
 - **PRD number** — the GitHub issue whose last slice is closing.
-- **Base ref** — the commit at which the PRD's first slice branched from `origin/main` (the PRD base).
+- **Base ref** — the commit at which the PRD's first slice branched from `origin/$(python3 tools/pipeline_config.py integration)` (the PRD base).
 - **HEAD ref** — the current last-slice branch HEAD (before merge).
 
 If any of these is missing → return `INVALID_INPUT: <reason>` and stop.
@@ -372,7 +372,7 @@ Authorized commands:
 - `gh issue view`, `gh issue list` — read-only
 - `gh issue create --label captured` + `/promote-to-backlog <N>` — mandatory RECOMMEND → captured-issue autopilot (rule #11)
 - `gh issue comment <PRD-issue-number> --body-file <tempfile>` — post per-PRD verdict on the PRD issue (mandatory output channel per ADR-0054 D1; per-PRD mode only)
-- `gh api repos/{owner}/{repo}/contents/<path>` — verify file existence on origin/main
+- `gh api "repos/{owner}/{repo}/contents/<path>?ref=$(python3 tools/pipeline_config.py integration)"` — verify file existence on the integration branch
 
 If you find yourself wanting any mutating capability beyond captured-issue creation, STOP and explain in your verdict.
 
