@@ -93,7 +93,13 @@ class TestBranchGates(unittest.TestCase):
                         health, "_health_gh_fetch", return_value=(0, json.dumps(prs))):
                     self.assertEqual(health.check_test_ordering()["total"], total)
         with patch.object(health, "_health_gh_fetch", return_value=(0, json.dumps([
-                {"number": 800, "headRefName": "fix/800-example", "mergeCommit": {}}]))):
+                {"number": 800, "headRefName": "fix/800-example", "mergeCommit": {},
+                 # Grandfathered per ADR-0089 D4: mergedAt at or before
+                 # GRANDFATHER_UNTIL['TEST-ORDERING'] (2026-06-12T15:16:00Z),
+                 # the instant that replaced the old PR-number-<816 rule this
+                 # fixture used to exercise (health.py no longer has that
+                 # rule; see #1618 / PR #1617 round 2).
+                 "mergedAt": "2026-06-12T15:16:00Z"}]))):
             result = health.check_test_ordering()
             self.assertEqual(result["grandfathered"], 1)
             self.assertEqual(result["total"], 0)

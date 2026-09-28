@@ -70,8 +70,11 @@ def _reimport(module_name: str):
     return importlib.import_module(module_name)
 
 
-_ANCHOR_TS = "2026-08-01T00:00:00+00:00"
-_RECORD_VS_GH_ANCHOR_TS = "2026-08-01T00:00:00+00:00"
+# Bind-forward anchors are now the fixed GRANDFATHER_UNTIL[...] instants in
+# dashboard/_constants.py (ADR-0089 D4) -- no override seam exists anymore.
+# This file's own assertions never reach the anchor comparison at all (the
+# trace-log-existence guard returns WARN before any window logic runs), so
+# no fixture date changes are needed here.
 
 
 class _TraceAbsentTestBase(unittest.TestCase):
@@ -82,15 +85,12 @@ class _TraceAbsentTestBase(unittest.TestCase):
 
     def setUp(self):
         self._old_env = {}
-        for k in ("TRACE_LOG_OVERRIDE", "_ADR_0076_ANCHOR_TS_OVERRIDE",
-                  "_RECORD_VS_GH_ANCHOR_TS_OVERRIDE"):
+        for k in ("TRACE_LOG_OVERRIDE",):
             self._old_env[k] = os.environ.get(k)
         self._tmpdir = tempfile.mkdtemp(prefix="trace_absent_test_")
         # Deliberately never write this file -- the CI fresh-checkout case.
         self.log_path = os.path.join(self._tmpdir, "trace-v3.jsonl")
         os.environ["TRACE_LOG_OVERRIDE"] = self.log_path
-        os.environ["_ADR_0076_ANCHOR_TS_OVERRIDE"] = _ANCHOR_TS
-        os.environ["_RECORD_VS_GH_ANCHOR_TS_OVERRIDE"] = _RECORD_VS_GH_ANCHOR_TS
 
     def tearDown(self):
         for k, v in self._old_env.items():

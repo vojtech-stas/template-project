@@ -582,6 +582,7 @@ _dashboard_dir = str(Path(__file__).resolve().parent)
 if _dashboard_dir not in sys.path:
     sys.path.insert(0, _dashboard_dir)
 from _constants import KNOWN_CRITICS as _KNOWN_CRITICS  # noqa: E402
+from _constants import grandfathered  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Aggregate health-payload TTL cache — health checks can take 1-2 s on cold
@@ -2240,10 +2241,6 @@ _BOUNDARY_EVENTS = frozenset({"session_start", "session_stop"})
 # Window size for capture SLO: last N sessions with any event in workflow-events.jsonl
 _CAPTURE_SLO_WINDOW = 20
 
-# ADR-0042: bootstrap cutoff for merged_without_ci — PRs merged before this PR are
-# grandfathered (CI gate did not exist yet).  PR #711 was the first one under ADR-0042.
-_CI_GATE_BOOTSTRAP_PR = 711
-
 
 def check_capture_slo() -> dict:
     """CAPTURE-SLO: sessions with ≥1 non-boundary event / total, last N sessions.
@@ -3207,10 +3204,6 @@ _PROOF_TOKENS: dict[str, list[str]] = {
 # Window for proof-presence: last N merged non-trivial PRs.
 _PROOF_PRESENCE_WINDOW = 10
 
-# Bootstrap cutoff for proof-presence: PRs before this are grandfathered.
-# Bind-forward per ADR-0004 D2 — slice #783 is the implementing merge.
-_PROOF_PRESENCE_BOOTSTRAP_PR = 788   # last merged PR before this slice
-
 
 def _classify_route(changed_files: list[str]) -> set[str]:
     """Return the union of proof classes from changed-path globs (ADR-0061 D1)."""
@@ -3501,7 +3494,8 @@ def check_proof_presence() -> dict:
 
     Classifies each PR's changed files via ADR-0061 D1 route table; greps the
     PR body + comment trail for route-appropriate proof tokens. Computes per-PR
-    and rolling rate. Grandfathers PRs <= _PROOF_PRESENCE_BOOTSTRAP_PR.
+    and rolling rate. Grandfathers PRs merged at or before
+    GRANDFATHER_UNTIL['PROOF-PRESENCE'] (ADR-0089 D4).
 
     Reuses collector's fetch caching (get_trail + get_recent_merged_prs).
 
@@ -3540,14 +3534,15 @@ def check_proof_presence() -> dict:
         labels = [lb.get("name", "") for lb in (pr.get("labels") or [])]
         if "trivial" in labels or classify_branch(ref).kind == "hotfix":
             continue
-        if pr.get("number", 0) > _PROOF_PRESENCE_BOOTSTRAP_PR:
+        if not grandfathered("PROOF-PRESENCE", pr.get("mergedAt") or ""):
             non_trivial.append(pr)
         if len(non_trivial) >= _PROOF_PRESENCE_WINDOW:
             break
 
     if not non_trivial:
         return {"id": "PROOF-PRESENCE", "result": "WARN",
-                "detail": f"no non-trivial merged PRs found above bootstrap threshold #{_PROOF_PRESENCE_BOOTSTRAP_PR}",
+                "detail": ("no non-trivial merged PRs found above bootstrap "
+                           "threshold GRANDFATHER_UNTIL['PROOF-PRESENCE']"),
                 "rate": None, "window": 0}
 
     with_proof = 0
@@ -3590,7 +3585,7 @@ def check_proof_presence() -> dict:
     missing_str = ", ".join(without_proof) if without_proof else "none"
     detail = (
         f"{with_proof}/{total} non-trivial PRs have route-appropriate proof tokens "
-        f"(bind-forward >#{ _PROOF_PRESENCE_BOOTSTRAP_PR}); missing: {missing_str}"
+        f"(bind-forward > GRANDFATHER_UNTIL['PROOF-PRESENCE']); missing: {missing_str}"
     )
     result = "PASS" if not without_proof else "WARN"
     return {"id": "PROOF-PRESENCE", "result": result, "detail": detail,
@@ -3961,26 +3956,8 @@ def check_green_main() -> dict:
 
 # ---------------------------------------------------------------------------
 # RECORD-VS-GH — recorded pr_merged spans vs gh's merged-PR ground truth
-# (PRD #1075 criterion 3, slice #1081).
+# (PRD #1075 criterion 3, slice #1081; anchor per ADR-0089 D4, slice #1514).
 # ---------------------------------------------------------------------------
-
-# Bind-forward window anchor: the walking-skeleton merge that landed the v3
-# trace emitter + pr-open/pr-merge wrappers (slice #1078). Only PRs merged
-# AFTER this commit's timestamp are expected to carry a recorded pr_merged
-# span — earlier merges predate the recording mechanism entirely and are
-# honestly grandfathered (bootstrap-mode, ADR-0004 D2: no retroactive sweep).
-_RECORD_VS_GH_ANCHOR_SHA = "0d8e6d0"
-
-# Documented sole in-window exception: PR #1089 IS the walking-skeleton PR
-# itself (the commit that first created tools/trace.py + tools/pipe/pr-open
-# + tools/pipe/pr-merge). Its gh-reported mergedAt lands a few seconds AFTER
-# its own commit's committer-date (verified against real data: anchor commit
-# committer-date 2026-08-02T02:10:59Z vs PR #1089 mergedAt 2026-08-02T02:11:00Z)
-# so a naive timestamp-only window would misclassify it as "post-window" and
-# falsely FAIL it — it structurally could not emit its own span (the wrapper
-# CLIs did not exist yet when #1089 merged via the prior raw-gh path). Any
-# OTHER post-window merge lacking a span is a real, named FAIL.
-_RECORD_VS_GH_WINDOW_EXCEPTIONS = {"1089"}
 
 
 def check_record_vs_gh() -> dict:
@@ -3993,11 +3970,14 @@ def check_record_vs_gh() -> dict:
     _health_gh_fetch/gh_cache seam (timeout-bounded; degrades honestly to
     'unverifiable — gh unavailable' rather than fabricating PASS/FAIL).
 
-    Bind-forward window (ADR-0004 D2 grandfather): only PRs whose mergedAt is
-    strictly AFTER _RECORD_VS_GH_ANCHOR_SHA's commit timestamp (the
-    walking-skeleton merge, slice #1078) are expected to carry a recorded
-    pr_merged span; PR #1089 (the walking-skeleton PR itself) is the
-    documented sole in-window exception (see module constant above).
+    Bind-forward window: only PRs merged strictly after
+    GRANDFATHER_UNTIL['RECORD-VS-GH'] (dashboard/_constants.py, ADR-0089 D4)
+    are expected to carry a recorded pr_merged span; the instant IS PR
+    #1089's own mergedAt (the walking-skeleton PR that first created
+    tools/trace.py + tools/pipe/pr-open + tools/pipe/pr-merge), so #1089
+    itself is grandfathered outright — no hand-kept per-PR exception needed
+    (it structurally could not emit its own span; the wrapper CLIs did not
+    exist yet when it merged via the prior raw-gh path).
 
     Identity matching: PR number is the primary key — spans carry attrs.pr
     (a string); gh's `number` field is compared against it as a string, per
@@ -4011,45 +3991,10 @@ def check_record_vs_gh() -> dict:
     Returns dict with id='RECORD-VS-GH', result in {PASS, WARN, FAIL}.
     """
     import json as _json
-    from datetime import datetime
 
     integration = _load_pipeline_config().integration_branch(str(_HEALTH_REPO_ROOT))
 
-    def _parse_ts(s: str):
-        return datetime.fromisoformat(s.replace("Z", "+00:00"))
-
-    # --- Step 1: resolve the bind-forward window anchor timestamp ---
-    anchor_override = os.environ.get("_RECORD_VS_GH_ANCHOR_TS_OVERRIDE")
-    if anchor_override:
-        anchor_ts_str = anchor_override
-    else:
-        try:
-            r = subprocess.run(
-                ["git", "show", "-s", "--format=%cI", _RECORD_VS_GH_ANCHOR_SHA],
-                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
-                cwd=str(_HEALTH_REPO_ROOT),
-            )
-            anchor_ts_str = r.stdout.strip() if r.returncode == 0 else ""
-        except Exception:
-            anchor_ts_str = ""
-
-    if not anchor_ts_str:
-        return {
-            "id": "RECORD-VS-GH", "result": "WARN",
-            "detail": (
-                "unverifiable — could not resolve walking-skeleton anchor "
-                f"commit {_RECORD_VS_GH_ANCHOR_SHA} timestamp"
-            ),
-        }
-    try:
-        anchor_dt = _parse_ts(anchor_ts_str)
-    except Exception as exc:
-        return {
-            "id": "RECORD-VS-GH", "result": "WARN",
-            "detail": f"unverifiable — anchor timestamp unparsable: {exc}",
-        }
-
-    # --- Step 1.5: trace log existence check (root-cause fix, slice #1136) ---
+    # --- Step 1: trace log existence check (root-cause fix, slice #1136) ---
     # A structurally-absent trace log (gitignored local file; ALWAYS absent
     # in a CI fresh checkout) must degrade to WARN, never fabricate a FAIL
     # naming every historical PR as "missing" at once.
@@ -4087,21 +4032,17 @@ def check_record_vs_gh() -> dict:
             "detail": "unverifiable — gh unavailable (unexpected output shape)",
         }
 
-    # --- Step 3: split into pre-window (grandfathered) vs post-window ---
+    # --- Step 3: split into grandfathered vs post-window (ADR-0089 D4) ---
     post_window = []
-    grandfathered = 0
+    grandfathered_n = 0
     for pr in prs:
         merged_at = pr.get("mergedAt") or ""
         if not merged_at:
             continue
-        try:
-            merged_dt = _parse_ts(merged_at)
-        except Exception:
-            continue
-        if merged_dt > anchor_dt:
-            post_window.append(pr)
+        if grandfathered("RECORD-VS-GH", merged_at):
+            grandfathered_n += 1
         else:
-            grandfathered += 1
+            post_window.append(pr)
 
     # --- Step 4: read recorded pr_merged spans from the canonical trace log ---
     try:
@@ -4117,45 +4058,37 @@ def check_record_vs_gh() -> dict:
 
     # --- Step 5: reconcile post-window PRs against recorded spans ---
     missing = []
-    exceptions_seen = []
     for pr in sorted(post_window, key=lambda p: int(p.get("number", 0) or 0)):
         num = str(pr.get("number"))
-        if num in _RECORD_VS_GH_WINDOW_EXCEPTIONS:
-            exceptions_seen.append(num)
-            continue
         if num not in recorded_prs:
             missing.append((num, pr.get("mergedAt", "")))
 
-    expected = len(post_window) - len(exceptions_seen)
+    expected = len(post_window)
     covered = expected - len(missing)
-    exceptions_sorted = sorted(exceptions_seen, key=int)
 
     if missing:
         first_num, first_ts = missing[0]
         detail = (
             f"PR #{first_num} merged {first_ts} has no pr_merged span "
             f"({covered}/{expected} post-window PRs covered since "
-            f"{_RECORD_VS_GH_ANCHOR_SHA} @ {anchor_ts_str}; "
-            f"missing={[n for n, _ in missing]}; grandfathered={grandfathered}; "
-            f"exceptions={exceptions_sorted})"
+            f"GRANDFATHER_UNTIL['RECORD-VS-GH']; "
+            f"missing={[n for n, _ in missing]}; grandfathered={grandfathered_n})"
         )
         return {
             "id": "RECORD-VS-GH", "result": "FAIL", "detail": detail,
             "missing": [n for n, _ in missing], "covered": covered,
-            "expected": expected, "grandfathered": grandfathered,
-            "exceptions": exceptions_sorted,
+            "expected": expected, "grandfathered": grandfathered_n,
         }
 
     detail = (
         f"{covered}/{expected} post-window merged PRs covered (since "
-        f"{_RECORD_VS_GH_ANCHOR_SHA} @ {anchor_ts_str}) have recorded pr_merged "
-        f"spans; grandfathered={grandfathered} pre-window (ADR-0004 D2); "
-        f"exceptions={exceptions_sorted} (documented sole in-window)"
+        f"GRANDFATHER_UNTIL['RECORD-VS-GH']) have recorded pr_merged "
+        f"spans; grandfathered={grandfathered_n} pre-window (ADR-0089 D4)"
     )
     return {
         "id": "RECORD-VS-GH", "result": "PASS", "detail": detail,
         "missing": [], "covered": covered, "expected": expected,
-        "grandfathered": grandfathered, "exceptions": exceptions_sorted,
+        "grandfathered": grandfathered_n,
     }
 
 
@@ -4164,50 +4097,17 @@ def check_record_vs_gh() -> dict:
 # CLOSED-PRD-VS-QA (PRD #1127 §2 criterion 11b / slice #1136). All three
 # share ONE bind-forward anchor per ADR-0076's binding paragraph ("every
 # decision below binds FORWARD from the merge of this PRD's slice 1") --
-# threaded from that paragraph, never re-derived per-check.
+# threaded from that paragraph as one instant, replicated across their three
+# GRANDFATHER_UNTIL keys (dashboard/_constants.py, ADR-0089 D4), never
+# re-derived per-check.
+#
+# The instant is the walking-skeleton dispatch-verb slice's own commit
+# (#1129, merged as PR #1137, commit f271843) -- PRD #1127's own slice 1 --
+# normalized to UTC. Pre-anchor history predates the dispatch verb, the
+# verdict span kind, and the closed VALID_KINDS enum entirely; the
+# reconcilers below grandfather it honestly rather than fabricate
+# retroactive spans (ADR-0004 D2 bootstrap-mode).
 # ---------------------------------------------------------------------------
-
-# The walking-skeleton dispatch-verb slice (#1129, merged as PR #1137,
-# commit f271843) -- PRD #1127's own slice 1. Pre-anchor history predates
-# the dispatch verb, the verdict span kind, and the closed VALID_KINDS enum
-# entirely; the reconcilers below grandfather it honestly rather than
-# fabricate retroactive spans (ADR-0004 D2 bootstrap-mode).
-_ADR_0076_ANCHOR_SHA = "f271843"
-
-
-def _resolve_adr_0076_anchor_ts():
-    """Resolve the ADR-0076 bind-forward anchor's commit timestamp, honoring
-    the shared _ADR_0076_ANCHOR_TS_OVERRIDE test seam (one override for all
-    three reconcilers below -- they share exactly one anchor instant).
-
-    Returns (anchor_dt_or_None, anchor_ts_str, error_detail_or_None).
-    """
-    from datetime import datetime as _dt
-
-    def _parse_ts(s: str):
-        return _dt.fromisoformat(s.replace("Z", "+00:00"))
-
-    override = os.environ.get("_ADR_0076_ANCHOR_TS_OVERRIDE")
-    if override:
-        ts_str = override
-    else:
-        try:
-            r = subprocess.run(
-                ["git", "show", "-s", "--format=%cI", _ADR_0076_ANCHOR_SHA],
-                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10,
-                cwd=str(_HEALTH_REPO_ROOT),
-            )
-            ts_str = r.stdout.strip() if r.returncode == 0 else ""
-        except Exception:
-            ts_str = ""
-    if not ts_str:
-        return None, "", (
-            f"could not resolve ADR-0076 anchor commit {_ADR_0076_ANCHOR_SHA} timestamp"
-        )
-    try:
-        return _parse_ts(ts_str), ts_str, None
-    except Exception as exc:
-        return None, ts_str, f"anchor timestamp unparsable: {exc}"
 
 
 def check_slice_vs_pr() -> dict:
@@ -4230,10 +4130,11 @@ def check_slice_vs_pr() -> dict:
     trace spans being reconciled, so a PR that bypassed tools/pipe/dispatch
     or tools/pipe/pr-open entirely is still caught by it.
 
-    Bind-forward window: only PRs merged strictly AFTER the shared
-    _ADR_0076_ANCHOR_SHA commit timestamp are expected to carry
-    dispatch+pr_opened spans; pre-anchor slice PRs predate the dispatch
-    verb and the closed span-kind enum and are honestly grandfathered.
+    Bind-forward window: only PRs merged strictly after
+    GRANDFATHER_UNTIL['SLICE-VS-PR'] (dashboard/_constants.py, ADR-0089 D4)
+    are expected to carry dispatch+pr_opened spans; pre-anchor slice PRs
+    predate the dispatch verb and the closed span-kind enum and are
+    honestly grandfathered.
 
     For each post-anchor PR closing a slice-labeled issue #<s>: missing a
     `dispatch` span with attrs.slice == str(s), or missing a `pr_opened`
@@ -4242,17 +4143,9 @@ def check_slice_vs_pr() -> dict:
     Returns dict with id='SLICE-VS-PR', result in {PASS, WARN, FAIL}.
     """
     import json as _json
-    from datetime import datetime as _dt
 
     integration = _load_pipeline_config().integration_branch(str(_HEALTH_REPO_ROOT))
 
-    def _parse_ts(s: str):
-        return _dt.fromisoformat(s.replace("Z", "+00:00"))
-
-    anchor_dt, anchor_ts_str, anchor_err = _resolve_adr_0076_anchor_ts()
-    if anchor_dt is None:
-        return {"id": "SLICE-VS-PR", "result": "WARN",
-                "detail": f"unverifiable — {anchor_err}"}
     # Root-cause fix (slice #1136, discovered wiring RECORD-VS-GH into CI):
     # a structurally-absent trace log (gitignored local file; CI checkouts
     # never have it) must degrade to WARN, never fabricate a FAIL against
@@ -4321,19 +4214,15 @@ def check_slice_vs_pr() -> dict:
     close_re = re.compile(r"(?:closes|fixes|resolves)\s+#(\d+)", re.IGNORECASE)
 
     post_window = []
-    grandfathered = 0
+    grandfathered_n = 0
     for pr in prs:
         merged_at = pr.get("mergedAt") or ""
         if not merged_at:
             continue
-        try:
-            merged_dt = _parse_ts(merged_at)
-        except Exception:
-            continue
-        if merged_dt > anchor_dt:
-            post_window.append(pr)
+        if grandfathered("SLICE-VS-PR", merged_at):
+            grandfathered_n += 1
         else:
-            grandfathered += 1
+            post_window.append(pr)
 
     checked = 0
     missing = []
@@ -4358,23 +4247,23 @@ def check_slice_vs_pr() -> dict:
         detail = (
             f"PR #{first_pr} (closes slice #{','.join(first_slices)}) merged "
             f"{first_ts} {first_reason} ({checked - len(missing)}/{checked} "
-            f"post-anchor slice PRs covered since {_ADR_0076_ANCHOR_SHA} @ "
-            f"{anchor_ts_str}; grandfathered={grandfathered})"
+            f"post-anchor slice PRs covered since "
+            f"GRANDFATHER_UNTIL['SLICE-VS-PR']; grandfathered={grandfathered_n})"
         )
         return {
             "id": "SLICE-VS-PR", "result": "FAIL", "detail": detail,
             "missing": [f"{p}(slice #{','.join(s)})" for p, s, _, _ in missing],
-            "checked": checked, "grandfathered": grandfathered,
+            "checked": checked, "grandfathered": grandfathered_n,
         }
 
     detail = (
         f"{checked}/{checked} post-anchor slice-closing PRs covered (since "
-        f"{_ADR_0076_ANCHOR_SHA} @ {anchor_ts_str}); grandfathered="
-        f"{grandfathered} pre-anchor (ADR-0004 D2 bootstrap-mode)"
+        f"GRANDFATHER_UNTIL['SLICE-VS-PR']); grandfathered="
+        f"{grandfathered_n} pre-anchor (ADR-0089 D4 bootstrap-mode)"
     )
     return {
         "id": "SLICE-VS-PR", "result": "PASS", "detail": detail,
-        "missing": [], "checked": checked, "grandfathered": grandfathered,
+        "missing": [], "checked": checked, "grandfathered": grandfathered_n,
     }
 
 
@@ -4401,17 +4290,9 @@ def check_merged_without_verdict() -> dict:
     Returns dict with id='MERGED-WITHOUT-VERDICT', result in {PASS, WARN, FAIL}.
     """
     import json as _json
-    from datetime import datetime as _dt
 
     integration = _load_pipeline_config().integration_branch(str(_HEALTH_REPO_ROOT))
 
-    def _parse_ts(s: str):
-        return _dt.fromisoformat(s.replace("Z", "+00:00"))
-
-    anchor_dt, anchor_ts_str, anchor_err = _resolve_adr_0076_anchor_ts()
-    if anchor_dt is None:
-        return {"id": "MERGED-WITHOUT-VERDICT", "result": "WARN",
-                "detail": f"unverifiable — {anchor_err}"}
     # Root-cause fix (slice #1136, discovered wiring RECORD-VS-GH into CI):
     # a structurally-absent trace log (gitignored local file; CI checkouts
     # never have it) must degrade to WARN, never fabricate a FAIL against
@@ -4453,19 +4334,15 @@ def check_merged_without_verdict() -> dict:
     }
 
     post_window = []
-    grandfathered = 0
+    grandfathered_n = 0
     for pr in prs:
         merged_at = pr.get("mergedAt") or ""
         if not merged_at:
             continue
-        try:
-            merged_dt = _parse_ts(merged_at)
-        except Exception:
-            continue
-        if merged_dt > anchor_dt:
-            post_window.append(pr)
+        if grandfathered("MERGED-WITHOUT-VERDICT", merged_at):
+            grandfathered_n += 1
         else:
-            grandfathered += 1
+            post_window.append(pr)
 
     missing = []
     for pr in sorted(post_window, key=lambda p: int(p.get("number", 0) or 0)):
@@ -4481,24 +4358,24 @@ def check_merged_without_verdict() -> dict:
         detail = (
             f"PR #{first_num} merged {first_ts} has no verdict span "
             f"({covered}/{expected} post-anchor merges covered since "
-            f"{_ADR_0076_ANCHOR_SHA} @ {anchor_ts_str}; missing="
-            f"{[n for n, _ in missing]}; grandfathered={grandfathered})"
+            f"GRANDFATHER_UNTIL['MERGED-WITHOUT-VERDICT']; missing="
+            f"{[n for n, _ in missing]}; grandfathered={grandfathered_n})"
         )
         return {
             "id": "MERGED-WITHOUT-VERDICT", "result": "FAIL", "detail": detail,
             "missing": [n for n, _ in missing], "covered": covered,
-            "expected": expected, "grandfathered": grandfathered,
+            "expected": expected, "grandfathered": grandfathered_n,
         }
 
     detail = (
         f"{covered}/{expected} post-anchor merged PRs covered (since "
-        f"{_ADR_0076_ANCHOR_SHA} @ {anchor_ts_str}) have recorded verdict "
-        f"spans; grandfathered={grandfathered} pre-anchor (ADR-0004 D2)"
+        f"GRANDFATHER_UNTIL['MERGED-WITHOUT-VERDICT']) have recorded verdict "
+        f"spans; grandfathered={grandfathered_n} pre-anchor (ADR-0089 D4)"
     )
     return {
         "id": "MERGED-WITHOUT-VERDICT", "result": "PASS", "detail": detail,
         "missing": [], "covered": covered, "expected": expected,
-        "grandfathered": grandfathered,
+        "grandfathered": grandfathered_n,
     }
 
 
@@ -4516,24 +4393,16 @@ def check_closed_prd_vs_qa() -> dict:
     Ground truth: `gh issue list --label prd --state closed --json
     number,closedAt`.
 
-    Bind-forward window: only PRDs closed strictly AFTER the shared
-    _ADR_0076_ANCHOR_SHA commit timestamp are expected to carry a
-    qa_verified span (the qa-verify wrapper + prd-close verb both post-date
-    this PRD's own slice-1 anchor); pre-anchor closures are honestly
-    grandfathered.
+    Bind-forward window: only PRDs closed strictly after
+    GRANDFATHER_UNTIL['CLOSED-PRD-VS-QA'] (dashboard/_constants.py,
+    ADR-0089 D4) are expected to carry a qa_verified span (the qa-verify
+    wrapper + prd-close verb both post-date this PRD's own slice-1 anchor);
+    pre-anchor closures are honestly grandfathered.
 
     Returns dict with id='CLOSED-PRD-VS-QA', result in {PASS, WARN, FAIL}.
     """
     import json as _json
-    from datetime import datetime as _dt
 
-    def _parse_ts(s: str):
-        return _dt.fromisoformat(s.replace("Z", "+00:00"))
-
-    anchor_dt, anchor_ts_str, anchor_err = _resolve_adr_0076_anchor_ts()
-    if anchor_dt is None:
-        return {"id": "CLOSED-PRD-VS-QA", "result": "WARN",
-                "detail": f"unverifiable — {anchor_err}"}
     # Root-cause fix (slice #1136, discovered wiring RECORD-VS-GH into CI):
     # a structurally-absent trace log (gitignored local file; CI checkouts
     # never have it) must degrade to WARN, never fabricate a FAIL against
@@ -4579,19 +4448,15 @@ def check_closed_prd_vs_qa() -> dict:
     }
 
     post_window = []
-    grandfathered = 0
+    grandfathered_n = 0
     for prd in prds:
         closed_at = prd.get("closedAt") or ""
         if not closed_at:
             continue
-        try:
-            closed_dt = _parse_ts(closed_at)
-        except Exception:
-            continue
-        if closed_dt > anchor_dt:
-            post_window.append(prd)
+        if grandfathered("CLOSED-PRD-VS-QA", closed_at):
+            grandfathered_n += 1
         else:
-            grandfathered += 1
+            post_window.append(prd)
 
     missing = []
     for prd in sorted(post_window, key=lambda p: int(p.get("number", 0) or 0)):
@@ -4607,25 +4472,25 @@ def check_closed_prd_vs_qa() -> dict:
         detail = (
             f"PRD #{first_num} closed {first_ts} has no qa_verified PASS "
             f"span ({covered}/{expected} post-anchor closed PRDs covered "
-            f"since {_ADR_0076_ANCHOR_SHA} @ {anchor_ts_str}; missing="
-            f"{[n for n, _ in missing]}; grandfathered={grandfathered})"
+            f"since GRANDFATHER_UNTIL['CLOSED-PRD-VS-QA']; missing="
+            f"{[n for n, _ in missing]}; grandfathered={grandfathered_n})"
         )
         return {
             "id": "CLOSED-PRD-VS-QA", "result": "FAIL", "detail": detail,
             "missing": [n for n, _ in missing], "covered": covered,
-            "expected": expected, "grandfathered": grandfathered,
+            "expected": expected, "grandfathered": grandfathered_n,
         }
 
     detail = (
         f"{covered}/{expected} post-anchor closed prd-labeled issues covered "
-        f"(since {_ADR_0076_ANCHOR_SHA} @ {anchor_ts_str}) have a "
-        f"qa_verified PASS span; grandfathered={grandfathered} pre-anchor "
-        f"(ADR-0004 D2)"
+        f"(since GRANDFATHER_UNTIL['CLOSED-PRD-VS-QA']) have a "
+        f"qa_verified PASS span; grandfathered={grandfathered_n} pre-anchor "
+        f"(ADR-0089 D4)"
     )
     return {
         "id": "CLOSED-PRD-VS-QA", "result": "PASS", "detail": detail,
         "missing": [], "covered": covered, "expected": expected,
-        "grandfathered": grandfathered,
+        "grandfathered": grandfathered_n,
     }
 
 
@@ -4663,12 +4528,12 @@ def check_silent_drift() -> dict:
     import json as _json
     import subprocess as _sp
 
-    # --- Bootstrap cutoff: the merge commit of feat/799-amendment-protocol ---
-    # PRDs created before this slice's merge cannot be audited via edit history
-    # (the protocol binds forward from this merge per ADR-0066 D3 + ADR-0004 D2).
-    # We use the slice issue number (799) as a proxy: PRDs with issue number < 799
-    # are grandfathered. This is approximate but honest and conservative.
-    _GRANDFATHERED_BELOW = 799
+    # --- Bootstrap cutoff (ADR-0089 D4): GRANDFATHER_UNTIL['SILENT-DRIFT'] ---
+    # PRDs created before this instant cannot be audited via edit history
+    # (the protocol binds forward from the feat/799-amendment-protocol merge
+    # per ADR-0066 D3 + ADR-0004 D2). Keyed on the PRD's own createdAt
+    # (already fetched below) rather than this repository's own PRD issue
+    # number, per PIP-032.
 
     def _gh_json(args: list, timeout: int = 20) -> list | dict | None:
         # Routed through gh_cache (ttl=60s, timeout=5s) — PRD #993 cr.3, slice #996.
@@ -4703,7 +4568,7 @@ def check_silent_drift() -> dict:
         }
 
     violations = []
-    grandfathered = []
+    grandfathered_prds = []
     auditable_prd_count = 0
 
     for prd in prd_issues:
@@ -4712,9 +4577,10 @@ def check_silent_drift() -> dict:
         updated_at = prd.get("updatedAt", "")
         comments = prd.get("comments", []) or []
 
-        # Grandfathering: PRDs with number < bootstrap cutoff
-        if prd_num < _GRANDFATHERED_BELOW:
-            grandfathered.append(prd_num)
+        # Grandfathering (ADR-0089 D4): PRDs created at or before
+        # GRANDFATHER_UNTIL['SILENT-DRIFT'].
+        if grandfathered("SILENT-DRIFT", created_at):
+            grandfathered_prds.append(prd_num)
             continue
 
         # Check if PRD has been first-dispatched:
@@ -4760,12 +4626,12 @@ def check_silent_drift() -> dict:
             })
 
     violation_nums = [v["prd"] for v in violations]
-    gran_count = len(grandfathered)
+    gran_count = len(grandfathered_prds)
 
     if not violations:
         detail = (
             f"0 violations ({auditable_prd_count} auditable post-bootstrap PRDs; "
-            f"{gran_count} grandfathered pre-#{_GRANDFATHERED_BELOW})"
+            f"{gran_count} grandfathered pre-GRANDFATHER_UNTIL['SILENT-DRIFT'])"
         )
         result = "PASS"
     else:
@@ -4773,7 +4639,8 @@ def check_silent_drift() -> dict:
         detail = (
             f"{len(violations)} violation(s): {viol_str} — "
             f"body updated without AMENDMENT comment "
-            f"({auditable_prd_count} auditable; {gran_count} grandfathered pre-#{_GRANDFATHERED_BELOW})"
+            f"({auditable_prd_count} auditable; {gran_count} grandfathered "
+            f"pre-GRANDFATHER_UNTIL['SILENT-DRIFT'])"
         )
         result = "WARN"
 
@@ -4979,18 +4846,18 @@ def check_test_ordering() -> dict:
        buckets for PRs merged before this check's activation
        (pre-ADR-0067-D2) or whose ordering could not be determined.
 
-    Honest grandfathering (ADR-0004 D2): fix-type PRs merged before the
-    R-PROVE reviewer rule merge cannot be held to the ordering standard.
-    We grandfather all fix/* PRs with merge number < the R-PROVE slice
-    (issue #816). PASS = 100% of post-activation, verifiable PRs conform,
-    or no post-activation PRs yet (WARN).
+    Honest grandfathering (ADR-0089 D4): fix-type PRs merged at or before
+    GRANDFATHER_UNTIL['TEST-ORDERING'] (dashboard/_constants.py) cannot be
+    held to the ordering standard -- the instant is 1 second before the
+    R-PROVE reviewer rule's own introducing-slice issue (#816) was created,
+    keyed on the PR's own mergedAt rather than this repository's PR/issue
+    numbers. PASS = 100% of post-activation, verifiable PRs conform, or no
+    post-activation PRs yet (WARN).
     """
     import json as _json
     import subprocess as _sp
 
     release = _load_pipeline_config().release_branch(str(_HEALTH_REPO_ROOT))
-
-    _GRANDFATHERED_BELOW = 816  # PRs linked to slices < #816 are pre-activation
 
     def _gh_json(args: list, timeout: int = 20):
         # Routed through gh_cache (ttl=60s, timeout=5s) — PRD #993 cr.3, slice #996.
@@ -5007,7 +4874,7 @@ def check_test_ordering() -> dict:
         "pr", "list",
         "--state", "merged",
         "--limit", "30",
-        "--json", "number,headRefName,mergeCommit,closingIssuesReferences,labels",
+        "--json", "number,headRefName,mergeCommit,mergedAt,labels",
     ])
     if prs is None:
         return {
@@ -5043,11 +4910,14 @@ def check_test_ordering() -> dict:
 
     for pr in fix_prs:
         pr_num = pr.get("number", 0)
-        # Grandfather: check if closing slice issue < 816
-        closing = pr.get("closingIssuesReferences") or []
-        slice_nums = [i.get("number", 0) for i in closing if isinstance(i, dict)]
-        is_grandfathered = all(n < _GRANDFATHERED_BELOW for n in slice_nums) if slice_nums else (pr_num < _GRANDFATHERED_BELOW)
-        if is_grandfathered:
+        # Grandfather (ADR-0089 D4): PRs merged at or before
+        # GRANDFATHER_UNTIL['TEST-ORDERING']. Keyed on the PR's own mergedAt
+        # -- gh's closingIssuesReferences shape carries no createdAt (only
+        # id, number, repository, url), so the closing slice's createdAt is
+        # not available without an extra per-issue fetch; mergedAt is the
+        # uniform substitute for both the old closing-slice-number check and
+        # its no-closing-slice PR-number fallback.
+        if grandfathered("TEST-ORDERING", pr.get("mergedAt") or ""):
             grandfathered_count += 1
             continue
 
@@ -6611,10 +6481,6 @@ def check_release_gate() -> dict:
 # When set, the network fetch is bypassed entirely.
 # ---------------------------------------------------------------------------
 
-# Bootstrap cutoff — PRs at or below this number are grandfathered.
-# Bind-forward per ADR-0004 D2; slice #839 is the implementing merge.
-_PROOF_INTEGRITY_BOOTSTRAP_PR = 839
-
 # Regex tokens that indicate DOM inner_text attestation in a PR body/comment.
 _INNER_TEXT_RE = re.compile(r'inner_text\s*:', re.IGNORECASE)
 
@@ -6668,7 +6534,8 @@ def check_proof_integrity() -> dict:
       (3) ENV: field is non-empty (sha freshness attestation)
 
     Honest day-one: evaluates over recent merged non-trivial browser-route PRs.
-    Grandfathers PRs <= _PROOF_INTEGRITY_BOOTSTRAP_PR.
+    Grandfathers PRs merged at or before
+    GRANDFATHER_UNTIL['PROOF-INTEGRITY'] (ADR-0089 D4).
 
     WARN when no qualifying browser-route PRs found (no data yet).
     FAIL when any PR fails a sub-check (genuine DOM-attestation violation).
@@ -6711,7 +6578,7 @@ def check_proof_integrity() -> dict:
         labels = [lb.get("name", "") for lb in (pr.get("labels") or [])]
         if "trivial" in labels or classify_branch(ref).kind == "hotfix":
             continue
-        if pr.get("number", 0) <= _PROOF_INTEGRITY_BOOTSTRAP_PR:
+        if grandfathered("PROOF-INTEGRITY", pr.get("mergedAt") or ""):
             continue
         # Determine route: only evaluate browser-route PRs.
         changed_files = [f.get("path", "") for f in (pr.get("files") or [])]
@@ -6725,8 +6592,8 @@ def check_proof_integrity() -> dict:
             "id": "PROOF-INTEGRITY",
             "result": "WARN",
             "detail": (
-                f"no qualifying browser-route PRs found above bootstrap "
-                f"threshold #{_PROOF_INTEGRITY_BOOTSTRAP_PR} — honest no-data"
+                "no qualifying browser-route PRs found above bootstrap "
+                "threshold GRANDFATHER_UNTIL['PROOF-INTEGRITY'] — honest no-data"
             ),
         }
 
