@@ -4528,12 +4528,12 @@ def check_silent_drift() -> dict:
     import json as _json
     import subprocess as _sp
 
-    # --- Bootstrap cutoff: the merge commit of feat/799-amendment-protocol ---
-    # PRDs created before this slice's merge cannot be audited via edit history
-    # (the protocol binds forward from this merge per ADR-0066 D3 + ADR-0004 D2).
-    # We use the slice issue number (799) as a proxy: PRDs with issue number < 799
-    # are grandfathered. This is approximate but honest and conservative.
-    _GRANDFATHERED_BELOW = 799
+    # --- Bootstrap cutoff (ADR-0089 D4): GRANDFATHER_UNTIL['SILENT-DRIFT'] ---
+    # PRDs created before this instant cannot be audited via edit history
+    # (the protocol binds forward from the feat/799-amendment-protocol merge
+    # per ADR-0066 D3 + ADR-0004 D2). Keyed on the PRD's own createdAt
+    # (already fetched below) rather than this repository's own PRD issue
+    # number, per PIP-032.
 
     def _gh_json(args: list, timeout: int = 20) -> list | dict | None:
         # Routed through gh_cache (ttl=60s, timeout=5s) — PRD #993 cr.3, slice #996.
@@ -4568,7 +4568,7 @@ def check_silent_drift() -> dict:
         }
 
     violations = []
-    grandfathered = []
+    grandfathered_prds = []
     auditable_prd_count = 0
 
     for prd in prd_issues:
@@ -4577,9 +4577,10 @@ def check_silent_drift() -> dict:
         updated_at = prd.get("updatedAt", "")
         comments = prd.get("comments", []) or []
 
-        # Grandfathering: PRDs with number < bootstrap cutoff
-        if prd_num < _GRANDFATHERED_BELOW:
-            grandfathered.append(prd_num)
+        # Grandfathering (ADR-0089 D4): PRDs created at or before
+        # GRANDFATHER_UNTIL['SILENT-DRIFT'].
+        if grandfathered("SILENT-DRIFT", created_at):
+            grandfathered_prds.append(prd_num)
             continue
 
         # Check if PRD has been first-dispatched:
@@ -4625,12 +4626,12 @@ def check_silent_drift() -> dict:
             })
 
     violation_nums = [v["prd"] for v in violations]
-    gran_count = len(grandfathered)
+    gran_count = len(grandfathered_prds)
 
     if not violations:
         detail = (
             f"0 violations ({auditable_prd_count} auditable post-bootstrap PRDs; "
-            f"{gran_count} grandfathered pre-#{_GRANDFATHERED_BELOW})"
+            f"{gran_count} grandfathered pre-GRANDFATHER_UNTIL['SILENT-DRIFT'])"
         )
         result = "PASS"
     else:
@@ -4638,7 +4639,8 @@ def check_silent_drift() -> dict:
         detail = (
             f"{len(violations)} violation(s): {viol_str} — "
             f"body updated without AMENDMENT comment "
-            f"({auditable_prd_count} auditable; {gran_count} grandfathered pre-#{_GRANDFATHERED_BELOW})"
+            f"({auditable_prd_count} auditable; {gran_count} grandfathered "
+            f"pre-GRANDFATHER_UNTIL['SILENT-DRIFT'])"
         )
         result = "WARN"
 
@@ -4844,18 +4846,18 @@ def check_test_ordering() -> dict:
        buckets for PRs merged before this check's activation
        (pre-ADR-0067-D2) or whose ordering could not be determined.
 
-    Honest grandfathering (ADR-0004 D2): fix-type PRs merged before the
-    R-PROVE reviewer rule merge cannot be held to the ordering standard.
-    We grandfather all fix/* PRs with merge number < the R-PROVE slice
-    (issue #816). PASS = 100% of post-activation, verifiable PRs conform,
-    or no post-activation PRs yet (WARN).
+    Honest grandfathering (ADR-0089 D4): fix-type PRs merged at or before
+    GRANDFATHER_UNTIL['TEST-ORDERING'] (dashboard/_constants.py) cannot be
+    held to the ordering standard -- the instant is 1 second before the
+    R-PROVE reviewer rule's own introducing-slice issue (#816) was created,
+    keyed on the PR's own mergedAt rather than this repository's PR/issue
+    numbers. PASS = 100% of post-activation, verifiable PRs conform, or no
+    post-activation PRs yet (WARN).
     """
     import json as _json
     import subprocess as _sp
 
     release = _load_pipeline_config().release_branch(str(_HEALTH_REPO_ROOT))
-
-    _GRANDFATHERED_BELOW = 816  # PRs linked to slices < #816 are pre-activation
 
     def _gh_json(args: list, timeout: int = 20):
         # Routed through gh_cache (ttl=60s, timeout=5s) — PRD #993 cr.3, slice #996.
@@ -4872,7 +4874,7 @@ def check_test_ordering() -> dict:
         "pr", "list",
         "--state", "merged",
         "--limit", "30",
-        "--json", "number,headRefName,mergeCommit,closingIssuesReferences,labels",
+        "--json", "number,headRefName,mergeCommit,mergedAt,labels",
     ])
     if prs is None:
         return {
@@ -4908,11 +4910,14 @@ def check_test_ordering() -> dict:
 
     for pr in fix_prs:
         pr_num = pr.get("number", 0)
-        # Grandfather: check if closing slice issue < 816
-        closing = pr.get("closingIssuesReferences") or []
-        slice_nums = [i.get("number", 0) for i in closing if isinstance(i, dict)]
-        is_grandfathered = all(n < _GRANDFATHERED_BELOW for n in slice_nums) if slice_nums else (pr_num < _GRANDFATHERED_BELOW)
-        if is_grandfathered:
+        # Grandfather (ADR-0089 D4): PRs merged at or before
+        # GRANDFATHER_UNTIL['TEST-ORDERING']. Keyed on the PR's own mergedAt
+        # -- gh's closingIssuesReferences shape carries no createdAt (only
+        # id, number, repository, url), so the closing slice's createdAt is
+        # not available without an extra per-issue fetch; mergedAt is the
+        # uniform substitute for both the old closing-slice-number check and
+        # its no-closing-slice PR-number fallback.
+        if grandfathered("TEST-ORDERING", pr.get("mergedAt") or ""):
             grandfathered_count += 1
             continue
 

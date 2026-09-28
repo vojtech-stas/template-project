@@ -67,6 +67,24 @@ GRANDFATHER_UNTIL = {
     "SLICE-VS-PR": "2026-08-02T14:41:57Z",
     "MERGED-WITHOUT-VERDICT": "2026-08-02T14:41:57Z",
     "CLOSED-PRD-VS-QA": "2026-08-02T14:41:57Z",
+    # Replaces health.py's former PRD-issue-number SILENT-DRIFT cutoff
+    # (prd_num < 799). Keyed on the PRD's own createdAt (the check already
+    # reads this field). Instant is 1 second before issue #799's own
+    # createdAt (2026-06-12T11:45:26Z), so #799 itself, if it were a PRD,
+    # would NOT be grandfathered — matching the old strict `<` comparison.
+    "SILENT-DRIFT": "2026-06-12T11:45:25Z",
+    # Replaces health.py's former slice/PR-number TEST-ORDERING cutoff
+    # (closing-slice number < 816, falling back to the PR's own number when
+    # no closing slice is known). Keyed on the PR's own mergedAt: gh's
+    # closingIssuesReferences shape carries no createdAt (only id, number,
+    # repository, url), so the closing slice's createdAt is not available
+    # without an extra per-issue fetch this check does not otherwise make;
+    # the PR's own mergedAt is the uniform, already-available substitute for
+    # BOTH the old primary and fallback branches. Instant is 1 second before
+    # issue #816's own createdAt (2026-06-12T15:16:01Z) — verified against
+    # every one of this repository's 82 real merged fix/* PRs: zero
+    # mismatches against the old number-based rule.
+    "TEST-ORDERING": "2026-06-12T15:16:00Z",
 }
 
 
