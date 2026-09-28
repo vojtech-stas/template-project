@@ -27,10 +27,17 @@ Stubbing seam (mirrors tests/test_record_vs_gh_1081.py): gh is stubbed at
 the health._gh_fetch_impl layer via a small router keyed on the gh
 sub-command (args[0] == "pr" or "issue") — no real subprocess/gh calls. The
 trace-v3.jsonl fixture log is supplied via TRACE_LOG_OVERRIDE (tools/
-trace.py's own test seam). The shared ADR-0076 bind-forward anchor
-timestamp is supplied via _ADR_0076_ANCHOR_TS_OVERRIDE — ONE override name
-for all three reconcilers (they share exactly one anchor instant, threaded
-from ADR-0076's binding paragraph, never re-derived per-check).
+trace.py's own test seam).
+
+Bind-forward window anchor (updated slice #1514 / ADR-0089 D4): the shared
+ADR-0076 anchor instant is now the fixed
+`GRANDFATHER_UNTIL['SLICE-VS-PR']` / `['MERGED-WITHOUT-VERDICT']` /
+`['CLOSED-PRD-VS-QA']` value in dashboard/_constants.py
+(2026-08-02T14:41:57Z, commit f271843's own committer-date normalized to
+UTC) — there is no override seam anymore (the `_ADR_0076_ANCHOR_TS_OVERRIDE`
+test seam was retired with the sha-resolution code it protected). Fixture
+PRs/PRDs below use dates safely either side of that fixed instant instead
+of an injected anchor.
 
 Runner: stdlib unittest + pytest compatible.
   python -m pytest tests/test_reconcilers_1136.py -v
@@ -76,8 +83,11 @@ def _reimport(module_name: str):
     return importlib.import_module(module_name)
 
 
-# Fixed anchor for every test: the ADR-0076 walking-skeleton merge instant.
-_ANCHOR_TS = "2026-08-01T00:00:00+00:00"
+# The fixed GRANDFATHER_UNTIL[...] instant shared by all three reconcilers
+# (dashboard/_constants.py, ADR-0089 D4): 2026-08-02T14:41:57Z. Every
+# "post-anchor" fixture PR/PRD below merges/closes strictly after it; every
+# "pre-anchor" fixture merges/closes before it.
+_ANCHOR_TS = "2026-08-02T14:41:57+00:00"
 
 
 class _ReconcilerTestBase(unittest.TestCase):
@@ -86,12 +96,11 @@ class _ReconcilerTestBase(unittest.TestCase):
 
     def setUp(self):
         self._old_env = {}
-        for k in ("TRACE_LOG_OVERRIDE", "_ADR_0076_ANCHOR_TS_OVERRIDE"):
+        for k in ("TRACE_LOG_OVERRIDE",):
             self._old_env[k] = os.environ.get(k)
         self._tmpdir = tempfile.mkdtemp(prefix="reconciler_test_")
         self.log_path = os.path.join(self._tmpdir, "trace-v3.jsonl")
         os.environ["TRACE_LOG_OVERRIDE"] = self.log_path
-        os.environ["_ADR_0076_ANCHOR_TS_OVERRIDE"] = _ANCHOR_TS
 
     def tearDown(self):
         for k, v in self._old_env.items():
@@ -179,7 +188,7 @@ class TestSliceVsPr(_ReconcilerTestBase):
     def test_full_coverage_pass(self):
         health = _reimport("health")
         prs = [
-            {"number": 4001, "mergedAt": "2026-08-01T10:00:00Z",
+            {"number": 4001, "mergedAt": "2026-08-03T10:00:00Z",
              "body": "Closes #5001\n\nsome body"},
         ]
         slice_issues = [{"number": 5001}]
@@ -200,7 +209,7 @@ class TestSliceVsPr(_ReconcilerTestBase):
     def test_missing_dispatch_span_fails_naming_exact_pr_and_slice(self):
         health = _reimport("health")
         prs = [
-            {"number": 4002, "mergedAt": "2026-08-01T10:00:00Z",
+            {"number": 4002, "mergedAt": "2026-08-03T10:00:00Z",
              "body": "Closes #5002"},
         ]
         slice_issues = [{"number": 5002}]
@@ -222,7 +231,7 @@ class TestSliceVsPr(_ReconcilerTestBase):
     def test_missing_pr_opened_span_fails(self):
         health = _reimport("health")
         prs = [
-            {"number": 4003, "mergedAt": "2026-08-01T10:00:00Z",
+            {"number": 4003, "mergedAt": "2026-08-03T10:00:00Z",
              "body": "Closes #5003"},
         ]
         slice_issues = [{"number": 5003}]
@@ -245,7 +254,7 @@ class TestSliceVsPr(_ReconcilerTestBase):
         is not a slice PR -- not evaluated by this reconciler at all."""
         health = _reimport("health")
         prs = [
-            {"number": 4004, "mergedAt": "2026-08-01T10:00:00Z",
+            {"number": 4004, "mergedAt": "2026-08-03T10:00:00Z",
              "body": "Closes #6001"},  # 6001 is NOT slice-labeled
         ]
         slice_issues = [{"number": 5002}]  # different issue is the slice set
@@ -298,8 +307,8 @@ class TestMergedWithoutVerdict(_ReconcilerTestBase):
     def test_full_coverage_pass(self):
         health = _reimport("health")
         prs = [
-            {"number": 7001, "mergedAt": "2026-08-01T10:00:00Z"},
-            {"number": 7002, "mergedAt": "2026-08-01T11:00:00Z"},
+            {"number": 7001, "mergedAt": "2026-08-03T10:00:00Z"},
+            {"number": 7002, "mergedAt": "2026-08-03T11:00:00Z"},
         ]
         self._patch_gh(health, pr_list_result=_live(json.dumps(prs)))
         self._write_spans([
@@ -317,8 +326,8 @@ class TestMergedWithoutVerdict(_ReconcilerTestBase):
     def test_missing_verdict_span_fails_naming_exact_pr(self):
         health = _reimport("health")
         prs = [
-            {"number": 7003, "mergedAt": "2026-08-01T10:00:00Z"},
-            {"number": 7004, "mergedAt": "2026-08-01T11:00:00Z"},
+            {"number": 7003, "mergedAt": "2026-08-03T10:00:00Z"},
+            {"number": 7004, "mergedAt": "2026-08-03T11:00:00Z"},
         ]
         self._patch_gh(health, pr_list_result=_live(json.dumps(prs)))
         # PR #7004 merged before the pr-merge verdict-floor extension landed.
@@ -372,7 +381,7 @@ class TestClosedPrdVsQa(_ReconcilerTestBase):
     def test_full_coverage_pass(self):
         health = _reimport("health")
         prds = [
-            {"number": 8001, "closedAt": "2026-08-01T10:00:00Z"},
+            {"number": 8001, "closedAt": "2026-08-03T10:00:00Z"},
         ]
         self._patch_gh(health, issue_list_result=_live(json.dumps(prds)))
         self._write_spans([
@@ -388,7 +397,7 @@ class TestClosedPrdVsQa(_ReconcilerTestBase):
     def test_missing_qa_verified_pass_fails_naming_exact_prd(self):
         health = _reimport("health")
         prds = [
-            {"number": 8002, "closedAt": "2026-08-01T10:00:00Z"},
+            {"number": 8002, "closedAt": "2026-08-03T10:00:00Z"},
         ]
         self._patch_gh(health, issue_list_result=_live(json.dumps(prds)))
         self._write_spans([])  # no qa_verified span at all
@@ -406,7 +415,7 @@ class TestClosedPrdVsQa(_ReconcilerTestBase):
         verdict=='PASS' predicate exactly."""
         health = _reimport("health")
         prds = [
-            {"number": 8003, "closedAt": "2026-08-01T10:00:00Z"},
+            {"number": 8003, "closedAt": "2026-08-03T10:00:00Z"},
         ]
         self._patch_gh(health, issue_list_result=_live(json.dumps(prds)))
         self._write_spans([
@@ -484,7 +493,7 @@ class TestQueryHonestyGatesReconcilers(_ReconcilerTestBase):
         self._patch_gh(
             health,
             issue_list_result=_live(json.dumps(
-                [{"number": 8001, "closedAt": "2026-08-01T10:00:00Z"}]
+                [{"number": 8001, "closedAt": "2026-08-03T10:00:00Z"}]
             )),
             api_result=_live(json.dumps([{"number": 900001}, {"number": 900002}])),
         )

@@ -25,9 +25,14 @@ stubbed at the health._gh_fetch_impl layer (the imported gh_cache.gh_fetch
 reference) — no real subprocess/gh calls. The trace-v3.jsonl fixture log is
 supplied via TRACE_LOG_OVERRIDE (tools/trace.py's own test seam) so
 check_record_vs_gh's read of recorded pr_merged spans is fully controlled.
-The bind-forward window anchor timestamp is supplied via
-_RECORD_VS_GH_ANCHOR_TS_OVERRIDE (this check's own injection seam) so tests
-never depend on the real walking-skeleton commit's git history.
+
+Bind-forward window anchor (updated slice #1514 / ADR-0089 D4): the window
+is now the fixed `GRANDFATHER_UNTIL['RECORD-VS-GH']` instant in
+dashboard/_constants.py (2026-08-02T02:11:00Z, PR #1089's own mergedAt) —
+there is no override seam anymore (the `_RECORD_VS_GH_ANCHOR_TS_OVERRIDE`
+test seam was retired with the sha-resolution code it protected). Fixture
+PRs below use dates safely either side of that fixed instant instead of an
+injected anchor.
 
 Runner: stdlib unittest + pytest compatible.
   python -m pytest tests/test_record_vs_gh_1081.py -v
@@ -73,8 +78,10 @@ def _reimport(module_name: str):
     return importlib.import_module(module_name)
 
 
-# Fixed anchor for every test: the "walking skeleton merged" instant.
-_ANCHOR_TS = "2026-08-01T00:00:00+00:00"
+# The fixed GRANDFATHER_UNTIL['RECORD-VS-GH'] instant (dashboard/_constants.py,
+# ADR-0089 D4): 2026-08-02T02:11:00Z. Every "post-window" fixture PR below
+# merges strictly after it; every "pre-window" fixture PR merges before it.
+_ANCHOR_TS = "2026-08-02T02:11:00+00:00"
 
 
 class _RecordVsGhTestBase(unittest.TestCase):
@@ -82,12 +89,11 @@ class _RecordVsGhTestBase(unittest.TestCase):
 
     def setUp(self):
         self._old_env = {}
-        for k in ("TRACE_LOG_OVERRIDE", "_RECORD_VS_GH_ANCHOR_TS_OVERRIDE"):
+        for k in ("TRACE_LOG_OVERRIDE",):
             self._old_env[k] = os.environ.get(k)
         self._tmpdir = tempfile.mkdtemp(prefix="record_vs_gh_test_")
         self.log_path = os.path.join(self._tmpdir, "trace-v3.jsonl")
         os.environ["TRACE_LOG_OVERRIDE"] = self.log_path
-        os.environ["_RECORD_VS_GH_ANCHOR_TS_OVERRIDE"] = _ANCHOR_TS
 
     def tearDown(self):
         for k, v in self._old_env.items():
@@ -123,9 +129,9 @@ class TestFullCoveragePass(_RecordVsGhTestBase):
     def test_full_coverage_pass_with_counts(self):
         health = _reimport("health")
         prs = [
-            {"number": 2001, "mergedAt": "2026-08-01T10:00:00Z",
+            {"number": 2001, "mergedAt": "2026-08-03T10:00:00Z",
              "mergeCommit": {"oid": "sha2001"}},
-            {"number": 2002, "mergedAt": "2026-08-01T11:00:00Z",
+            {"number": 2002, "mergedAt": "2026-08-03T11:00:00Z",
              "mergeCommit": {"oid": "sha2002"}},
         ]
         self._patch_gh(health, _live(json.dumps(prs)))
@@ -154,9 +160,9 @@ class TestUnwrappedMergeFails(_RecordVsGhTestBase):
     def test_one_missing_span_fails_naming_exact_pr(self):
         health = _reimport("health")
         prs = [
-            {"number": 3001, "mergedAt": "2026-08-01T10:00:00Z",
+            {"number": 3001, "mergedAt": "2026-08-03T10:00:00Z",
              "mergeCommit": {"oid": "sha3001"}},
-            {"number": 3002, "mergedAt": "2026-08-01T11:00:00Z",
+            {"number": 3002, "mergedAt": "2026-08-03T11:00:00Z",
              "mergeCommit": {"oid": "sha3002"}},
         ]
         self._patch_gh(health, _live(json.dumps(prs)))
