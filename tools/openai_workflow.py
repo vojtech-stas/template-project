@@ -20,8 +20,9 @@ from tools import gen_rules
 from tools.pipeline_config import integration_branch
 from tools.workflow_branch import classify, requires_regression
 
-GLOBAL_SOURCES = ("CLAUDE.md", ".claude/generated/_global.md",
-                  ".claude/generated/_repo-map.md", "docs/openai-workflow.md")
+GLOBAL_SOURCES = ("CLAUDE.md", ".claude/pipeline/CLAUDE.md",
+                  ".claude/pipeline/generated/_global.md",
+                  ".claude/pipeline/generated/_repo-map.md", "docs/openai-workflow.md")
 SCOPE_ADDITIONS = {"isolation": ("tools/openai_workflow.py", "AGENTS.md", ".agents/**"),
                    "slicing": (".agents/skills/*/SKILL.md",)}
 GIT_QUERIES = {"top": ("rev-parse", "--show-toplevel"),
@@ -31,7 +32,7 @@ GIT_QUERIES = {"top": ("rev-parse", "--show-toplevel"),
                "status": ("status", "--porcelain=v1")}
 HEX = re.compile(r"[0-9a-f]{40}\Z")
 ID = re.compile(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}\Z")
-ROUTE_SOURCE = ".claude/agents/qa-tester.md"
+ROUTE_SOURCE = ".claude/pipeline/agents/qa-tester.md"
 
 
 class Refusal(ValueError):
@@ -96,7 +97,7 @@ def instructions(root, paths):
         patterns = [p.strip() for p in gen_rules.SCOPE_PATHS[scope].split(",")]
         patterns += list(SCOPE_ADDITIONS.get(scope, ()))
         if any(matches(p, pattern) for p in paths for pattern in patterns):
-            source = f".claude/rules/{scope}.md"
+            source = f".claude/pipeline/rules/{scope}.md"
             text = (root / source).read_text(encoding="utf-8")
             lines = text.splitlines()
             require(len(lines) > 1 and lines[0] == gen_rules.GENERATED_HEADER.strip()
@@ -106,7 +107,7 @@ def instructions(root, paths):
     for source in sources:
         require((root / source).is_file() and (root / source).stat().st_size > 0,
                 f"missing required source: {source}")
-    require((root / ".claude/generated/_global.md").read_text(encoding="utf-8").splitlines()[0]
+    require((root / ".claude/pipeline/generated/_global.md").read_text(encoding="utf-8").splitlines()[0]
             == gen_rules.GENERATED_HEADER.strip(), "malformed generated global header")
     return sources
 

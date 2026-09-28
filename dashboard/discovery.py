@@ -86,14 +86,16 @@ def _classify_agent(stem: str, description: str) -> str:
 
 
 def discover_skills() -> list:
-    skills_dir = _DISCOVERY_REPO_ROOT / ".claude" / "skills"
+    # Sources live in the package (ADR-0092 D1, slice #1604); .claude/skills/
+    # now holds only generated shims (ADR-0092 D2), never the discovery input.
+    skills_dir = _DISCOVERY_REPO_ROOT / ".claude" / "pipeline" / "skills"
     skills = []
     if not skills_dir.exists():
         return skills
     # Enumerate via git ls-files so untracked/stale dirs are invisible (#999).
     # Graceful fallback to fs-glob when git is unavailable (non-git context).
     tracked = (
-        _tracked_files(_DISCOVERY_REPO_ROOT, ".claude/skills/*/SKILL.md")
+        _tracked_files(_DISCOVERY_REPO_ROOT, ".claude/pipeline/skills/*/SKILL.md")
         if _tracked_files is not None
         else None
     )
@@ -112,14 +114,17 @@ def discover_skills() -> list:
 
 
 def discover_agents() -> list:
-    agents_dir = _DISCOVERY_REPO_ROOT / ".claude" / "agents"
+    # Sources live in the package (ADR-0092 D1, slice #1604); .claude/agents/
+    # now holds only host-owned files or the generated shims at its pipeline/
+    # subdirectory (ADR-0092 D2), never the discovery input.
+    agents_dir = _DISCOVERY_REPO_ROOT / ".claude" / "pipeline" / "agents"
     agents = []
     if not agents_dir.exists():
         return agents
     # Enumerate via git ls-files so untracked/stale files are invisible (#999).
     # Graceful fallback to fs-glob when git is unavailable (non-git context).
     tracked = (
-        _tracked_files(_DISCOVERY_REPO_ROOT, ".claude/agents/*.md")
+        _tracked_files(_DISCOVERY_REPO_ROOT, ".claude/pipeline/agents/*.md")
         if _tracked_files is not None
         else None
     )

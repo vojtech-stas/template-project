@@ -8,7 +8,7 @@ description: "Run the full autonomous lifecycle - for one feature, or for the wh
 # Shared ship workflow
 
 Read [AGENTS.md](../../../AGENTS.md) and [the OpenAI execution contract](../../../docs/openai-workflow.md).
-Then execute [the canonical procedure](../../../.claude/skills/ship/SKILL.md) with that mapping. Do not copy or weaken its gates.
+Then execute [the canonical procedure](../../../.claude/pipeline/skills/ship/SKILL.md) with that mapping. Do not copy or weaken its gates.
 
 Only the controller dispatches independent native workers. Use verified
 isolated worktrees, the host's configured model, and truthful identity.

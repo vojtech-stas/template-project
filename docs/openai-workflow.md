@@ -142,7 +142,7 @@ separately: live UTF-8 requirements do not silently redefine a historical baseli
 
 ## Proof-gated completion
 
-The [qa-tester route table](../.claude/agents/qa-tester.md) is authoritative.
+The [qa-tester route table](../.claude/pipeline/agents/qa-tester.md) is authoritative.
 The adapter reads it at runtime; health's new-path mirror is regression-tested.
 AGENTS.md/.agents/** require command-run AND static. Slice #1440 also changes
 dashboard/health.py, so browser is required too. A caller cannot choose a weaker

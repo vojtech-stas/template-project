@@ -149,11 +149,16 @@ try:
         tool_response = json.dumps(tool_response, separators=(",", ":"))
 
     # SUBAGENT-EDIT NUDGE: PostToolUse Edit|MultiEdit|Write on .claude/agents/*.md
-    # → write to subagent-edits.log; NOT a workflow-events.jsonl event.
+    # (host-owned/shims) or .claude/pipeline/agents/*.md (package sources,
+    # ADR-0092 D1, slice #1604) → write to subagent-edits.log; NOT a
+    # workflow-events.jsonl event.
     if event_type == "post_tool":
         _fp = str(tool_input.get("file_path", ""))
         _tn2 = str(payload.get("tool_name", ""))
-        if _tn2 in ("Edit", "MultiEdit", "Write") and re.search(r'\.claude[/\\]agents[/\\].*\.md$', _fp):
+        if _tn2 in ("Edit", "MultiEdit", "Write") and (
+            re.search(r'\.claude[/\\]agents[/\\].*\.md$', _fp)
+            or re.search(r'\.claude[/\\]pipeline[/\\]agents[/\\].*\.md$', _fp)
+        ):
             _ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
             _nudge = "{} {} (edit detected; AS-AUDIT runs in CI CHECK 18)\n".format(_ts, _fp)
             _wdir = os.environ.get("WORKFLOW_LOG_DIR", "") or log_dir

@@ -211,13 +211,27 @@ def pristine(repo_root: Path) -> tuple[bool, str]:
 
 
 # ---------------------------------------------------------------------------
-# Shims (ADR-0092 D2) — this slice: skills/grill-me/ only.
+# Shims (ADR-0092 D2) — skills, agents and area rules (slice #1604 extends
+# slice 1's skills/grill-me/-only set to the whole D2 shim table).
 # ---------------------------------------------------------------------------
 
-# (package-relative source, repo-relative shim path)
-_SHIM_SPECS = [
-    ("skills/grill-me/SKILL.md", ".claude/skills/grill-me/SKILL.md"),
-]
+
+def _discover_shim_specs(pkg_root: Path) -> list[tuple[str, str]]:
+    """(package-relative source, repo-relative shim path) pairs, per the D2
+    shim table:
+      skills/<n>/SKILL.md -> .claude/skills/<n>/SKILL.md
+      agents/<n>.md        -> .claude/agents/pipeline/<n>.md
+      rules/<n>.md         -> .claude/rules/pipeline/<n>.md
+    `generated/` is never shimmed (imported instead, ADR-0092 D2)."""
+    specs: list[tuple[str, str]] = []
+    for skill_md in sorted((pkg_root / "skills").glob("*/SKILL.md")):
+        name = skill_md.parent.name
+        specs.append((f"skills/{name}/SKILL.md", f".claude/skills/{name}/SKILL.md"))
+    for agent_md in sorted((pkg_root / "agents").glob("*.md")):
+        specs.append((f"agents/{agent_md.name}", f".claude/agents/pipeline/{agent_md.name}"))
+    for rule_md in sorted((pkg_root / "rules").glob("*.md")):
+        specs.append((f"rules/{rule_md.name}", f".claude/rules/pipeline/{rule_md.name}"))
+    return specs
 
 _LINK_RE = re.compile(r"(\[[^\]]*\]\()([^)\s]+)(\))")
 
@@ -284,7 +298,7 @@ def _normalize_eol(text: str) -> str:
 
 
 def _shim_pairs(pkg_root: Path):
-    for source_rel, shim_rel in _SHIM_SPECS:
+    for source_rel, shim_rel in _discover_shim_specs(pkg_root):
         source_path = pkg_root / source_rel
         shim_path = pkg_root.parent.parent / shim_rel  # pkg_root = <repo>/.claude/pipeline
         yield source_rel, source_path, shim_path
@@ -477,6 +491,15 @@ def _prompt_path_subjects(repo_root: Path, pkg_root: Path) -> list[Path]:
 
 
 def prompt_path_arm(repo_root: Path, pkg_root: Path) -> list[str]:
+    # The "has this root moved" question is only answerable from the home
+    # repository's own git tree (root present == not yet migrated, root
+    # absent == migrated into the package). A host's tree never carried
+    # home-only roots (tools/, dashboard/, tests/, ...) to begin with, so
+    # evaluating the same predicate there would misread "never present" as
+    # "migrated" and flag every package-shipped reference to still-home-only
+    # tooling. Skip the moved-root scan outside home mode (ADR-0092 D1/D5).
+    if pc.mode(str(repo_root)) != "home":
+        return []
     failures = []
     moved_cache: dict[str, bool] = {}
     for subject in _prompt_path_subjects(repo_root, pkg_root):

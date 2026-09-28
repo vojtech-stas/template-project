@@ -1,7 +1,8 @@
 # OpenAI entrypoint
 
-Read [CLAUDE.md](CLAUDE.md), [.claude/generated/_global.md](.claude/generated/_global.md),
-[the repo map](.claude/generated/_repo-map.md), and
+Read [CLAUDE.md](CLAUDE.md), [.claude/pipeline/CLAUDE.md](.claude/pipeline/CLAUDE.md),
+[.claude/pipeline/generated/_global.md](.claude/pipeline/generated/_global.md),
+[the repo map](.claude/pipeline/generated/_repo-map.md), and
 [the OpenAI execution contract](docs/openai-workflow.md) explicitly.
 Claude imports and area-rule autoloading are not OpenAI instruction loading.
 

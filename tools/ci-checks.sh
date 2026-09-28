@@ -176,7 +176,7 @@ ALLOWLIST = [
     # Pedagogical example in AC-SUPERSEDES-WITHOUT-HEADER rule body — fictional
     # scenario contrasting "ADR-0002 D1" with a real policy. ADR-0002 has no D1
     # (only D9-revised). Citation is illustrative, not referential.
-    ('.claude/agents/adr-critic.md', '0002', 1,
+    ('.claude/pipeline/agents/adr-critic.md', '0002', 1,
      'pedagogical example in rule body; fictional D1 for illustration only'),
 
     # ADR-0081's Propagation ledger names the adr-critic.md / "ADR-0002 D1"
@@ -322,9 +322,12 @@ python3 - << 'PYEOF'
 import re, os, sys, glob
 
 REPO_ROOT = os.getcwd()
-AGENTS_DIR = os.path.join(REPO_ROOT, '.claude', 'agents')
+# ADR-0092 D1 (slice #1604): agent SOURCES live in the package now; the bare
+# .claude/agents/ root holds only shims or host-owned files.
+AGENTS_DIR = os.path.join(REPO_ROOT, '.claude', 'pipeline', 'agents')
 CONSTANTS_PY = os.path.join(REPO_ROOT, 'dashboard', '_constants.py')
-CLAUDE_MD  = os.path.join(REPO_ROOT, 'CLAUDE.md')
+# The critic-count/name prose moved into the package CLAUDE.md (ADR-0092 D1).
+CLAUDE_MD  = os.path.join(REPO_ROOT, '.claude', 'pipeline', 'CLAUDE.md')
 README_MD  = os.path.join(REPO_ROOT, 'README.md')
 
 fail_msgs = []
@@ -366,7 +369,7 @@ else:
             if critic not in agent_stems:
                 fail(
                     f'CHECK 7(a) — spec critic "{critic}" has no '
-                    f'.claude/agents/{critic}.md file'
+                    f'.claude/pipeline/agents/{critic}.md file'
                 )
 
         # Every *-critic.md file must appear in the spec (or be reviewer.md)
@@ -374,7 +377,7 @@ else:
         for stem in sorted(agent_stems):
             if stem.endswith('-critic') and stem not in spec_critics:
                 fail(
-                    f'CHECK 7(a) — .claude/agents/{stem}.md exists but '
+                    f'CHECK 7(a) — .claude/pipeline/agents/{stem}.md exists but '
                     f'"{stem}" is not in KNOWN_CRITICS spec'
                 )
 
@@ -408,23 +411,23 @@ if not readme_text:
     print('SKIP: CHECK 7(b) — README.md not found (soft-degrade)')
 else:
     # Find the "## Adversarial critics" section and extract linked agent names.
-    # Pattern: **[`name`](.claude/agents/name.md)**
+    # Pattern: **[`name`](.claude/pipeline/agents/name.md)** (ADR-0092 D1)
     section_m = re.search(
         r'##\s+Adversarial critics\s*(.*?)(?=\n## |\Z)',
         readme_text, re.DOTALL
     )
     if section_m:
         section = section_m.group(1)
-        # Extract stem from links: .claude/agents/<stem>.md
+        # Extract stem from links: .claude/pipeline/agents/<stem>.md
         readme_critic_stems = set(
-            re.findall(r'\.claude/agents/([a-z0-9-]+)\.md', section)
+            re.findall(r'\.claude/pipeline/agents/([a-z0-9-]+)\.md', section)
         )
         for stem in sorted(readme_critic_stems):
             agent_path = os.path.join(AGENTS_DIR, stem + '.md')
             if not os.path.isfile(agent_path):
                 fail(
                     f'CHECK 7(b) — README "Adversarial critics" lists '
-                    f'"{stem}" but .claude/agents/{stem}.md does not exist'
+                    f'"{stem}" but .claude/pipeline/agents/{stem}.md does not exist'
                 )
     # If section not found, soft-skip (README structure may differ)
 
@@ -466,7 +469,7 @@ else:
                 if name not in agent_stems_c:
                     fail(
                         f'CHECK 7(c) — CLAUDE.md names critic "{name}" '
-                        f'but .claude/agents/{name}.md does not exist'
+                        f'but .claude/pipeline/agents/{name}.md does not exist'
                     )
 
 # ------------------------------------------------------------------ output --
@@ -609,12 +612,12 @@ CRITIC_FILES=()
 # than passing the literal pattern string through (closes #667).
 shopt -s nullglob
 # Collect all *-critic.md files
-for f in .claude/agents/*-critic.md; do
+for f in .claude/pipeline/agents/*-critic.md; do
     [ -f "$f" ] && CRITIC_FILES+=("$f")
 done
 shopt -u nullglob
 # Add reviewer.md
-[ -f ".claude/agents/reviewer.md" ] && CRITIC_FILES+=(".claude/agents/reviewer.md")
+[ -f ".claude/pipeline/agents/reviewer.md" ] && CRITIC_FILES+=(".claude/pipeline/agents/reviewer.md")
 
 for agent_file in "${CRITIC_FILES[@]}"; do
     for key in VERDICT REASON ROUND "CRITIC:"; do
@@ -627,7 +630,7 @@ done
 
 # --- 10b: Generator files: DIDNT_TOUCH: and CONCERNS: ---
 GENERATOR_FILES=()
-for f in .claude/agents/implementer.md .claude/agents/slicer.md .claude/agents/qa-tester.md; do
+for f in .claude/pipeline/agents/implementer.md .claude/pipeline/agents/slicer.md .claude/pipeline/agents/qa-tester.md; do
     [ -f "$f" ] && GENERATOR_FILES+=("$f")
 done
 
@@ -652,7 +655,7 @@ fi
 #   Whole-file fixed-string grep; no network calls; deterministic.
 # ---------------------------------------------------------------------------
 echo "--- CHECK 11: qa-tester.md documents PROOF_SOURCE ---"
-QA_TESTER=".claude/agents/qa-tester.md"
+QA_TESTER=".claude/pipeline/agents/qa-tester.md"
 if [ ! -f "$QA_TESTER" ]; then
     fail "CHECK 11 — $QA_TESTER not found"
 else

@@ -883,15 +883,17 @@ def check_docs2_adr_index_reverse() -> dict:
 
 
 def check_docs3_claude_md_agents() -> dict:
-    """DOCS-3: every .claude/agents/*.md ref in CLAUDE.md Map exists."""
-    claude_md = _HEALTH_REPO_ROOT / "CLAUDE.md"
+    """DOCS-3: every .claude/pipeline/agents/*.md ref in the pipeline
+    CLAUDE.md Map exists (ADR-0092 D1: the Map moved with the content it
+    describes, slice #1604)."""
+    claude_md = _HEALTH_REPO_ROOT / ".claude" / "pipeline" / "CLAUDE.md"
     if not claude_md.exists():
-        return {"id": "DOCS-3", "result": "FAIL", "detail": "CLAUDE.md missing"}
+        return {"id": "DOCS-3", "result": "FAIL", "detail": "pipeline CLAUDE.md missing"}
     text = _read_file(claude_md)
-    refs = re.findall(r'\.claude/agents/([a-z-]+\.md)', text)
+    refs = re.findall(r'\.claude/pipeline/agents/([a-z-]+\.md)', text)
     missing = []
     for ref in set(refs):
-        if not (_HEALTH_REPO_ROOT / ".claude" / "agents" / ref).exists():
+        if not (_HEALTH_REPO_ROOT / ".claude" / "pipeline" / "agents" / ref).exists():
             missing.append(ref)
     if missing:
         return {"id": "DOCS-3", "result": "FAIL", "detail": f"Missing agents: {missing}"}
@@ -899,15 +901,16 @@ def check_docs3_claude_md_agents() -> dict:
 
 
 def check_docs4_claude_md_skills() -> dict:
-    """DOCS-4: every .claude/skills/*/SKILL.md ref in CLAUDE.md Map exists."""
-    claude_md = _HEALTH_REPO_ROOT / "CLAUDE.md"
+    """DOCS-4: every .claude/pipeline/skills/*/SKILL.md ref in the pipeline
+    CLAUDE.md Map exists (ADR-0092 D1, slice #1604)."""
+    claude_md = _HEALTH_REPO_ROOT / ".claude" / "pipeline" / "CLAUDE.md"
     if not claude_md.exists():
-        return {"id": "DOCS-4", "result": "FAIL", "detail": "CLAUDE.md missing"}
+        return {"id": "DOCS-4", "result": "FAIL", "detail": "pipeline CLAUDE.md missing"}
     text = _read_file(claude_md)
-    refs = re.findall(r'\.claude/skills/([a-z-]+)/SKILL\.md', text)
+    refs = re.findall(r'\.claude/pipeline/skills/([a-z-]+)/SKILL\.md', text)
     missing = []
     for ref in set(refs):
-        if not (_HEALTH_REPO_ROOT / ".claude" / "skills" / ref / "SKILL.md").exists():
+        if not (_HEALTH_REPO_ROOT / ".claude" / "pipeline" / "skills" / ref / "SKILL.md").exists():
             missing.append(ref)
     if missing:
         return {"id": "DOCS-4", "result": "FAIL", "detail": f"Missing skills: {missing}"}
@@ -942,8 +945,8 @@ def check_docs6_glossary_md_refs() -> dict:
     formerly allowlisted for the same reason; it was deleted by PRD #919 slice #920.
     """
     allowlist = {
-        ".claude/skills/grill-me/SKILL.md",
-        ".claude/agents/codebase-critic.md",
+        ".claude/pipeline/skills/grill-me/SKILL.md",
+        ".claude/pipeline/agents/codebase-critic.md",
     }
     offenders = []
     # Enumerate only git-tracked md files (issue #926: skip untracked on-disk files).
@@ -1053,10 +1056,11 @@ def check_docs8_supersession_notes() -> dict:
 
 
 def check_docs9_glossary_cap() -> dict:
-    """DOCS-9 (WARN): CLAUDE.md glossary entry count <= 35."""
-    claude_md = _HEALTH_REPO_ROOT / "CLAUDE.md"
+    """DOCS-9 (WARN): CLAUDE.md glossary entry count <= 35 (the Glossary
+    section moved to the pipeline CLAUDE.md per ADR-0092 D1, slice #1604)."""
+    claude_md = _HEALTH_REPO_ROOT / ".claude" / "pipeline" / "CLAUDE.md"
     if not claude_md.exists():
-        return {"id": "DOCS-9", "result": "WARN", "detail": "CLAUDE.md missing"}
+        return {"id": "DOCS-9", "result": "WARN", "detail": "pipeline CLAUDE.md missing"}
     text = _read_file(claude_md)
     lines = text.splitlines()
     in_glossary = False
@@ -1089,13 +1093,14 @@ def check_docs10_backlog_surfacing() -> dict:
                  "codebase-critic.md"}
     pattern = re.compile(r'(`backlog`-labeled|--label backlog)')
     offenders = []
-    # Enumerate only git-tracked agent/skill files (issue #926: skip untracked decoys).
-    for pathspec in [".claude/agents/*.md", ".claude/skills/**/*.md"]:
+    # Enumerate only git-tracked agent/skill files (issue #926: skip untracked
+    # decoys). Sources live in the package now (ADR-0092 D1, slice #1604).
+    for pathspec in [".claude/pipeline/agents/*.md", ".claude/pipeline/skills/**/*.md"]:
         tracked = _tracked_files(_HEALTH_REPO_ROOT, pathspec)
         if tracked is None:
             # Fallback: git unavailable — use filesystem rglob for the corresponding dir.
             parts = pathspec.split("/")
-            base = _HEALTH_REPO_ROOT / parts[0] / parts[1]
+            base = _HEALTH_REPO_ROOT.joinpath(*parts[:3])
             tracked = list(base.rglob("*.md")) if base.is_dir() else []
         for md_file in tracked:
             rel = str(md_file.relative_to(_HEALTH_REPO_ROOT)).replace("\\", "/")
@@ -1123,11 +1128,11 @@ _DOCS11_ALLOWLIST: frozenset = frozenset({
     # prd-critic.md: "per ADR-0031 D10" appears inside a rubric example string
     # demonstrating how a PRD author would cite an ADR in a non-goal entry.
     # This is illustrative/historical text, not live authority governing behavior.
-    (".claude/agents/prd-critic.md", "0031"),
+    (".claude/pipeline/agents/prd-critic.md", "0031"),
     # slicer-critic.md: "ADR-0031 — T3 thin-prompt migration" in the References
     # section is a historical migration provenance note.  slicer-critic is owned
     # by slices 3–5 of PRD #794; edits are deferred to avoid cross-slice conflicts.
-    (".claude/agents/slicer-critic.md", "0031"),
+    (".claude/pipeline/agents/slicer-critic.md", "0031"),
 })
 
 
@@ -1170,8 +1175,9 @@ def check_docs11_dead_citations() -> dict:
 
     Implements ADR-0064 D2.
 
-    Scans .claude/agents/*.md, .claude/skills/*/SKILL.md, and .claude/settings.json
-    for citations of ADR numbers that are fully superseded in decisions/README.md
+    Scans .claude/pipeline/agents/*.md, .claude/pipeline/skills/*/SKILL.md, and
+    .claude/settings.json for citations of ADR numbers that are fully superseded
+    in decisions/README.md
     (status contains "superseded entirely" or "Superseded in full"), unless:
       (a) the citing line also names the superseding ADR, OR
       (b) the (file, adr_number) pair appears in _DOCS11_ALLOWLIST.
@@ -1188,14 +1194,15 @@ def check_docs11_dead_citations() -> dict:
 
     offenders = []
     settings_file = _HEALTH_REPO_ROOT / ".claude" / "settings.json"
-    # Enumerate only git-tracked agent/skill files (issue #926: skip untracked decoys).
+    # Enumerate only git-tracked agent/skill files (issue #926: skip untracked
+    # decoys). Sources live in the package now (ADR-0092 D1, slice #1604).
     files_to_scan: list = []
-    for pathspec in [".claude/agents/*.md", ".claude/skills/**/*.md"]:
+    for pathspec in [".claude/pipeline/agents/*.md", ".claude/pipeline/skills/**/*.md"]:
         tracked = _tracked_files(_HEALTH_REPO_ROOT, pathspec)
         if tracked is None:
             # Fallback: git unavailable — use filesystem rglob.
             parts = pathspec.split("/")
-            base = _HEALTH_REPO_ROOT / parts[0] / parts[1]
+            base = _HEALTH_REPO_ROOT.joinpath(*parts[:3])
             tracked = sorted(base.rglob("*.md")) if base.is_dir() else []
         files_to_scan.extend(sorted(tracked))
     if settings_file.exists():
@@ -1261,13 +1268,19 @@ _GUARDRAIL_PATHS: tuple = (
     ".claude/hooks/",
     "tools/ci-checks.sh",
     ".githooks/",
-    # Critic agent prompts
+    # Critic agent prompts (pre-move paths stay: a promotion diff spanning
+    # the ADR-0092 D1 move still names them, slice #1604)
     ".claude/agents/reviewer.md",
     ".claude/agents/prd-critic.md",
     ".claude/agents/adr-critic.md",
     ".claude/agents/slicer-critic.md",
     ".claude/agents/backlog-critic.md",
     ".claude/agents/codebase-critic.md",
+    # Package critic SOURCES (ADR-0092 D1/D2) — reviewer.md named explicitly
+    # since it does not match the *-critic.md pattern the regex below covers
+    ".claude/pipeline/agents/reviewer.md",
+    # Package critic SHIMS (ADR-0092 D2) — Claude Code actually runs these
+    ".claude/agents/pipeline/reviewer.md",
     # Release-gate definition (the check + promotion tooling)
     "dashboard/health.py",
     "tools/promote.sh",
@@ -1289,8 +1302,12 @@ def _is_guardrail_path(path: str) -> bool:
         else:
             if path == gp:
                 return True
-    # Critic-md pattern: .claude/agents/*-critic.md (any critic name)
+    # Critic-md pattern: .claude/agents/*-critic.md (any critic name), widened
+    # per ADR-0092 D2 (slice #1604) to also cover the package source
+    # (.claude/pipeline/agents/) and its shim (.claude/agents/pipeline/).
     if re.match(r'^\.claude/agents/[^/]+-critic\.md$', path):
+        return True
+    if re.match(r'^\.claude/(pipeline/agents|agents/pipeline)/[^/]+-critic\.md$', path):
         return True
     return False
 
@@ -2133,12 +2150,13 @@ def _build_hook_trio_composite(
 
 
 def audit_subagents() -> dict:
-    agents_dir = _HEALTH_REPO_ROOT / ".claude" / "agents"
+    # Sources live in the package now (ADR-0092 D1, slice #1604).
+    agents_dir = _HEALTH_REPO_ROOT / ".claude" / "pipeline" / "agents"
     results = {}
     if not agents_dir.exists():
         return results
     # Enumerate only git-tracked agent files (issue #926: skip untracked decoys).
-    tracked = _tracked_files(_HEALTH_REPO_ROOT, ".claude/agents/*.md")
+    tracked = _tracked_files(_HEALTH_REPO_ROOT, ".claude/pipeline/agents/*.md")
     if tracked is None:
         # Fallback: git unavailable — use filesystem glob.
         tracked = sorted(agents_dir.glob("*.md"))
@@ -2171,7 +2189,7 @@ def audit_subagents() -> dict:
 def check_audit_subagents() -> dict:
     """AS-AUDIT: aggregate zero-arg wrapper over all AS-* subagent-prompt checks.
 
-    Runs audit_subagents() across all .claude/agents/*.md files and aggregates
+    Runs audit_subagents() across all .claude/pipeline/agents/*.md files and aggregates
     per-file, per-check results into a single registry-compatible verdict:
       FAIL  — any individual check returned FAIL
       WARN  — any individual check returned WARN (and none FAIL)
@@ -2667,8 +2685,8 @@ def check_rule_coverage() -> dict:
 
     Path B — verified RULE_ENFORCER_MAP entry (slice #851 addition):
       Each enforcer in RULE_ENFORCER_MAP is verified at runtime:
-        - "R-XXX"    → must appear as "### R-XXX" in .claude/agents/reviewer.md
-        - "SC-XXX"   → must appear in .claude/agents/slicer-critic.md
+        - "R-XXX"    → must appear as "### R-XXX" in .claude/pipeline/agents/reviewer.md
+        - "SC-XXX"   → must appear in .claude/pipeline/agents/slicer-critic.md
         - "advisory" → always counts as covered (explicitly tagged)
         - other      → must be a key in CHECK_REGISTRY
 
@@ -2678,9 +2696,11 @@ def check_rule_coverage() -> dict:
 
     Always WARNs (never FAILs) until the wave-3 retrofit pass; per ADR-0056 D3.
     """
-    claude_md = _HEALTH_REPO_ROOT / "CLAUDE.md"
+    # Section 1's numbered rules moved to the pipeline CLAUDE.md (ADR-0092 D1,
+    # slice #1604).
+    claude_md = _HEALTH_REPO_ROOT / ".claude" / "pipeline" / "CLAUDE.md"
     if not claude_md.exists():
-        return {"id": "RULE-COVERAGE", "result": "WARN", "detail": "CLAUDE.md missing"}
+        return {"id": "RULE-COVERAGE", "result": "WARN", "detail": "pipeline CLAUDE.md missing"}
 
     text = _read_file(claude_md)
 
@@ -2705,8 +2725,8 @@ def check_rule_coverage() -> dict:
     _RUBRIC_PAT = re.compile(r'\b(R|AC|SC|PC)-[A-Z]{2,}')
 
     # Path B: Load side-files for enforcer verification (once per call).
-    reviewer_md_path = _HEALTH_REPO_ROOT / ".claude" / "agents" / "reviewer.md"
-    slicer_critic_path = _HEALTH_REPO_ROOT / ".claude" / "agents" / "slicer-critic.md"
+    reviewer_md_path = _HEALTH_REPO_ROOT / ".claude" / "pipeline" / "agents" / "reviewer.md"
+    slicer_critic_path = _HEALTH_REPO_ROOT / ".claude" / "pipeline" / "agents" / "slicer-critic.md"
     reviewer_text = _read_file(reviewer_md_path) if reviewer_md_path.exists() else ""
     slicer_text = _read_file(slicer_critic_path) if slicer_critic_path.exists() else ""
 
@@ -3180,6 +3200,9 @@ _ROUTE_TABLE = [
     (".claude/settings.json", "hook-fire"),
     ("tools/**", "command-run"),
     (".claude/skills/**", "command-run"),
+    (".claude/pipeline/skills/**", "command-run"),
+    (".claude/pipeline/agents/**", "command-run"),
+    (".claude/pipeline/tools/**", "command-run"),
     (".github/workflows/**", "command-run"),
     ("decisions/**", "static"),
     ("docs/**", "static"),
@@ -5208,24 +5231,25 @@ def _insert_dashboard_sys_path() -> None:
 def check_frontmatter_coverage() -> dict:
     """FRONTMATTER-COVERAGE: % subagent files with explicit model: frontmatter.
 
-    Implements ADR-0027 D1 standing invariant (every .claude/agents/*.md
-    MUST have explicit model: frontmatter). Reports honest current value; PASS=100%.
+    Implements ADR-0027 D1 standing invariant (every .claude/pipeline/agents/*.md
+    MUST have explicit model: frontmatter; sources live in the package per
+    ADR-0092 D1, slice #1604). Reports honest current value; PASS=100%.
 
     PASS when all agent files have explicit model: frontmatter.
     FAIL when any agent file is missing the model: field.
     WARN when the agents directory is missing or unreadable.
     """
-    agents_dir = _HEALTH_REPO_ROOT / ".claude" / "agents"
+    agents_dir = _HEALTH_REPO_ROOT / ".claude" / "pipeline" / "agents"
     if not agents_dir.exists():
         return {
             "id": "FRONTMATTER-COVERAGE",
             "result": "WARN",
-            "detail": ".claude/agents/ directory not found",
+            "detail": ".claude/pipeline/agents/ directory not found",
             "covered": 0, "total": 0, "missing": [],
         }
 
     # Enumerate only git-tracked agent files (issue #926: skip untracked decoys).
-    agent_files = _tracked_files(_HEALTH_REPO_ROOT, ".claude/agents/*.md")
+    agent_files = _tracked_files(_HEALTH_REPO_ROOT, ".claude/pipeline/agents/*.md")
     if agent_files is None:
         # Fallback: git unavailable — use filesystem glob.
         agent_files = sorted(agents_dir.glob("*.md"))
@@ -5233,7 +5257,7 @@ def check_frontmatter_coverage() -> dict:
         return {
             "id": "FRONTMATTER-COVERAGE",
             "result": "WARN",
-            "detail": "no .md files in .claude/agents/",
+            "detail": "no .md files in .claude/pipeline/agents/",
             "covered": 0, "total": 0, "missing": [],
         }
 
@@ -7446,9 +7470,9 @@ def check_drain_ledger(ledger_dir: str | None = None) -> dict:
     No ledger present → WARN (a drain may simply never have run here).
 
     What to do on FAIL: read the named record in the ledger file and fix the
-    emitting protocol in `.claude/skills/ship/SKILL.md`'s Queue-drain entry
-    mode — the ledger is the run's durable state, and a malformed one means a
-    resumed session cannot trust it.
+    emitting protocol in `.claude/pipeline/skills/ship/SKILL.md`'s Queue-drain
+    entry mode — the ledger is the run's durable state, and a malformed one
+    means a resumed session cannot trust it.
     """
     import json as _json
 

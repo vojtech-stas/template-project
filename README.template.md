@@ -39,13 +39,13 @@ You play **senior engineer**. AI agents play **the team**. The template ships an
 
 Everything in between — PRD authoring, slice decomposition, implementation, review, merge — is autonomous, gated by adversarial AI critics rather than per-stage human approval.
 
-The middle is glued together by one command: **`/ship`**. After `/grill-me`, you invoke `/ship` and the pipeline chains `to-prd → prd-critic → slicer → slicer-critic → implementer → reviewer → merge` per slice until the PRD is done. Stage 4 (implementation) is autonomous via the [`implementer`](.claude/agents/implementer.md) subagent — `/ship` auto-invokes it on each posted slice with DAG-aware parallel batching, no manual implementation trigger needed (per [ADR-0010](decisions/0010-implementer-subagent-auto-pipeline.md)). See [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D2 for the 5-stage pipeline and [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D4 for why there are no human gates in the middle.
+The middle is glued together by one command: **`/ship`**. After `/grill-me`, you invoke `/ship` and the pipeline chains `to-prd → prd-critic → slicer → slicer-critic → implementer → reviewer → merge` per slice until the PRD is done. Stage 4 (implementation) is autonomous via the [`implementer`](.claude/pipeline/agents/implementer.md) subagent — `/ship` auto-invokes it on each posted slice with DAG-aware parallel batching, no manual implementation trigger needed (per [ADR-0010](decisions/0010-implementer-subagent-auto-pipeline.md)). See [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D2 for the 5-stage pipeline and [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D4 for why there are no human gates in the middle.
 
-**QA stage (Tier 1, ADR-0020 — runnable end-to-end via `/qa-plan`).** The terminal `/qa-plan` checkpoint is a writer/executor split: the writer (skill, main-agent context) LLM-extracts each PRD §2 acceptance criterion into a mechanical bash check or a `JUDGMENT` flag, persists the plan as a PRD comment for audit + re-runnability, then dispatches the [`qa-tester`](.claude/agents/qa-tester.md) generator subagent (tools: Read/Bash/Grep only) to execute the plan and return a per-criterion verdict table. Judgment rows and EXTRACT_FAILED rows are surfaced to you via `AskUserQuestion`; on all-PASS + all-judgment-ACCEPT the PRD auto-closes. Shipped through the autonomous pipeline as the QA writer/executor split per [ADR-0020](decisions/0020-qa-automation-writer-executor.md). Per [ADR-0020](decisions/0020-qa-automation-writer-executor.md) D9 + [ADR-0046](decisions/0046-codebase-critic-and-parsimony-reframe.md) D1 the critic-parsimony principle is honored — qa-tester is the 3rd generator (alongside `slicer` and `implementer`), not a critic.
+**QA stage (Tier 1, ADR-0020 — runnable end-to-end via `/qa-plan`).** The terminal `/qa-plan` checkpoint is a writer/executor split: the writer (skill, main-agent context) LLM-extracts each PRD §2 acceptance criterion into a mechanical bash check or a `JUDGMENT` flag, persists the plan as a PRD comment for audit + re-runnability, then dispatches the [`qa-tester`](.claude/pipeline/agents/qa-tester.md) generator subagent (tools: Read/Bash/Grep only) to execute the plan and return a per-criterion verdict table. Judgment rows and EXTRACT_FAILED rows are surfaced to you via `AskUserQuestion`; on all-PASS + all-judgment-ACCEPT the PRD auto-closes. Shipped through the autonomous pipeline as the QA writer/executor split per [ADR-0020](decisions/0020-qa-automation-writer-executor.md). Per [ADR-0020](decisions/0020-qa-automation-writer-executor.md) D9 + [ADR-0046](decisions/0046-codebase-critic-and-parsimony-reframe.md) D1 the critic-parsimony principle is honored — qa-tester is the 3rd generator (alongside `slicer` and `implementer`), not a critic.
 
 **Forward queue.** Future-PRD ideas live as `backlog`-labeled GitHub Issues + a "Backlog" column on the project board (per [ADR-0006](decisions/0006-backlog-and-session-continuity.md)). Browse with `gh issue list --label backlog`. Promotion to a PRD: `gh issue edit <N> --remove-label backlog --add-label prd` + `/grill-me #<N>`.
 
-**Captured → backlog autopilot.** Per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md), any agent that surfaces a deferred-work idea writes it as a `captured`-labeled issue and invokes the [`/promote-to-backlog`](.claude/skills/promote-to-backlog/SKILL.md) skill inline. The [`backlog-critic`](.claude/agents/backlog-critic.md) subagent gates the promotion against a 4-criterion rubric (actionable / scoped / not duplicate / clear); on APPROVE the autopilot swaps labels `captured` → `backlog`, on BLOCK the item stays in the captured tier as a graveyard for lazy human review (default-conservative per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D4).
+**Captured → backlog autopilot.** Per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md), any agent that surfaces a deferred-work idea writes it as a `captured`-labeled issue and invokes the [`/promote-to-backlog`](.claude/pipeline/skills/promote-to-backlog/SKILL.md) skill inline. The [`backlog-critic`](.claude/pipeline/agents/backlog-critic.md) subagent gates the promotion against a 4-criterion rubric (actionable / scoped / not duplicate / clear); on APPROVE the autopilot swaps labels `captured` → `backlog`, on BLOCK the item stays in the captured tier as a graveyard for lazy human review (default-conservative per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D4).
 
 **Why two tiers?** `captured` is a low-bar safety net — agents capture deferred work indiscriminately (CLAUDE.md rule #11) so nothing gets lost; the autopilot's `backlog-critic` filters them down to the curated `backlog` queue you actually pick PRDs from. BLOCKed captures stay in the captured-tier graveyard for lazy human review — three options per item: cull (close), rescue (manually relabel `captured` → `backlog`), or restructure-and-recapture.
 
@@ -98,8 +98,8 @@ One-line definitions of the load-bearing terms. For the full canonical glossary 
 
 - **PRD** — feature-sized GitHub issue (label `prd`); top of the PRD → Slice → PR hierarchy.
 - **slice** — INVEST-shaped sub-issue of a PRD (label `slice`); one PR; ≤600 LoC diff.
-- **skill** — user-invocable command at `.claude/skills/<name>/SKILL.md` (e.g., `/ship`).
-- **subagent** — specialist at `.claude/agents/<name>.md` with isolated context + restricted tools.
+- **skill** — user-invocable command at `.claude/pipeline/skills/<name>/SKILL.md` (e.g., `/ship`).
+- **subagent** — specialist at `.claude/pipeline/agents/<name>.md` with isolated context + restricted tools.
 - **critic** — adversarial subagent judging a stage's output with APPROVE/BLOCK (≤3 rounds).
 - **generator** — subagent producing output (decompositions, code, test plans); paired with a critic.
 - **autopilot** — inline-firing mechanism (e.g., `/promote-to-backlog` after a captured-label issue).
@@ -121,7 +121,7 @@ You can't via the pipeline. The joint-APPROVE gate ([ADR-0004](decisions/0004-by
 
 ### How do I add a new subagent?
 
-Author `.claude/agents/<name>.md` per [ADR-0001](decisions/0001-foundational-design.md) D6; declare tool boundaries in the frontmatter; write the body per ADR-0001 D6 and the embedded standards in the subagent's own file (the quality rubric is inlined directly in each subagent's body). If your new subagent is a critic, honor the critic-parsimony principle ([ADR-0046](decisions/0046-codebase-critic-and-parsimony-reframe.md) D1) — minimize critics; each must earn its place against a distinct concern; a new ADR must justify why an existing critic's rubric can't absorb the concern.
+Author `.claude/pipeline/agents/<name>.md` per [ADR-0001](decisions/0001-foundational-design.md) D6; declare tool boundaries in the frontmatter; write the body per ADR-0001 D6 and the embedded standards in the subagent's own file (the quality rubric is inlined directly in each subagent's body). If your new subagent is a critic, honor the critic-parsimony principle ([ADR-0046](decisions/0046-codebase-critic-and-parsimony-reframe.md) D1) — minimize critics; each must earn its place against a distinct concern; a new ADR must justify why an existing critic's rubric can't absorb the concern.
 
 ### Why so many ADRs?
 
@@ -160,7 +160,7 @@ Per [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D1, the unit-
 
 ## Adversarial critics
 
-Per [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D2, every generation stage in the pipeline is paired with an adversarial critic running a ≤3-round APPROVE/BLOCK loop. The project applies the **critic-parsimony principle** per [ADR-0046](decisions/0046-codebase-critic-and-parsimony-reframe.md) D1 — minimize critics; each must earn its place against a distinct concern; adding one requires an ADR that makes that justification explicitly. Today's critics (auto-generated from `.claude/agents/`):
+Per [ADR-0003](decisions/0003-autonomous-pipeline-with-critics.md) D2, every generation stage in the pipeline is paired with an adversarial critic running a ≤3-round APPROVE/BLOCK loop. The project applies the **critic-parsimony principle** per [ADR-0046](decisions/0046-codebase-critic-and-parsimony-reframe.md) D1 — minimize critics; each must earn its place against a distinct concern; adding one requires an ADR that makes that justification explicitly. Today's critics (auto-generated from `.claude/pipeline/agents/`):
 
 {{GENERATED:critic-list}}
 
@@ -216,7 +216,7 @@ Then: `/grill-me` to start a new feature, `/ship` to hand off to the autonomous 
 ## What's inside
 
 - **[CLAUDE.md](CLAUDE.md)** — auto-loaded operating system; canonical home for cross-cutting rules + Map + Glossary INDEX.
-- **[`.claude/skills/`](.claude/skills/)** and **[`.claude/agents/`](.claude/agents/)** — pipeline skills and subagents. See the Map table in [CLAUDE.md](CLAUDE.md) for what lives where.
+- **[`.claude/pipeline/skills/`](.claude/pipeline/skills/)** and **[`.claude/pipeline/agents/`](.claude/pipeline/agents/)** — pipeline skills and subagents. See the Map table in [CLAUDE.md](CLAUDE.md) for what lives where.
 - **[`decisions/`](decisions/)** — Architecture Decision Records. See [`decisions/README.md`](decisions/README.md) for the index, conventions, and the strict immutability rule.
 
 All operational content lives in skills + subagents + CLAUDE.md + ADRs; no separate KB layer per [ADR-0032](decisions/0032-workflow-only-architecture.md).

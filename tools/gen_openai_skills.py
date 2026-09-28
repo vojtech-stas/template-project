@@ -17,7 +17,7 @@ def repo_root() -> Path:
 
 
 def render(root: Path, name: str) -> str:
-    source = root / ".claude" / "skills" / name / "SKILL.md"
+    source = root / ".claude" / "pipeline" / "skills" / name / "SKILL.md"
     text = source.read_text(encoding="utf-8")
     match = re.match(r"\A---\n(.*?)\n---\n", text, re.S)
     if not match:
@@ -37,7 +37,7 @@ def render(root: Path, name: str) -> str:
         "# Shared " + name + " workflow\n\n"
         "Read [AGENTS.md](../../../AGENTS.md) and "
         "[the OpenAI execution contract](../../../docs/openai-workflow.md).\n"
-        "Then execute [the canonical procedure](../../../.claude/skills/" + name
+        "Then execute [the canonical procedure](../../../.claude/pipeline/skills/" + name
         + "/SKILL.md) with that mapping. Do not copy or weaken its gates.\n\n"
         "Only the controller dispatches independent native workers. Use verified\n"
         "isolated worktrees, the host's configured model, and truthful identity.\n"
