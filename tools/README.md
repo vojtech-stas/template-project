@@ -72,7 +72,7 @@ regardless of their branch state.
 
 ## release.py
 
-Release-mode primitives for `/ship release <version> lanes <N>`
+Release-mode primitives for `/ship release <version> [lanes <N>]`
 (per [ADR-0090](../decisions/0090-release-mode.md) D1/D3/D4). Four subcommands:
 
 **`freeze <V> --next <W> --features <list>|none`** — admits every open `bug`
@@ -85,7 +85,7 @@ issue, naming it.
 cited path runs exclusively. A group of more than `--max-per-lane` bugs
 (default 10) splits, in issue-number order, into sub-lanes that share the
 group's `group` id and run one after another; the same bugs always split the
-same way. This slice ships the bounded `N`-lane form only.
+same way.
 
 **`packet --sha <sha> <n>…`** (its builder is invoked internally by
 `tools/pipe/dispatch --lane`) — builds a lane's dispatch brief: the sha, then
@@ -100,14 +100,18 @@ it records its `dispatch` span, so a failed write leaves no span. When a gh
 read the packet depends on fails, no packet is printed and `dispatch --lane`
 refuses with no span.
 
-**`verify <n>…`** — runs each bug's resolved check (the issue's own `Check:`
+**`verify <n>… [--reopen]`** — runs each bug's resolved check (the issue's own `Check:`
 line, or else the `Check #<n>:` line of its most recently merged `lane` PR
 that closes it on a whole `Closes #<n>` line), with one layer of surrounding
 backticks stripped, and prints `PASS|FAIL|MISSING #<n>`; exits 0 iff every
 line is PASS. The lane PR comes from the issue's REST timeline
 (`cross-referenced` events), never the search index, and its check counts only
 when the PR's author is trusted as above. A gh read that fails or cannot be
-parsed prints `UNCONFIRMED #<n>`, never `MISSING`.
+parsed prints `UNCONFIRMED #<n>`, never `MISSING`. With `--reopen`, a closed
+issue whose line is `FAIL` or `MISSING` is reopened and gets a comment carrying
+its verify output (the line, the check and its source, `exit=` and the tail of
+the check's output); an `UNCONFIRMED` issue stays closed with no comment, and
+a `PASS` makes no mutating call (PRD #1501 criteria 35-36).
 
 Both branch roles resolve per-invocation via
 [`tools/pipeline_config.py`](pipeline_config.py) — never hardcoded, per

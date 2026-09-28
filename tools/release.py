@@ -33,15 +33,18 @@ Four subcommands:
     it depends on fails. `build_packet()` is the library entry point
     `tools/pipe/dispatch --lane` imports directly.
 
-  verify <n>...
+  verify <n>... [--reopen]
     Runs each bug's check (the issue's own `Check:` line, or else the
     `Check #<n>:` line of its most recently merged `lane` PR that closes
     it on a whole `Closes #<n>` line, found through the issue's REST
     timeline, never the search index), with one layer of surrounding
     backticks stripped, and prints exactly one `PASS|FAIL|MISSING #<n>`
     line per issue, or `UNCONFIRMED #<n>` when a gh read failed; exits 0
-    iff every line is PASS. `--reopen` is deferred to slice 2 (SPIDR
-    fallback, A10).
+    iff every line is PASS. `--reopen` is owned by slice #1508 (PRD #1501
+    AMENDMENT 2, criteria 35-36): it reopens a closed issue exactly when
+    its line is FAIL or MISSING, then posts that issue's verify output on
+    it as a comment. UNCONFIRMED never reopens or comments (the issue
+    stays closed; the exit stays non-zero), and PASS makes no mutating call.
 
 Stdlib only. No literal integration/release branch names (C1) — every
 branch reference resolves through `tools/pipeline_config.py`.
@@ -53,6 +56,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -768,37 +772,113 @@ def _resolve_check(owner, repo, num, issue=None, texts=None):
     return (check, f"lane PR #{pr.get('number')}") if check else (None, None)
 
 
+# The reopen comment keeps only the tail of a check's output.
+_REOPEN_OUTPUT_TAIL_LINES = 40
+
+
+def _reopen_with_comment(owner, repo, num, report):
+    """Criteria 35-36: reopen closed issue `num`, then post `report` (its
+    verify output) on it. The comment rides `--body-file`, never argv, so
+    a check's text reaches GitHub verbatim. A failed reopen is named on
+    stderr and gets no comment; returns True only when both calls succeed."""
+    res = _run_gh(["issue", "reopen", str(num), "--repo", f"{owner}/{repo}"])
+    if res.returncode != 0:
+        print(f"release.py verify: could not reopen #{num} via gh "
+              f"(rc={res.returncode}); no comment posted", file=sys.stderr)
+        return False
+    fd, path = tempfile.mkstemp(prefix=f"release-verify-{num}-", suffix=".md")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(report)
+        res = _run_gh(["issue", "comment", str(num), "--repo", f"{owner}/{repo}",
+                       "--body-file", path])
+    finally:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+    if res.returncode != 0:
+        print(f"release.py verify: reopened #{num} but could not post its verify "
+              f"output (rc={res.returncode})", file=sys.stderr)
+        return False
+    return True
+
+
+def _reopen_report(num, line, check=None, source=None, ignored=None, res=None):
+    """The `verify` output posted on a reopened issue (criterion 36): its
+    line, then either why no check ran or the check, its exit code and
+    the tail of its output in a fence longer than any backtick run in it."""
+    parts = ["`tools/release.py verify --reopen` reopened this issue.", "", line]
+    if check is None:
+        parts.append("No trusted `Check:` line on the issue and no trusted "
+                     f"`Check #{num}:` line on a merged lane PR.")
+        if ignored:
+            parts.append(f"Ignored the check of {ignored}.")
+    else:
+        parts.append(f"Check (from {source}): {check}")
+        parts.append(f"exit={res.returncode}")
+        output = ((res.stdout or "") + (res.stderr or "")).rstrip()
+        if output:
+            tail = "\n".join(output.splitlines()[-_REOPEN_OUTPUT_TAIL_LINES:])
+            fence = "```"
+            while fence in tail:
+                fence += "`"
+            parts += ["", fence, tail, fence]
+    return "\n".join(parts) + "\n"
+
+
 def _cmd_verify(args):
     owner_repo = _remote_owner_repo()
     if not owner_repo:
         print("release.py verify: refused — could not resolve owner/repo from origin", file=sys.stderr)
         return 1
     owner, repo = owner_repo
+    # A caller that builds its own Namespace without the flag never reopens.
+    reopen = getattr(args, "reopen", False)
 
     all_pass = True
     for num in args.issues:
+        issue = None
         try:
-            check, source = _resolve_check(owner, repo, num)
+            if reopen:
+                # Only --reopen needs the issue's state; without it the
+                # resolver reads the issue itself, exactly as before.
+                issue = _fetch_issue_json(owner, repo, num)
+                if issue is None:
+                    raise LookupUnconfirmed(f"could not read issue #{num} via gh")
+            check, source = _resolve_check(owner, repo, num, issue=issue)
         except LookupUnconfirmed as exc:
+            # Never reopened or commented on: a failed read proves nothing
+            # about the fix (criterion 35, AMENDMENT 2).
             print(f"UNCONFIRMED #{num}")
             print(f"release.py verify: #{num} unconfirmed — {exc}; not read as MISSING",
                   file=sys.stderr)
             all_pass = False
             continue
+        closed = issue is not None and issue.get("state") == "closed"
         if check is None:
             if source:
                 print(f"release.py verify: #{num} ignored the check of {source}", file=sys.stderr)
-            print(f"MISSING #{num}")
+            line = f"MISSING #{num}"
+            print(line)
             all_pass = False
+            if reopen and closed:
+                _reopen_with_comment(owner, repo, num, _reopen_report(num, line, ignored=source))
             continue
         res = subprocess.run(
             check, shell=True, capture_output=True, text=True, encoding="utf-8", errors="replace",
         )
         if res.returncode == 0:
             print(f"PASS #{num}")
-        else:
-            print(f"FAIL #{num}")
-            all_pass = False
+            continue
+        line = f"FAIL #{num}"
+        print(line)
+        all_pass = False
+        if reopen and closed:
+            _reopen_with_comment(
+                owner, repo, num,
+                _reopen_report(num, line, check=check, source=source, res=res),
+            )
     return 0 if all_pass else 1
 
 
@@ -832,6 +912,7 @@ def main(argv=None):
 
     p_verify = sub.add_parser("verify")
     p_verify.add_argument("issues", nargs="+")
+    p_verify.add_argument("--reopen", action="store_true")
     p_verify.set_defaults(func=_cmd_verify)
 
     args = parser.parse_args(argv)

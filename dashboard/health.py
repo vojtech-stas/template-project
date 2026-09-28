@@ -40,6 +40,8 @@ Exports:
     check_closed_prd_vs_qa() -> dict     (slice #1136/PRD #1127 cr.11b: closed PRD vs qa_verified PASS span)
     check_query_honesty() -> dict   (slice #1498/ADR-0087 D2: REST-attested canary over the `prd`-label path;
                                       gates every confirmed `--label` answer through the seam)
+    check_release_gate() -> dict    (slice #1508/ADR-0090 D1: a version's finish line — the lowest open
+                                      version milestone, unmilestoned bugs and unclassified issues)
     serve_health() -> dict          (TTL-cached; <200ms on second call)
     _health_background() -> None    (background thread target)
     _health_cache, _health_lock, _health_computing, _HEALTH_TTL
@@ -1856,6 +1858,7 @@ _CHECK_GROUP_MAP: dict = {
     "BRANCH-TOPOLOGY": "Release gates",
     "PROMOTION-LAG": "Release gates",
     "RELEASE-READY": "Release gates",
+    "RELEASE-GATE": "Release gates",
     "R-SENSITIVE-DETECTOR": "Release gates",
     "META-TRIPWIRE": "Release gates",
     # Session hygiene — log rotation, untracked files, required labels
@@ -1950,9 +1953,10 @@ PURPOSE_GROUP_MAP: dict = {
     "TESTS-COLLECTED":   "Isolation/hygiene",
     "DEPLOY-HANDSHAKE":  "Isolation/hygiene",
     # --- Release gates ---
-    # Promotion lag, R-SENSITIVE-DETECTOR advisory
+    # Promotion lag, R-SENSITIVE-DETECTOR advisory, a version's finish line
     "PROMOTION-LAG":        "Release gates",
     "R-SENSITIVE-DETECTOR": "Release gates",
+    "RELEASE-GATE":         "Release gates",
     # NOTE: BRANCH-TOPOLOGY, FRONTMATTER-COVERAGE, META-TRIPWIRE, RELEASE-READY
     # are intentionally NOT in this map (registered-but-UI-invisible; see above).
 }
@@ -6319,6 +6323,166 @@ def check_release_ready() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# RELEASE-GATE — a version's finish line (ADR-0090 D1, PRD #1501 slice #1508)
+# ---------------------------------------------------------------------------
+
+# The issue listing's bound. A listing that reaches it may be truncated, so
+# it reads unconfirmed, never PASS (slice #1508 constraint 3, A8).
+_RELEASE_GATE_ISSUE_LIMIT = 1000
+_RELEASE_GATE_VERSION_RE = re.compile(r"^v(\d+)\.(\d+)(?:\.(\d+))?$")
+# How many issue numbers a hold detail names per category.
+_RELEASE_GATE_NAMED = 20
+
+
+def _release_gate_parse_pages(payload: str) -> list:
+    """Flatten a `gh api --paginate` payload (one JSON array per page,
+    back-to-back) into one list. Raises ValueError on an empty or
+    unparsable payload — the caller reads that as unconfirmed, never as
+    an empty list (ADR-0087 D3)."""
+    import json as _json
+
+    decoder = _json.JSONDecoder()
+    idx, n, items, pages = 0, len(payload), [], 0
+    while idx < n:
+        while idx < n and payload[idx] in " \t\r\n":
+            idx += 1
+        if idx >= n:
+            break
+        doc, idx = decoder.raw_decode(payload, idx)
+        if not isinstance(doc, list):
+            raise ValueError("page is not a JSON array")
+        items.extend(doc)
+        pages += 1
+    if not pages:
+        raise ValueError("empty payload")
+    return items
+
+
+def _release_gate_nums(nums: list) -> str:
+    shown = ", ".join(f"#{n}" for n in nums[:_RELEASE_GATE_NAMED])
+    return shown + (f", … (+{len(nums) - _RELEASE_GATE_NAMED} more)"
+                    if len(nums) > _RELEASE_GATE_NAMED else "")
+
+
+def check_release_gate() -> dict:
+    """RELEASE-GATE: a version is done when its milestone holds no open non-residual issue, no open non-residual bug sits in no milestone, and every open non-residual issue carries exactly one class label (ADR-0090 D1).
+
+    Evaluates the lowest open version milestone (title `v<major>.<minor>
+    [.<patch>]`, compared numerically); `RELEASE_GATE_VERSION` names
+    another. Reads one milestone listing (`--paginate`) and one unfiltered
+    open-issue listing (`--limit 1000`, never `--label`), both through the
+    `_health_gh_fetch` seam (C4). A residual is an open issue carrying
+    `needs-human-check` without `bug`; residuals never hold the gate, and
+    a PASS names every residual it excluded.
+
+    Returns:
+      PASS  — nothing holds `<V>`; `subject` is `<V>`.
+      WARN  — hold: states the count and names the holding issues.
+      WARN  — unconfirmed (source=<label>), or (truncated at 1000), or no
+              open version milestone: never PASS on an unobserved state.
+    What to do: fix or close each holding issue, classify each unclassified
+    one, then re-run; the owner promotes and tags after a PASS.
+    """
+    import json as _json
+
+    def _unconfirmed(why: str, subject: str = "") -> dict:
+        out = {"id": "RELEASE-GATE", "result": "WARN", "detail": f"unconfirmed ({why})"}
+        if subject:
+            out["subject"] = subject
+        return out
+
+    rc, out, source = _health_gh_fetch(
+        ["api", "repos/{owner}/{repo}/milestones", "-X", "GET",
+         "-f", "state=open", "-f", "per_page=100", "--paginate"],
+        ttl=30.0, timeout=15.0, with_source=True,
+    )
+    if rc != 0:
+        return _unconfirmed(f"source={source}")
+    try:
+        milestones = _release_gate_parse_pages(out)
+    except ValueError as exc:
+        return _unconfirmed(f"source={source}, milestone listing unparsable: {exc}")
+    open_titles = [m.get("title", "") for m in milestones if isinstance(m, dict)]
+
+    version = os.environ.get("RELEASE_GATE_VERSION", "").strip()
+    if version:
+        if version not in open_titles:
+            return {"id": "RELEASE-GATE", "result": "WARN", "subject": version,
+                    "detail": f"hold: no open milestone titled {version} "
+                              "(RELEASE_GATE_VERSION)"}
+    else:
+        versions = []
+        for t in open_titles:
+            m = _RELEASE_GATE_VERSION_RE.match(t or "")
+            if m:
+                versions.append((tuple(int(g or 0) for g in m.groups()), t))
+        if not versions:
+            return {"id": "RELEASE-GATE", "result": "WARN",
+                    "detail": "hold: no open version milestone (title v<major>.<minor>[.<patch>])"}
+        version = min(versions)[1]
+
+    rc, out, source = _health_gh_fetch(
+        ["issue", "list", "--state", "open", "--limit", str(_RELEASE_GATE_ISSUE_LIMIT),
+         "--json", "number,labels,milestone"],
+        ttl=30.0, timeout=30.0, with_source=True,
+    )
+    if rc != 0:
+        return _unconfirmed(f"source={source}", version)
+    try:
+        issues = _json.loads(out)
+        if not isinstance(issues, list):
+            raise ValueError("not a JSON array")
+    except ValueError as exc:
+        return _unconfirmed(f"source={source}, issue listing unparsable: {exc}", version)
+    if len(issues) >= _RELEASE_GATE_ISSUE_LIMIT:
+        return _unconfirmed(f"truncated at {_RELEASE_GATE_ISSUE_LIMIT}", version)
+
+    in_version, unmilestoned_bugs, unclassified, residuals = [], [], [], []
+    for issue in issues:
+        if not isinstance(issue, dict) or not isinstance(issue.get("number"), int):
+            return _unconfirmed(f"source={source}, issue listing unparsable: malformed entry",
+                                version)
+        num = issue.get("number")
+        labels = {l.get("name") for l in (issue.get("labels") or []) if isinstance(l, dict)}
+        if "needs-human-check" in labels and "bug" not in labels:
+            residuals.append(num)
+            continue
+        milestone = (issue.get("milestone") or {}).get("title")
+        if milestone == version:
+            in_version.append(num)
+        elif milestone is None and "bug" in labels:
+            unmilestoned_bugs.append(num)
+        if ("bug" in labels) == ("feature" in labels):
+            unclassified.append(num)
+
+    for nums in (in_version, unmilestoned_bugs, unclassified, residuals):
+        nums.sort()
+    residual_note = (f"excluded {len(residuals)} residual(s): {', '.join(f'#{n}' for n in residuals)}"
+                     if residuals else "excluded 0 residuals")
+
+    held = len(in_version) + len(unmilestoned_bugs)
+    if held or unclassified:
+        parts = [
+            f"hold: {held} open non-residual issue(s) in {version} or unmilestoned bug(s) "
+            f"({len(in_version)} in {version}"
+            + (f": {_release_gate_nums(in_version)}" if in_version else "")
+            + f"; {len(unmilestoned_bugs)} unmilestoned bug(s)"
+            + (f": {_release_gate_nums(unmilestoned_bugs)}" if unmilestoned_bugs else "")
+            + ")",
+            f"{len(unclassified)} unclassified open issue(s)"
+            + (f": {_release_gate_nums(unclassified)}" if unclassified else ""),
+            residual_note,
+        ]
+        return {"id": "RELEASE-GATE", "result": "WARN", "subject": version,
+                "detail": "; ".join(parts)}
+    return {
+        "id": "RELEASE-GATE", "result": "PASS", "subject": version,
+        "detail": (f"0 open non-residual issues in {version}, 0 unmilestoned bugs, "
+                   f"0 unclassified; {residual_note}"),
+    }
+
+
+# ---------------------------------------------------------------------------
 # PROOF-INTEGRITY check (slice #839 / ADR-0070 D5)
 #
 # Validates that browser-route proof artifacts are genuinely DOM-attested,
@@ -7563,6 +7727,8 @@ CHECK_REGISTRY: dict[str, callable] = {
     "BRANCH-TOPOLOGY":  check_branch_topology,
     "PROMOTION-LAG":    check_promotion_lag,
     "RELEASE-READY":    check_release_ready,
+    # A version's finish line (ADR-0090 D1 — PRD #1501 slice #1508)
+    "RELEASE-GATE":     check_release_gate,
     # DOM-attestation integrity (ADR-0070 D5 — slice #839)
     "PROOF-INTEGRITY": check_proof_integrity,
     # Guardrail-machinery promotion meta-tripwire (ADR-0070 D4 — slice #840)
@@ -7895,6 +8061,19 @@ def serve_health() -> tuple:
     return {"status": "computing"}, True
 
 
+def _format_cli_line(check_id: str, result: dict) -> str:
+    """The `--check` printer's line: `<VERDICT>: <ID> — <detail>`. A result
+    carrying `subject` prints `<VERDICT>: <ID> <subject> — <detail>`; a
+    result without it prints byte-identically to before, which
+    `promote.sh`'s `PASS: RELEASE-READY — …` parse relies on (slice #1508)."""
+    line = f"{result.get('result', 'UNKNOWN')}: {check_id}"
+    if result.get("subject"):
+        line += f" {result['subject']}"
+    if result.get("detail", ""):
+        line += f" — {result['detail']}"
+    return line
+
+
 # ---------------------------------------------------------------------------
 # CLI entry point (ADR-0064 D3 registry CLI)
 #
@@ -7938,11 +8117,7 @@ if __name__ == "__main__":
 
     _result = CHECK_REGISTRY[_check_id]()
     _verdict = _result.get("result", "UNKNOWN")
-    _detail = _result.get("detail", "")
-    _line = f"{_verdict}: {_check_id}"
-    if _detail:
-        _line += f" — {_detail}"
-    print(_line)
+    print(_format_cli_line(_check_id, _result))
 
     # Exit 1 on FAIL; 0 on PASS or WARN (CI can choose to treat WARN as passing)
     sys.exit(1 if _verdict == "FAIL" else 0)

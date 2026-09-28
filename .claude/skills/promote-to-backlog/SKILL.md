@@ -13,7 +13,9 @@ This skill is the autopilot half of the captured→backlog mechanism (the critic
 /promote-to-backlog <issue-number>
 ```
 
-Example: `/promote-to-backlog 73` after `gh issue create --label captured --title "..." --body "..."` returned issue #73.
+Example: `/promote-to-backlog 73` after `gh issue create --label captured --label bug --title "..." --body "..."` returned issue #73.
+
+**Class label at creation ([ADR-0090](../../../decisions/0090-release-mode.md) D1).** The agent writing the capture gives it exactly one class label in the same `gh issue create`: `--label bug` when the capture records something that breaks the system's own promise (docs, rules, ADRs and doc drift included), otherwise `--label feature`. This skill never adds, removes or swaps a class label; the label swap below leaves it in place. `tools/release.py freeze` refuses while any open non-residual issue lacks one.
 
 If the issue number is missing, return `INVALID_INPUT: no issue number supplied` and stop.
 
