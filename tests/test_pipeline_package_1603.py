@@ -15,6 +15,7 @@ and never a push to GitHub. Nothing here writes to `.claude/logs/` (rule
 Runner: stdlib unittest + pytest compatible.
     python -m pytest tests/test_pipeline_package_1603.py -v
 """
+import json
 import os
 import shutil
 import subprocess
@@ -59,6 +60,18 @@ def _copy_package_tree(dest_pipeline_dir: Path):
     pycache = dest_pipeline_dir / "__pycache__"
     if pycache.exists():
         shutil.rmtree(pycache)
+
+
+def _production_hook_fires_path() -> Path:
+    """The REAL path lib-root.sh's MAIN_ROOT resolves to from this checkout:
+    `git rev-parse --git-common-dir`'s directory, not necessarily this
+    worktree's own — a linked worktree shares one `.git` with its main
+    checkout, so this is the one log every session-start.sh run (from any
+    worktree of this repo) actually appends to."""
+    out = _git(
+        ["rev-parse", "--path-format=absolute", "--git-common-dir"], REPO_ROOT
+    ).stdout.strip()
+    return Path(out).parent / ".claude" / "logs" / "hook-fires.jsonl"
 
 
 class PackageSandboxMixin:
@@ -235,6 +248,91 @@ class TestInstallCollision(unittest.TestCase):
         self.assertIn("collision", r.stderr)
 
 
+class TestInstallRefusals(unittest.TestCase):
+    """pk_install_refusals: install.sh's home-repository and
+    already-installed refusals, plus the dirty-tree refusal and the
+    narrow-staging fix (no `git add -A` sweep of host files)."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory(prefix="pk1603-install-refusals-")
+        self.addCleanup(self._tmp.cleanup)
+        self.tmp = Path(self._tmp.name)
+        self.install_sh = PACKAGE_ROOT / "install.sh"
+
+    def _run_install(self, h: Path):
+        return subprocess.run(
+            ["bash", str(self.install_sh), "--source", "/nonexistent", "--tag", "v9.9.9"],
+            cwd=str(h), capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+
+    def test_pk_install_refusal_home_repository(self):
+        h = self.tmp / "home"
+        h.mkdir()
+        _init_identity(h)
+        _copy_package_tree(h / ".claude" / "pipeline")
+        _git(["add", "-A"], h)
+        _git(["commit", "-q", "-m", "chore(test): home repo, no package_source"], h)
+
+        r = self._run_install(h)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("home-repository", r.stderr)
+
+    def test_pk_install_refusal_already_installed(self):
+        h = self.tmp / "installed"
+        h.mkdir()
+        _init_identity(h)
+        _copy_package_tree(h / ".claude" / "pipeline")
+        (h / ".claude" / "pipeline.conf").write_text(
+            "package_source=/nowhere\n", encoding="utf-8"
+        )
+        _git(["add", "-A"], h)
+        _git(["commit", "-q", "-m", "chore(test): already installed"], h)
+
+        r = self._run_install(h)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("already-installed", r.stderr)
+
+    def test_pk_install_refusal_dirty_tree(self):
+        h = self.tmp / "dirty"
+        h.mkdir()
+        _init_identity(h)
+        (h / "README.txt").write_text("host\n", encoding="utf-8")
+        _git(["add", "-A"], h)
+        _git(["commit", "-q", "-m", "chore(host): init"], h)
+        (h / "uncommitted.txt").write_text("x\n", encoding="utf-8")
+
+        r = self._run_install(h)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("dirty-tree", r.stderr)
+
+    def test_pk_install_stages_only_its_own_writes(self):
+        """`package.py install` (the post-subtree-add wiring step, ADR-0092
+        D3 steps 2-4) must never `git add -A`: an untracked host file
+        present at wiring time stays untracked afterward. Invoked directly
+        (not via install.sh) on a host where `.claude/pipeline/` is already
+        committed — as it is immediately after a real `git subtree add` —
+        so this isolates cmd_install's own staging behavior from
+        install.sh's separate dirty-tree gate (tested above)."""
+        h = self.tmp / "host-untracked"
+        h.mkdir()
+        _init_identity(h)
+        (h / "README.txt").write_text("host\n", encoding="utf-8")
+        _copy_package_tree(h / ".claude" / "pipeline")
+        _git(["add", "-A"], h)
+        _git(["commit", "-q", "-m", "chore(test): simulate post-subtree-add state"], h)
+
+        # A host file appearing only AFTER the subtree-add commit (as it
+        # would between `git subtree add` and the `install` wiring step),
+        # deliberately left untracked.
+        (h / "untracked-host-file.txt").write_text("mine, not the installer's\n", encoding="utf-8")
+
+        r = _run_package(["install", "--source", "/nonexistent"], h)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+        status = _git(["status", "--porcelain", "--", "untracked-host-file.txt"], h).stdout
+        self.assertIn("??", status, "the untracked host file must remain untracked after install")
+
+
 class TestUpgradeRefusals(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory(prefix="pk1603-upg-")
@@ -289,6 +387,102 @@ class TestUpgradeRefusals(unittest.TestCase):
         r = _run_package(["upgrade", "v9.9.9"], h)
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("not-pristine", r.stderr)
+
+
+class TestUpgradeNotNewerRefusal(PackageSandboxMixin, unittest.TestCase):
+    """The `not-newer` refusal on a REAL pristine install (as opposed to
+    TestUpgradeRefusals' synthetic non-pristine fixtures, which trip
+    `not-pristine` before `not-newer` can ever be reached)."""
+
+    def test_pk_upgrade_refusal_not_newer(self):
+        w = self._build_publisher("4.0.0")
+        r = self._publish(w, "4.0.0")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        u_path = str(self.u_bare)
+
+        h = self.tmp / "H"
+        h.mkdir()
+        _init_identity(h)
+        (h / "README.txt").write_text("host\n", encoding="utf-8")
+        _git(["add", "-A"], h)
+        _git(["commit", "-q", "-m", "chore(host): init"], h)
+
+        install_sh = PACKAGE_ROOT / "install.sh"
+        r = subprocess.run(
+            ["bash", str(install_sh), "--source", u_path, "--tag", "v4.0.0"],
+            cwd=str(h), capture_output=True, text=True, encoding="utf-8", errors="replace",
+        )
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+
+        _git(["checkout", "-q", "-b", "work"], h)
+        r = _run_package(["upgrade", "v4.0.0"], h)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("not-newer", r.stderr)
+
+
+class TestMissingGitSubtree(unittest.TestCase):
+    """AC: a missing `git subtree` FAILs install, never silently skips the
+    step. A PATH-shimmed `git` intercepts only the `subtree` subcommand and
+    delegates everything else (status, add, commit, ...) to the real git."""
+
+    def test_install_fails_when_git_subtree_unavailable(self):
+        tmp = tempfile.TemporaryDirectory(prefix="pk1603-nosubtree-")
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        h = root / "host"
+        h.mkdir()
+        _init_identity(h)
+        (h / "README.txt").write_text("host\n", encoding="utf-8")
+        _git(["add", "-A"], h)
+        _git(["commit", "-q", "-m", "chore(host): init"], h)
+
+        real_git = shutil.which("git")
+        self.assertIsNotNone(real_git, "git must be on PATH to build the delegating shim")
+        bin_dir = root / "fake-bin"
+        bin_dir.mkdir()
+        fake_git = bin_dir / "git"
+        fake_git.write_text(
+            "#!/bin/sh\n"
+            'if [ "$1" = "subtree" ]; then\n'
+            "  echo git-subtree-unavailable-canary-1603 1>&2\n"
+            "  exit 1\n"
+            "fi\n"
+            f'exec "{real_git}" "$@"\n',
+            encoding="utf-8", newline="\n",
+        )
+        os.chmod(fake_git, 0o755)
+
+        env = os.environ.copy()
+        env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
+
+        install_sh = PACKAGE_ROOT / "install.sh"
+        r = subprocess.run(
+            ["bash", str(install_sh), "--source", "/nonexistent", "--tag", "v9.9.9"],
+            cwd=str(h), capture_output=True, text=True, encoding="utf-8", errors="replace",
+            env=env,
+        )
+        self.assertNotEqual(r.returncode, 0)
+        self.assertNotIn("Next steps", r.stdout)
+        self.assertIn("git-subtree-unavailable-canary-1603", r.stdout + r.stderr)
+
+
+class TestLayoutArmFailsClosed(unittest.TestCase):
+    """layout_arm must FAIL closed (not silently skip) when ci-checks.sh
+    cannot be found anywhere, in home mode — the home repository always
+    owns a copy, so its absence is a genuine layout defect there."""
+
+    def test_layout_arm_fails_closed_without_ci_checks(self):
+        tmp = tempfile.TemporaryDirectory(prefix="pk1603-layout-")
+        self.addCleanup(tmp.cleanup)
+        h = Path(tmp.name)
+        _init_identity(h)
+        _copy_package_tree(h / ".claude" / "pipeline")
+        _git(["add", "-A"], h)
+        _git(["commit", "-q", "-m", "chore(test): home repo, no ci-checks.sh anywhere"], h)
+
+        r = _run_package(["check"], h)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("ci-checks.sh not found", r.stdout)
 
 
 class TestPristineCatchesSquashMerge(unittest.TestCase):
@@ -406,12 +600,16 @@ class TestStubContract(unittest.TestCase):
         self.assertIs(stub.PipelineConfigError, pkg_mod.PipelineConfigError)
 
     def test_pk_stub_keeps_main_deny(self):
-        import json
+        # pre-tool-bash-classify.py only writes a beacon when _PTB_BEACON_DIR
+        # is set; strip it defensively so this test can never inherit an
+        # ambient value and land a beacon anywhere (rule #21 sweep).
+        env = os.environ.copy()
+        env.pop("_PTB_BEACON_DIR", None)
         payload = {"tool_name": "Bash", "tool_input": {"command": "git" + " push origin HEAD:main"}}
         r = subprocess.run(
             [sys.executable, str(REPO_ROOT / ".claude" / "hooks" / "pre-tool-bash-classify.py")],
             input=json.dumps(payload), cwd=str(REPO_ROOT), capture_output=True, text=True,
-            encoding="utf-8",
+            encoding="utf-8", env=env,
         )
         self.assertIn('"permissionDecision":"deny"', r.stdout.replace(" ", ""))
 
@@ -424,18 +622,104 @@ class TestStubContract(unittest.TestCase):
         (h / "f.txt").write_text("x", encoding="utf-8")
         _git(["add", "-A"], h)
         precommit = REPO_ROOT / ".githooks" / "pre-commit"
+        # pre-commit sources lib-root.sh too; strip CLAUDE_PROJECT_DIR
+        # defensively so LOG_DIR can only resolve against `h`'s own git repo
+        # (cwd), never an ambient value pointing at this checkout (rule #21
+        # sweep — cwd=h already isolates it, this removes any doubt).
+        env = os.environ.copy()
+        env.pop("CLAUDE_PROJECT_DIR", None)
         r = subprocess.run(
-            ["bash", str(precommit)], cwd=str(h), capture_output=True, text=True, encoding="utf-8",
+            ["bash", str(precommit)], cwd=str(h), capture_output=True, text=True,
+            encoding="utf-8", env=env,
         )
         self.assertNotEqual(r.returncode, 0)
         self.assertIn("direct commits to 'main'", r.stderr)
 
     def test_pk_stub_keeps_session_start_resolver(self):
-        r = subprocess.run(
-            ["bash", str(REPO_ROOT / ".claude" / "hooks" / "session-start.sh")],
-            cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8",
+        """The hook's own `../../tools/pipeline_config.py integration` call
+        still resolves through the moved package (S1-c). Runs entirely in a
+        throwaway sandbox — its OWN git repo, its OWN copies of
+        session-start.sh/lib-root.sh/log-tool-event.sh, its OWN copies of
+        the root stub and the package resolver, CLAUDE_PROJECT_DIR pointed
+        at the sandbox so lib-root.sh's LOG_DIR resolves there (never this
+        checkout's `.claude/logs/`, rule #21), and a fake `gh` on PATH that
+        fails auth so the hook's live GitHub-query block never fires. The
+        production hook-fires.jsonl's size is asserted unchanged before and
+        after — the actual mechanism, not just an absence-of-string check."""
+        tmp = tempfile.TemporaryDirectory(prefix="pk1603-session-start-")
+        self.addCleanup(tmp.cleanup)
+        work = Path(tmp.name) / "work"
+        work.mkdir()
+        _init_identity(work)
+        (work / "f.txt").write_text("x\n", encoding="utf-8")
+        _git(["add", "-A"], work)
+        _git(["commit", "-q", "-m", "chore(test): init"], work)
+
+        hooks_dir = work / ".claude" / "hooks"
+        hooks_dir.mkdir(parents=True)
+        for name in ("session-start.sh", "lib-root.sh", "log-tool-event.sh"):
+            text = (REPO_ROOT / ".claude" / "hooks" / name).read_text(encoding="utf-8")
+            (hooks_dir / name).write_text(text, encoding="utf-8", newline="\n")
+
+        tools_dir = work / "tools"
+        tools_dir.mkdir()
+        (tools_dir / "pipeline_config.py").write_text(
+            ROOT_STUB_PY.read_text(encoding="utf-8"), encoding="utf-8"
         )
+        pkg_tools_dir = work / ".claude" / "pipeline" / "tools"
+        pkg_tools_dir.mkdir(parents=True)
+        (pkg_tools_dir / "pipeline_config.py").write_text(
+            (PACKAGE_ROOT / "tools" / "pipeline_config.py").read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+
+        # Fake `gh` that fails auth -> keeps the hook's GH_OK block off, so
+        # this test never makes a live GitHub call.
+        bin_dir = Path(tmp.name) / "fake-bin"
+        bin_dir.mkdir()
+        gh = bin_dir / "gh"
+        gh.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8", newline="\n")
+        os.chmod(gh, 0o755)
+
+        log_dir = work / ".claude" / "logs"
+        env = os.environ.copy()
+        env["PATH"] = str(bin_dir) + os.pathsep + env.get("PATH", "")
+        env["CLAUDE_PROJECT_DIR"] = str(work).replace(os.sep, "/")
+        env["WORKFLOW_LOG_DIR"] = str(log_dir)
+
+        prod_beacon = _production_hook_fires_path()
+        before = prod_beacon.stat().st_size if prod_beacon.exists() else None
+
+        r = subprocess.run(
+            ["bash", str(hooks_dir / "session-start.sh")],
+            input=json.dumps({"session_id": "fixture-1603"}),
+            cwd=str(work), capture_output=True, text=True, encoding="utf-8",
+            env=env, timeout=60,
+        )
+        after = prod_beacon.stat().st_size if prod_beacon.exists() else None
+        self.assertEqual(
+            before, after,
+            "must never write to the production .claude/logs/hook-fires.jsonl (rule #21)",
+        )
+
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertNotIn("resolver failed", r.stdout + r.stderr)
+
+        payload = json.loads(r.stdout)
+        ctx = payload["hookSpecificOutput"]["additionalContext"]
+
+        expected = subprocess.run(
+            [sys.executable, str(tools_dir / "pipeline_config.py"), "integration"],
+            cwd=str(work), capture_output=True, text=True, encoding="utf-8",
+        ).stdout.strip()
+        self.assertTrue(expected, "the real resolver must name a branch")
+        self.assertIn(
+            f"origin/{expected}", ctx,
+            f"context must name the resolved integration branch: {ctx!r}",
+        )
+
+        # The sandbox's OWN log dir got the beacon instead of production.
+        self.assertTrue((log_dir / "hook-fires.jsonl").exists())
 
 
 class TestConsumerSweep(unittest.TestCase):
@@ -449,40 +733,62 @@ class TestConsumerSweep(unittest.TestCase):
             text.count('GRILL_SKILL=".claude/pipeline/skills/grill-me/SKILL.md"'), 1
         )
 
+    # Each canary below runs the REAL, unmodified `check-repo-identity-
+    # literals.py` against a throwaway sandbox git repo built via `--root`
+    # (the checker's own CLI supports scanning any directory, not just the
+    # live checkout) — never writing the canary line into this checkout's
+    # own tracked files (#1603 requires "each in a throwaway worktree").
+
     def test_check29_canary_package_py(self):
-        self._assert_canary_fails("package.py")
+        self._assert_sandboxed_canary_fails(
+            ".claude/pipeline/tools/package.py",
+            (PACKAGE_ROOT / "tools" / "package.py").read_text(encoding="utf-8"),
+            "package.py",
+        )
 
     def test_check29_canary_install_sh(self):
-        self._assert_canary_fails("install.sh")
+        self._assert_sandboxed_canary_fails(
+            ".claude/pipeline/install.sh",
+            (PACKAGE_ROOT / "install.sh").read_text(encoding="utf-8"),
+            "install.sh",
+        )
 
     def test_check29_canary_root_stub(self):
-        text = ROOT_STUB_PY.read_text(encoding="utf-8")
-        marker = '\nCANARY = "origin/main"\n'
-        ROOT_STUB_PY.write_text(text + marker, encoding="utf-8")
-        try:
-            r = subprocess.run(
-                [sys.executable, str(REPO_ROOT / "tools" / "check-repo-identity-literals.py")],
-                cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8",
-            )
-            self.assertNotEqual(r.returncode, 0)
-            self.assertIn("pipeline_config.py", r.stdout + r.stderr)
-        finally:
-            ROOT_STUB_PY.write_text(text, encoding="utf-8")
+        self._assert_sandboxed_canary_fails(
+            "tools/pipeline_config.py",
+            ROOT_STUB_PY.read_text(encoding="utf-8"),
+            "pipeline_config.py",
+        )
 
-    def _assert_canary_fails(self, relname):
-        target = PACKAGE_ROOT / ("tools/" + relname if relname != "install.sh" else "install.sh")
-        text = target.read_text(encoding="utf-8")
+    def test_check29_canary_grill_me_package_source(self):
+        self._assert_sandboxed_canary_fails(
+            ".claude/pipeline/skills/grill-me/SKILL.md",
+            (PACKAGE_ROOT / "skills" / "grill-me" / "SKILL.md").read_text(encoding="utf-8"),
+            "grill-me",
+        )
+
+    def _sandbox_repo_with_subject(self, relpath: str, content: str) -> Path:
+        tmp = tempfile.TemporaryDirectory(prefix="pk1603-canary-")
+        self.addCleanup(tmp.cleanup)
+        root = Path(tmp.name)
+        _init_identity(root)
+        target = root / relpath
+        target.parent.mkdir(parents=True, exist_ok=True)
         marker = '\nCANARY = "origin/main"\n'
-        target.write_text(text + marker, encoding="utf-8")
-        try:
-            r = subprocess.run(
-                [sys.executable, str(REPO_ROOT / "tools" / "check-repo-identity-literals.py")],
-                cwd=str(REPO_ROOT), capture_output=True, text=True, encoding="utf-8",
-            )
-            self.assertNotEqual(r.returncode, 0)
-            self.assertIn(relname, r.stdout + r.stderr)
-        finally:
-            target.write_text(text, encoding="utf-8")
+        target.write_text(content + marker, encoding="utf-8")
+        _git(["add", "-A"], root)
+        _git(["commit", "-q", "-m", "chore(test): seed subject"], root)
+        return root
+
+    def _assert_sandboxed_canary_fails(self, relpath: str, content: str, needle: str):
+        root = self._sandbox_repo_with_subject(relpath, content)
+        r = subprocess.run(
+            [sys.executable, str(REPO_ROOT / "tools" / "check-repo-identity-literals.py"),
+             "--root", str(root)],
+            capture_output=True, text=True, encoding="utf-8",
+        )
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn(needle, r.stdout + r.stderr)
 
 
 class TestEndToEndPublishInstallUpgrade(PackageSandboxMixin, unittest.TestCase):
