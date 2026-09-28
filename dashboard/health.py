@@ -3644,7 +3644,7 @@ def check_merge_integrity() -> dict:
 
 
 # T0 for CAPTURE-SHAPE's PR leg (ADR-0090 D5): the committer time of BASE
-# (the parent of slice 1's squash commit eb6907d on `develop`), an ISO-8601
+# (the parent of slice 1's squash commit eb6907d on the integration branch), an ISO-8601
 # UTC instant per ADR-0089 D4 arm (b) — `dashboard/_constants.py` exposed no
 # `GRANDFATHER_UNTIL` at this slice's branch time, so this stays a module
 # constant here (its name carries GRANDFATHER on purpose, so it's findable).
