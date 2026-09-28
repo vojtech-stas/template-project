@@ -22,6 +22,24 @@ rules and are covered instead by PRD #1500 criterion 25's A/B comparison
 stronger oracle than criterion 25. For _CI_GATE_BOOTSTRAP_PR ... it is
 the only oracle."
 
+Round 2 (codebase-critic CC-ARCH-DRIFT/CC-REF-CURRENCY BLOCK on PR #1617,
+rule #19 whole-class fix): the same oracle shape extends to the two
+function-local `_GRANDFATHERED_BELOW` PIP-032 violations the critic found
+in dashboard/health.py, neither of which is a PR-number check:
+
+  - SILENT-DRIFT     (was health.py's local `_GRANDFATHERED_BELOW = 799`
+                       in check_silent_drift; old rule: grandfathered iff
+                       prd_number < 799; keyed on the PRD's own createdAt)
+  - TEST-ORDERING     (was health.py's local `_GRANDFATHERED_BELOW = 816`
+                       in check_test_ordering; old rule: grandfathered iff
+                       min(closing-slice numbers, default pr_number) < 816;
+                       keyed on the PR's own mergedAt, since gh's
+                       closingIssuesReferences shape carries no createdAt)
+
+`_BOOTSTRAP_CUTOFF = 22` in check_rule_coverage is intentionally NOT
+converted here: it keys on CLAUDE.md rule numbers (repo-agnostic, not a
+PR/issue number of this repository) and CC-ARCH-DRIFT round 1 cleared it.
+
 Data: a snapshot of `gh pr list --repo vojtech-stas/template-project
 --state merged --limit 1000 --json number,mergedAt`, taken at
 implementation time (2026-09-28) and embedded below -- no new tests/
@@ -29,6 +47,12 @@ subdirectory, no network access at test time. The old rules are spelled
 inline as literals (never re-imported from dashboard/ or tools/), so
 neither criterion 22's grep nor CHECK 29 arm (b) sees them here (this file
 lives outside dashboard/ and tools/ entirely).
+
+The round-2 PRD_SNAPSHOT (`gh issue list --label prd --state all --limit
+50 --json number,createdAt`, matching check_silent_drift's own fetch
+limit) and FIX_PR_SNAPSHOT (`gh pr list --state merged --limit 2000
+--json number,headRefName,mergedAt,closingIssuesReferences`, filtered to
+fix/* head branches) were taken the same day (2026-09-28).
 
 Runner: stdlib unittest + pytest compatible.
   python -m pytest tests/test_grandfather_set_equality_1514.py -v
@@ -660,6 +684,226 @@ class TestPredicateDefaults(unittest.TestCase):
 
     def test_unknown_check_id_never_grandfathered(self):
         self.assertFalse(grandfathered("NOT-A-REAL-CHECK", "2020-01-01T00:00:00Z"))
+
+
+# ---------------------------------------------------------------------------
+# Round-2 snapshot: PRDs, (number, createdAt) pairs. Taken 2026-09-28 via
+# `gh issue list --label prd --state all --limit 50 --json
+# number,createdAt` -- the same --limit 50 check_silent_drift() itself
+# fetches, so this snapshot is exactly production's own fetch window.
+# ---------------------------------------------------------------------------
+PRD_SNAPSHOT: list[tuple[int, str]] = [
+    (626, '2026-06-08T15:55:51Z'),
+    (640, '2026-06-09T14:39:47Z'),
+    (651, '2026-06-10T16:56:49Z'),
+    (660, '2026-06-10T19:13:47Z'),
+    (668, '2026-06-10T21:20:27Z'),
+    (680, '2026-06-10T22:54:35Z'),
+    (694, '2026-06-11T00:52:04Z'),
+    (703, '2026-06-11T07:49:46Z'),
+    (704, '2026-06-11T07:49:48Z'),
+    (713, '2026-06-11T10:11:03Z'),
+    (722, '2026-06-11T13:54:41Z'),
+    (737, '2026-06-11T15:11:11Z'),
+    (753, '2026-06-11T21:33:17Z'),
+    (763, '2026-06-11T23:20:08Z'),
+    (778, '2026-06-12T07:39:15Z'),
+    (794, '2026-06-12T11:03:09Z'),
+    (813, '2026-06-12T14:44:03Z'),
+    (836, '2026-06-16T13:18:51Z'),
+    (876, '2026-06-17T09:20:02Z'),
+    (888, '2026-06-17T13:14:55Z'),
+    (898, '2026-06-17T18:18:15Z'),
+    (919, '2026-06-17T23:01:28Z'),
+    (927, '2026-06-18T03:54:51Z'),
+    (937, '2026-06-18T06:39:34Z'),
+    (956, '2026-06-18T11:08:57Z'),
+    (957, '2026-06-18T11:12:46Z'),
+    (974, '2026-06-19T10:27:56Z'),
+    (993, '2026-06-22T19:27:17Z'),
+    (1031, '2026-06-23T08:17:46Z'),
+    (1075, '2026-08-01T23:30:50Z'),
+    (1127, '2026-08-02T12:30:48Z'),
+    (1170, '2026-08-03T23:44:33Z'),
+    (1193, '2026-08-20T19:58:41Z'),
+    (1214, '2026-08-21T12:40:03Z'),
+    (1236, '2026-08-22T06:44:46Z'),
+    (1266, '2026-08-22T14:31:42Z'),
+    (1274, '2026-08-23T11:58:44Z'),
+    (1326, '2026-09-02T14:13:01Z'),
+    (1390, '2026-09-13T14:16:27Z'),
+    (1432, '2026-09-16T14:48:48Z'),
+    (1436, '2026-09-18T23:14:01Z'),
+    (1462, '2026-09-21T14:33:40Z'),
+    (1480, '2026-09-22T22:47:16Z'),
+    (1496, '2026-09-23T05:56:35Z'),
+    (1500, '2026-09-23T06:36:11Z'),
+    (1501, '2026-09-23T06:55:15Z'),
+    (1554, '2026-09-23T19:00:36Z'),
+    (1569, '2026-09-23T20:49:56Z'),
+    (1572, '2026-09-23T21:11:48Z'),
+    (1601, '2026-09-27T23:32:54Z'),
+]
+
+
+# ---------------------------------------------------------------------------
+# Round-2 snapshot: every fix/*-branch merged PR, (number, mergedAt,
+# old_rule_number) triples, where old_rule_number is
+# min(closing-slice-issue-numbers) when the PR closes any issue, else the
+# PR's own number (check_test_ordering's old fallback). Taken 2026-09-28 via
+# `gh pr list --state merged --limit 2000 --json
+# number,headRefName,mergedAt,closingIssuesReferences`, filtered to
+# fix/*-kind head branches (classify_branch(headRefName).kind == "fix").
+# ---------------------------------------------------------------------------
+FIX_PR_SNAPSHOT: list[tuple[int, str, int]] = [
+    (559, '2026-06-04T23:35:13Z', 558),
+    (565, '2026-06-05T11:52:50Z', 563),
+    (572, '2026-06-05T12:20:27Z', 570),
+    (573, '2026-06-05T12:25:52Z', 571),
+    (589, '2026-06-05T16:06:52Z', 588),
+    (598, '2026-06-05T18:08:20Z', 566),
+    (620, '2026-06-05T23:13:23Z', 615),
+    (622, '2026-06-05T23:22:01Z', 607),
+    (650, '2026-06-10T15:49:07Z', 649),
+    (743, '2026-06-11T19:21:58Z', 739),
+    (744, '2026-06-11T19:21:52Z', 740),
+    (745, '2026-06-11T19:21:30Z', 738),
+    (747, '2026-06-11T19:35:00Z', 741),
+    (748, '2026-06-11T20:09:52Z', 742),
+    (758, '2026-06-11T22:26:17Z', 755),
+    (761, '2026-06-11T22:46:16Z', 756),
+    (769, '2026-06-12T00:00:56Z', 667),
+    (770, '2026-06-12T00:02:16Z', 765),
+    (812, '2026-06-12T14:13:00Z', 795),
+    (847, '2026-06-16T19:09:04Z', 846),
+    (850, '2026-06-16T19:43:36Z', 849),
+    (852, '2026-06-16T20:39:35Z', 851),
+    (853, '2026-06-16T20:55:47Z', 848),
+    (855, '2026-06-16T21:16:04Z', 854),
+    (862, '2026-06-17T00:12:42Z', 861),
+    (935, '2026-06-18T05:37:40Z', 935),
+    (983, '2026-06-22T16:37:56Z', 983),
+    (987, '2026-06-22T16:25:03Z', 987),
+    (989, '2026-06-22T19:00:10Z', 989),
+    (990, '2026-06-22T19:08:55Z', 990),
+    (991, '2026-06-22T19:09:49Z', 991),
+    (994, '2026-06-22T19:38:13Z', 994),
+    (1000, '2026-06-22T20:43:34Z', 1000),
+    (1003, '2026-06-22T21:59:02Z', 1003),
+    (1004, '2026-06-22T22:13:08Z', 1004),
+    (1006, '2026-06-23T00:17:49Z', 1006),
+    (1009, '2026-06-23T00:41:06Z', 1009),
+    (1010, '2026-06-23T00:45:49Z', 1010),
+    (1011, '2026-06-23T01:05:29Z', 1011),
+    (1013, '2026-06-23T01:26:00Z', 1013),
+    (1014, '2026-06-23T01:46:01Z', 1014),
+    (1016, '2026-06-23T02:19:29Z', 1016),
+    (1019, '2026-06-23T02:45:29Z', 1019),
+    (1023, '2026-06-23T03:43:25Z', 1023),
+    (1024, '2026-06-23T03:34:09Z', 1024),
+    (1025, '2026-06-23T04:12:56Z', 1025),
+    (1029, '2026-06-23T05:00:40Z', 1029),
+    (1035, '2026-06-23T10:45:38Z', 1035),
+    (1037, '2026-06-23T11:40:29Z', 1037),
+    (1039, '2026-06-23T16:32:10Z', 1039),
+    (1045, '2026-07-01T17:12:24Z', 1045),
+    (1047, '2026-07-01T17:19:59Z', 1047),
+    (1049, '2026-07-01T17:33:35Z', 1049),
+    (1051, '2026-07-02T15:59:29Z', 1051),
+    (1055, '2026-07-02T09:19:12Z', 1055),
+    (1058, '2026-07-02T09:27:07Z', 1058),
+    (1062, '2026-07-02T16:27:10Z', 1062),
+    (1063, '2026-07-02T16:27:14Z', 1063),
+    (1066, '2026-07-03T17:25:30Z', 1066),
+    (1068, '2026-07-03T18:10:46Z', 1068),
+    (1069, '2026-07-03T18:55:01Z', 1069),
+    (1071, '2026-07-03T19:00:43Z', 1071),
+    (1072, '2026-07-03T18:57:07Z', 1072),
+    (1088, '2026-08-02T01:14:52Z', 1088),
+    (1092, '2026-08-02T01:50:57Z', 1092),
+    (1104, '2026-08-02T03:16:30Z', 1104),
+    (1117, '2026-08-02T09:16:54Z', 1117),
+    (1121, '2026-08-02T11:02:25Z', 1121),
+    (1125, '2026-08-02T11:52:06Z', 1125),
+    (1163, '2026-08-03T12:00:49Z', 1156),
+    (1164, '2026-08-03T12:26:09Z', 1164),
+    (1190, '2026-08-20T19:05:53Z', 1183),
+    (1191, '2026-08-20T19:19:53Z', 1191),
+    (1230, '2026-08-21T21:07:29Z', 1230),
+    (1307, '2026-08-30T20:47:36Z', 1307),
+    (1308, '2026-08-31T15:10:24Z', 1308),
+    (1316, '2026-09-02T13:27:59Z', 1316),
+    (1502, '2026-09-23T07:39:43Z', 1502),
+    (1516, '2026-09-23T11:33:27Z', 1516),
+    (1527, '2026-09-23T12:10:45Z', 1527),
+    (1539, '2026-09-23T14:59:00Z', 1539),
+    (1600, '2026-09-27T23:34:01Z', 1600),
+]
+
+
+class TestSetEqualitySilentDrift(unittest.TestCase):
+    """SILENT-DRIFT: old rule `prd_number < 799` (health.py's former local
+    `_GRANDFATHERED_BELOW = 799` in check_silent_drift) vs
+    grandfathered('SILENT-DRIFT', createdAt)."""
+
+    def test_snapshot_matches_production_fetch_limit(self):
+        # check_silent_drift() fetches --limit 50; this snapshot must match
+        # that fetch window exactly, or the oracle proves nothing about
+        # production behavior.
+        self.assertEqual(len(PRD_SNAPSHOT), 50)
+
+    def test_set_equality(self):
+        old_set = {n for n, _ in PRD_SNAPSHOT if n < 799}
+        new_set = {
+            n for n, ts in PRD_SNAPSHOT
+            if grandfathered("SILENT-DRIFT", ts)
+        }
+        self.assertEqual(old_set, new_set)
+
+    def test_instant_in_measured_window(self):
+        # Window: [#794 2026-06-12T11:03:09Z, #813 2026-06-12T14:44:03Z)
+        # -- the closest snapshot straddle around the old #799 cutoff.
+        instant = GRANDFATHER_UNTIL["SILENT-DRIFT"]
+        self.assertGreaterEqual(instant, "2026-06-12T11:03:09Z")
+        self.assertLess(instant, "2026-06-12T14:44:03Z")
+
+
+class TestSetEqualityTestOrdering(unittest.TestCase):
+    """TEST-ORDERING: old rule `min(closing_slice_numbers, default=pr_number)
+    < 816` (health.py's former local `_GRANDFATHERED_BELOW = 816` in
+    check_test_ordering) vs grandfathered('TEST-ORDERING', mergedAt)."""
+
+    def test_snapshot_not_vacuous(self):
+        self.assertGreaterEqual(len(FIX_PR_SNAPSHOT), 82)
+
+    def test_set_equality(self):
+        old_set = {n for n, _, old_num in FIX_PR_SNAPSHOT if old_num < 816}
+        new_set = {
+            n for n, merged, _ in FIX_PR_SNAPSHOT
+            if grandfathered("TEST-ORDERING", merged)
+        }
+        self.assertEqual(old_set, new_set)
+
+    def test_instant_in_measured_window(self):
+        # Window: [#812 (closing #795) 2026-06-12T14:13:00Z,
+        # #847 (closing #846) 2026-06-16T19:09:04Z) -- the closest snapshot
+        # straddle around the old #816 cutoff.
+        instant = GRANDFATHER_UNTIL["TEST-ORDERING"]
+        self.assertGreaterEqual(instant, "2026-06-12T14:13:00Z")
+        self.assertLess(instant, "2026-06-16T19:09:04Z")
+
+
+class TestBootstrapCutoffUntouched(unittest.TestCase):
+    """`_BOOTSTRAP_CUTOFF = 22` in check_rule_coverage is intentionally NOT
+    a GRANDFATHER_UNTIL entry (round-1 codebase-critic cleared it: it keys
+    on CLAUDE.md rule numbers, not a PR/issue number of this repository).
+    This test guards the decision, not the value -- it does not import
+    check_rule_coverage's local, only asserts the two round-2 checks this
+    file targets did not accidentally gain a stray "RULE-COVERAGE" key."""
+
+    def test_no_rule_coverage_grandfather_entry(self):
+        self.assertNotIn("RULE-COVERAGE", GRANDFATHER_UNTIL)
+
 
 
 if __name__ == "__main__":
