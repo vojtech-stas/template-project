@@ -1725,14 +1725,15 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# CHECK 29: REPO-IDENTITY-LITERALS arm (a) — a branch-name literal in the
-# ADR-0089 D1 subject set (PRD #1500 / slice #1513). Arm (b), the history-
-# anchor guard, lands in a later slice.
+# CHECK 29: REPO-IDENTITY-LITERALS, both arms (PRD #1500 / slices #1513 and
+# #1514). Arm (a): a branch-name literal in the ADR-0089 D1 subject set.
+# Arm (b): a history anchor stored as this repo's own PR/issue number or
+# commit sha instead of an ADR-0089 D4 instant.
 #
 #   Delegates to tools/check-repo-identity-literals.py (delegated-check
 #   pattern, mirroring CHECK 19/23's tools/check-*.py scripts).
 # ---------------------------------------------------------------------------
-echo "--- CHECK 29: REPO-IDENTITY-LITERALS arm (a) (ADR-0089 D1) ---"
+echo "--- CHECK 29: REPO-IDENTITY-LITERALS, both arms (ADR-0089 D1/D4) ---"
 if ! command -v python3 > /dev/null 2>&1; then
     echo "SKIP: CHECK 29 — python3 not available (soft-degrade)"
 elif [ ! -f "tools/check-repo-identity-literals.py" ]; then
@@ -1744,7 +1745,7 @@ else
         pass "CHECK 29 — $CHECK29_OUTPUT"
     else
         echo "$CHECK29_OUTPUT" >&2
-        fail "CHECK 29 (REPO-IDENTITY-LITERALS): branch-name literal(s) found in the ADR-0089 D1 subject set"
+        fail "CHECK 29 (REPO-IDENTITY-LITERALS): branch-name or history-anchor literal(s) found (ADR-0089 D1/D4)"
     fi
 fi
 

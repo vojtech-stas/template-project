@@ -24,7 +24,8 @@ Violation detectors (first-class outputs):
                        (respects NO_PR_EXPECTED annotation)
   prd_closed_open_slices — PRD closed while ≥1 slice is still open
   merged_without_ci  — merged non-trivial PR without SUCCESS 'ci' statusCheckRollup
-                       (bootstrap-mode: PRs < #711 grandfathered per ADR-0042)
+                       (bootstrap-mode: PRs merged at or before
+                       GRANDFATHER_UNTIL['CI-GATE'] grandfathered, ADR-0089 D4)
 
 Run PASS := every required:always github-tier edge is "confirmed"
             AND zero violations.
@@ -591,21 +592,27 @@ def _detect_prd_closed_open_slices(trail: dict) -> list[dict]:
     return violations
 
 
-# Bootstrap cutoff for merged_without_ci: PRs predating ADR-0042 (CI gate) are
-# grandfathered.  PR #711 was the first one under ADR-0042 enforcement.
-_CI_GATE_BOOTSTRAP_PR = 711
-
-
 def _detect_merged_without_ci(trail: dict) -> list[dict]:
     """Detect merged non-trivial PRs without a SUCCESS 'ci' statusCheckRollup check.
 
-    Bootstrap-mode: PRs with number < _CI_GATE_BOOTSTRAP_PR predate ADR-0042
-    and are grandfathered (never flagged as a violation).
+    Bootstrap-mode: PRs merged at or before GRANDFATHER_UNTIL['CI-GATE']
+    (dashboard/_constants.py, ADR-0089 D4) predate ADR-0042 and are
+    grandfathered (never flagged as a violation). Import is local (not at
+    module level) to keep this module's "no imports outside stdlib" pure-
+    function property intact for every OTHER function here.
 
     Graceful defaults:
     - Missing statusCheckRollup (absent key or []) → grandfathered (no data; not a violation).
     - Trivial-lane PRs → excluded (trivial PRs are exempt from CI gate per I3).
     """
+    import sys
+    from pathlib import Path
+
+    dashboard_dir = str(Path(__file__).resolve().parent)
+    if dashboard_dir not in sys.path:
+        sys.path.insert(0, dashboard_dir)
+    from _constants import grandfathered  # noqa: PLC0415
+
     violations = []
     prs = trail.get("prs", {})
     for pr in prs.values():
@@ -615,7 +622,7 @@ def _detect_merged_without_ci(trail: dict) -> list[dict]:
             continue  # not merged; no violation possible
         if pr.get("is_trivial"):
             continue  # trivial-lane: exempt from CI gate
-        if pr_number < _CI_GATE_BOOTSTRAP_PR:
+        if grandfathered("CI-GATE", merged_at):
             continue  # grandfathered: predates ADR-0042
 
         rollup = pr.get("status_check_rollup")
