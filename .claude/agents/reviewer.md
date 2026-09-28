@@ -250,13 +250,20 @@ grep -E '^### D[0-9]+' decisions/<NNNN>-<slug>.md
 - `.claude/skills/*/SKILL.md` — skill prompts loaded at slash-command invocation time
 - `.claude/settings.json` — Claude Code hooks and permission configuration
 - `.claude/hooks/*.sh` — hook scripts that fire on Claude Code events
+- `.claude/pipeline/agents/*.md`, `.claude/pipeline/skills/*/SKILL.md`, `.claude/pipeline/hooks/*.sh` and `.claude/pipeline/hooks/settings-hooks.json` — the package's own prompt/hook SOURCES (ADR-0092 D2). `tools/`, `dashboard/` and `tests/` stay uncapped everywhere, including under `.claude/pipeline/`.
 
-**Non-runtime** (NOT counted, uncapped): `decisions/*.md`, `docs/**/*.md`, `CLAUDE.md`, `README.md`, `tests/`, `.github/`, `.githooks/`.
+**Non-runtime** (NOT counted, uncapped): `decisions/*.md`, `docs/**/*.md`, `CLAUDE.md`, `README.md`, `tests/`, `.github/`, `.githooks/`. **Generated shims are never runtime artifacts** (ADR-0092 D2): `.claude/skills/<n>/` (when carrying the generated marker), `.claude/agents/pipeline/*.md`, `.claude/rules/pipeline/*.md` and the package-owned lines of `.claude/settings.json` and `.gitignore` are byte-derived copies of a counted source and are excluded, so the same content is never counted twice.
 
-**Check:** Run `git fetch origin "$(python3 tools/pipeline_config.py integration)"` (soft-degrade if it fails). The PR files API counts additions/deletions relative to the PR's base (the integration branch):
+**Check:** Run `git fetch origin "$(python3 tools/pipeline_config.py integration)"` (soft-degrade if it fails). The PR files API counts additions/deletions relative to the PR's base (the integration branch); each disjunct below binds its own `.path` (PRD #1266 criteria 1-2 / slice #1309 — a shared outer `.path |` pipe truncates the sum on the first non-runtime path):
 ```bash
-gh pr view <PR> --json files --jq '.files[] | select((.path | startswith(".claude/agents/")) or (.path | startswith(".claude/skills/")) or (.path | startswith(".claude/hooks/")) or (.path == ".claude/settings.json")) | .additions + .deletions' | awk '{s+=$1} END {print s}'
+gh pr view <PR> --json files --jq '.files[] | select((.path | startswith(".claude/agents/")) or (.path | startswith(".claude/skills/")) or (.path | startswith(".claude/hooks/")) or (.path == ".claude/settings.json") or (.path | startswith(".claude/pipeline/agents/")) or (.path | startswith(".claude/pipeline/skills/")) or (.path | startswith(".claude/pipeline/hooks/"))) | .additions + .deletions' | awk '{s+=$1} END {print s}'
 ```
+
+`gh pr view --json files` does not itself detect renames/copies. When a slice moves a prompt into `.claude/pipeline/` (or generates a shim from it), also run the rename-and-copy-aware form and prefer its total, so a moved-not-authored line is never double-counted as new:
+```bash
+git diff --find-renames --find-copies "origin/$(python3 tools/pipeline_config.py integration)"...HEAD --numstat -- '.claude/agents/*.md' '.claude/skills/*/SKILL.md' '.claude/hooks/*.sh' '.claude/settings.json' '.claude/pipeline/agents/*.md' '.claude/pipeline/skills/*/SKILL.md' '.claude/pipeline/hooks/*.sh' '.claude/pipeline/hooks/settings-hooks.json' | awk '{s+=$1+$2} END {print s+0}'
+```
+Exclude any path under `.claude/skills/`, `.claude/agents/pipeline/` or `.claude/rules/pipeline/` that carries the D2 generated marker before summing either total — those are shims, not sources.
 
 If sum > 600 → BLOCK: `R-LOC: slice diff is <N> LoC of runtime-artifact code; cap is 600. Split the slice or move non-runtime content out of .claude/`.
 

@@ -299,7 +299,7 @@ If prompt contains both `production-verify mode` AND `ui-mode`/`bash-mode` token
 |---|---|---|
 | `dashboard/**` | **command-run** | command output excerpt + exit codes |
 | `.claude/hooks/**`, `.claude/settings.json` | **hook-fire** | happy-path proof (a pasted verbatim `ok` beacon line + exit code) AND induced-failure proof (a pasted verbatim `ERROR` beacon line shown firing) |
-| `tools/**`, `.claude/skills/**` | **command-run** | command output excerpt + exit codes |
+| `tools/**`, `.claude/skills/**`, `.claude/pipeline/skills/**`, `.claude/pipeline/tools/**`, `.claude/pipeline/install.sh` | **command-run** | command output excerpt + exit codes |
 | `decisions/**`, `docs/**`, `README.md` | **static** | grep count= |
 | `.github/workflows/**`, `tools/ci-checks.sh` | **command-run + failing-canary** | the command-run proof PLUS a deliberately-failing canary shown to fail before the green run |
 | `AGENTS.md`, `.agents/**` | **command-run + static** | resolver/router command output + exit codes AND static source assertions with grep count= |

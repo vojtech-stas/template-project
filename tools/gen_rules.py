@@ -124,7 +124,7 @@ SCOPE_PATHS: dict[str, str] = {
     "hooks":     ".claude/hooks/**, .claude/settings.json",
     "isolation": ".claude/worktrees/**, tools/worktree-guard.sh",
     "docs":      "decisions/**, **/*.md",
-    "slicing":   ".claude/agents/slicer*.md, .claude/skills/*/SKILL.md",
+    "slicing":   ".claude/agents/slicer*.md, .claude/skills/*/SKILL.md, .claude/pipeline/skills/*/SKILL.md",
 }
 
 # Rule-ID conservation baseline (PRD #937 slice #939 — §2 criterion 7).
@@ -184,9 +184,16 @@ SCOPE_PATHS: dict[str, str] = {
 # `superseded_by: []` stays on both and no rule_id drops (HOK-003 stays):
 # the delta is +1, measured from the baseline on the integration branch at
 # the commit this lane rebased onto (96).
+# ADR-0092 (slice #1603) adds 3 new PIP-* ids (PIP-035, PIP-036, PIP-037).
+# Its five supersessions (ADR-0001 D1/D12, ADR-0002 D9-revised, ADR-0003 D1,
+# ADR-0042 D3) are all per-decision partial (D1 is superseded IN FULL, but
+# ADR-0001 D1 carries no rule_id of its own — its supersession drops no
+# rule_id either way), so `superseded_by: []` stays on every source ADR and
+# no rule_id drops: the delta is +3, measured from the baseline on
+# `develop` at the commit this slice branched from (97).
 # Breakdown: CAP(8) + COM(2) + CRI(5) + DOC(6) + GLO(4) + HOK(10) +
-#            ISO(6) + OUT(5) + PIP(33) + REG(3) + SLI(3) + VER(12) = 97
-RULE_IDS_BASELINE: int = 97
+#            ISO(6) + OUT(5) + PIP(36) + REG(3) + SLI(3) + VER(12) = 100
+RULE_IDS_BASELINE: int = 100
 
 # ---------------------------------------------------------------------------
 # Frontmatter parser (stdlib, no PyYAML)
@@ -638,6 +645,66 @@ _RULE_STATEMENTS: dict[str, str] = {
         "dispatch window of its lane, then closes its bugs. DRAIN-LEDGER "
         "caps a release run at 15 lanes in flight, and `tools/release.py "
         "verify` checks each bug after merge (ADR-0090 D3/D4)."
+    ),
+    # ADR-0092: the pipeline is an installable, upgradeable package (one git
+    # subtree at .claude/pipeline/, generated shims, tag-versioned)
+    "PIP-035": (
+        "The pipeline product lives only under `.claude/pipeline/` in the "
+        "home repository and in every host; `decisions/`, "
+        "`docs/decision-log/`, `qa-proof/` and the README stay outside it. "
+        "Claude Code, GitHub and git reach it only through generated shims "
+        "(`.claude/skills/<n>/`, `.claude/agents/pipeline/`, "
+        "`.claude/rules/pipeline/`, package-owned `.claude/settings.json` "
+        "hook entries, `.github/workflows/ci.yml`, a marked `.gitignore` "
+        "block) plus one `@.claude/pipeline/CLAUDE.md` line in the root "
+        "CLAUDE.md. Shims are never hand-edited. The repository and package "
+        "roots that locate files come only from "
+        "`.claude/pipeline/tools/pipeline_config.py`, never from a file's "
+        "own location; a file may still reach its own package siblings "
+        "from its own location, including a `sys.path` entry for `from "
+        "tools import …`. CI CHECK 30 (or the next free CHECK number at "
+        "merge; PACKAGE-INTEGRITY) fails on a stale or colliding shim, a "
+        "missing import line, a product file outside the prefix or home "
+        "material inside it, a prompt or rendered-rule command path "
+        "missing the prefix, a CI guard path that does not exist, a root "
+        "derived from self-location, or a literal own-location climb that "
+        "names no tracked path (ADR-0092 D1/D2)."
+    ),
+    "PIP-036": (
+        "A pipeline version is `VERSION` (`X.Y.Z`) plus an annotated tag "
+        "`vX.Y.Z` on the `git subtree split --prefix=.claude/pipeline` "
+        "commit; milestone `v<major>.<minor>[.<patch>]` names tag "
+        "`v<major>.<minor>.<patch or 0>`. Outside throwaway verification "
+        "repositories the tag is created only by the owner-run `package.py "
+        "publish` (advisory). Hosts install with `install.sh` (`git "
+        "subtree add --squash`) and upgrade with `package.py upgrade "
+        "vX.Y.Z` (`git subtree pull --squash`, then the new version's shim "
+        "refresh), which never writes the host's CLAUDE.md. A squash-shape "
+        "commit carries `git-subtree-dir: .claude/pipeline` and a 40-hex "
+        "`git-subtree-split:` line, has its split's tree, and has no "
+        "parent or one squash-shape parent; a host's package tree must "
+        "equal the tree of its newest subtree-trailer commit, which must "
+        "be squash-shape. An upgrade lands as a `pipeline-upgrade` PR (an "
+        "upgrade PR, not an ADR-0090 lane PR) judged by the reviewer's "
+        "R-UPGRADE rubric alone and merged by `tools/pipe/pr-merge` with a "
+        "merge commit, never a squash, which then closes its issue; the "
+        "squash-shape commit is the only commit exempt from the "
+        "Conventional Commits subject format and the Co-Authored-By "
+        "trailer (ADR-0092 D3/D4)."
+    ),
+    "PIP-037": (
+        "Every CI check and pre-commit step declares where it runs "
+        "(`home`, `host` or `both`), selected by `pipeline_config.py mode` "
+        "(host iff `.claude/pipeline.conf` names a `package_source`); a "
+        "check outside its scope prints `N/A (<scope>-only)`, never PASS. "
+        "A check whose subject both a host and the package write scores "
+        "only the package-owned part (tested for CHECK 8; advisory for "
+        "checks added later). `gen_rules.py`, `gen_repo_map.py` and "
+        "`readme_gen.py` refuse in host mode. In hosts, tests marked "
+        "`home` are skipped with reason `home-only`. A completeness test "
+        "fails on an unscoped check or an unmarked home-reading test, and "
+        "the self-install test fails when host-mode CI is not green on a "
+        "fresh install of the working tree's package (ADR-0092 D5)."
     ),
     # -----------------------------------------------------------------------
     # hooks scope (ADR-0015, ADR-0023, ADR-0033, ADR-0057)

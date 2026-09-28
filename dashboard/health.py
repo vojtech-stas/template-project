@@ -5155,6 +5155,47 @@ def check_quarantine_sla() -> dict:
     }
 
 
+def check_package_integrity() -> dict:
+    """PACKAGE-INTEGRITY: delegates to the one implementation,
+    `.claude/pipeline/tools/package.py check` (ADR-0064 D3, ADR-0092 D1).
+
+    This row exists so CI CHECK 30 and the package pre-commit hook consume
+    ONE arm implementation. `package.py check` itself runs the currency,
+    layout, self-location and prompt-path arms (both modes) plus the
+    pristine arm (host mode only); this row just runs it and reports its
+    verdict, adding no arm logic of its own.
+
+    PASS: every arm passed. FAIL: at least one arm failed (detail carries
+    each `FAIL: <arm> — ...` line). WARN: the package script itself is
+    missing (pre-package-existence bind-forward — ADR-0004 D2).
+    """
+    package_py = _HEALTH_REPO_ROOT / ".claude" / "pipeline" / "tools" / "package.py"
+    if not package_py.exists():
+        return {
+            "id": "PACKAGE-INTEGRITY",
+            "result": "WARN",
+            "detail": ".claude/pipeline/tools/package.py not found (bind-forward: ADR-0092 D1)",
+        }
+    result = subprocess.run(
+        [sys.executable, str(package_py), "check"],
+        cwd=str(_HEALTH_REPO_ROOT), capture_output=True, text=True,
+        encoding="utf-8", errors="replace",
+    )
+    lines = [ln for ln in result.stdout.splitlines() if ln.strip()]
+    fails = [ln for ln in lines if ln.startswith("FAIL:")]
+    if result.returncode == 0 and not fails:
+        return {
+            "id": "PACKAGE-INTEGRITY",
+            "result": "PASS",
+            "detail": f"{len(lines)} arm(s) PASS",
+        }
+    return {
+        "id": "PACKAGE-INTEGRITY",
+        "result": "FAIL",
+        "detail": "; ".join(fails) if fails else result.stderr.strip() or "package.py check exited non-zero",
+    }
+
+
 def _insert_dashboard_sys_path() -> None:
     """Ensure dashboard/ is on sys.path for sibling imports."""
     dashboard_dir = str(Path(__file__).resolve().parent)
@@ -7712,6 +7753,9 @@ CHECK_REGISTRY: dict[str, callable] = {
     "AS-AUDIT": check_audit_subagents,
     # Queue-drain run-ledger integrity (ADR-0085 D6 — PRD #1326 slice #1329)
     "DRAIN-LEDGER": check_drain_ledger,
+    # Package skeleton integrity (ADR-0092 D1 — slice #1603): delegates to
+    # the one implementation, .claude/pipeline/tools/package.py check.
+    "PACKAGE-INTEGRITY": check_package_integrity,
 }
 
 

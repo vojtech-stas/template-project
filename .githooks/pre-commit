@@ -243,4 +243,24 @@ if [ "$_SECRETS_RC" -ne 0 ]; then
     exit 1
 fi
 
+# ---------------------------------------------------------------------------
+# Package currency check — ADR-0092 D2 (pre-commit defense-in-depth,
+# mirroring the README currency check above; CI CHECK 30 is the
+# unbypassable gate this local catch cannot substitute for).
+#
+# Fail-open: python3 missing, or the package not yet installed here.
+# Bypass note: `git commit --no-verify` skips this; CHECK 30 catches it.
+# ---------------------------------------------------------------------------
+_PKG_PYTHON=$(command -v python3 2>/dev/null || command -v python 2>/dev/null) || _PKG_PYTHON=""
+if [ -n "$_PKG_PYTHON" ] && [ -n "${REPO_ROOT:-}" ] && [ -f "$REPO_ROOT/.claude/pipeline/tools/package.py" ]; then
+    if ! "$_PKG_PYTHON" "$REPO_ROOT/.claude/pipeline/tools/package.py" check >/tmp/pkg-check-out.$$ 2>&1; then
+        echo "pre-commit: ERROR: pipeline package check failed (ADR-0092 D2 currency arm, or another PACKAGE-INTEGRITY arm):" >&2
+        cat /tmp/pkg-check-out.$$ >&2
+        rm -f /tmp/pkg-check-out.$$
+        echo "pre-commit: run \`python3 .claude/pipeline/tools/package.py refresh\` (if the failure is stale shims) and re-stage, or see CI CHECK 30." >&2
+        exit 1
+    fi
+    rm -f /tmp/pkg-check-out.$$
+fi
+
 exit 0
