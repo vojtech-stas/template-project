@@ -383,6 +383,16 @@ def layout_arm(repo_root: Path, pkg_root: Path) -> list[str]:
                     f"(layout) {rel_ci}:{i + 1} soft-degrade guard on missing "
                     f"path {path} (CHECK {check_label})"
                 )
+    elif pc.mode(str(repo_root)) == "home":
+        # Fail closed rather than silently skip the guard-path scan: the
+        # home repository always owns ci-checks.sh (at its package or root
+        # copy), so its absence is itself a layout defect, not a degrade
+        # case. A host at this slice legitimately has no ci-checks.sh yet
+        # (it moves into the package in a later work-unit, ADR-0092 D1
+        # bootstrap-mode) — that absence stays silent there.
+        failures.append(
+            "(layout) ci-checks.sh not found in package or repo root"
+        )
     return failures
 
 
@@ -645,18 +655,27 @@ def cmd_install(argv, repo_root: Path, pkg_root: Path) -> int:
         lines.append(f"release_branch={release}")
     conf_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    refresh(repo_root, pkg_root, write=True)
+    changed_shims = refresh(repo_root, pkg_root, write=True)
 
     claude_md = repo_root / "CLAUDE.md"
     text = claude_md.read_text(encoding="utf-8") if claude_md.exists() else ""
+    claude_md_changed = False
     if _IMPORT_LINE not in text.splitlines():
         if text and not text.endswith("\n"):
             text += "\n"
         text += _IMPORT_LINE + "\n"
         claude_md.write_text(text, encoding="utf-8")
+        claude_md_changed = True
 
     version = _read_version(pkg_root)
-    _git(["add", "-A"], repo_root)
+    # Stage ONLY the paths this command itself wrote — never `git add -A`,
+    # which would sweep any of the host's own untracked files into the wire
+    # commit (an install-safety defect; the host's tree is not ours to
+    # collect).
+    to_add = [str(conf_path.relative_to(repo_root))] + changed_shims
+    if claude_md_changed:
+        to_add.append(str(claude_md.relative_to(repo_root)))
+    _git(["add", "--"] + to_add, repo_root)
     _git(["commit", "-q", "-m", f"chore(pipeline): wire v{version}"], repo_root, check=False)
 
     print("Next steps (run these yourself — install never pushes or bootstraps):")

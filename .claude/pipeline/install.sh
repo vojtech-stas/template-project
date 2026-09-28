@@ -7,6 +7,7 @@
 #       [--integration <branch>] [--release <branch>]
 #
 # Refuses BEFORE any write when:
+#   - the working tree has uncommitted changes                -> dirty-tree
 #   - the repository already holds .claude/pipeline/ without a
 #     package_source (the home repository)              -> home-repository
 #   - the repository already holds .claude/pipeline/ WITH a package_source
@@ -40,6 +41,11 @@ done
 if [ -z "$SOURCE" ] || [ -z "$TAG" ]; then
     echo "usage: install.sh --source <url> --tag vX.Y.Z [--integration <b>] [--release <b>]" >&2
     exit 2
+fi
+
+if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+    echo "package.py: refused (dirty-tree): working tree has uncommitted changes" >&2
+    exit 1
 fi
 
 if [ -d ".claude/pipeline" ]; then
