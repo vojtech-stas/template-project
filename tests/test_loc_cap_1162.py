@@ -193,10 +193,15 @@ class TestGenRulesBaseline(unittest.TestCase):
         # HOK-010 then moved it 96 -> 97, bug #1546's lane PR — ADR-0091's
         # two supersessions (ADR-0023 D3, ADR-0029 D3) are each PARTIAL, so
         # no existing rule_id drops out of the active set; the delta is a
-        # pure +1). This test's job is unchanged: confirm slice #1162's own
+        # pure +1; ADR-0092's PIP-035/PIP-036/PIP-037 then moved it 97 ->
+        # 100, slice #1603 — ADR-0092's five supersessions (ADR-0001 D1/D12,
+        # ADR-0002 D9-revised, ADR-0003 D1, ADR-0042 D3) are each PARTIAL
+        # (D1 is superseded IN FULL, but carries no rule_id of its own), so
+        # no existing rule_id drops out of the active set; the delta is a
+        # pure +3). This test's job is unchanged: confirm slice #1162's own
         # PIP-020/021 rule_ids are still represented in the live baseline,
         # not that the literal number stays frozen at 82.
-        self.assertIn("RULE_IDS_BASELINE: int = 97", self.text)
+        self.assertIn("RULE_IDS_BASELINE: int = 100", self.text)
         self.assertIn('"PIP-030"', self.text)
 
     def test_new_rule_statements_present(self):

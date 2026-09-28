@@ -93,7 +93,13 @@ class TestSubjectSetClassification(unittest.TestCase):
         self.assertTrue(is_excluded("tools/gen_rules.py"))
 
     def test_resolver_itself_excluded(self):
-        self.assertTrue(is_excluded("tools/pipeline_config.py"))
+        # ADR-0092 D1 / slice #1603: the resolver moved to the package, so
+        # the exclusion now names its package path; the root
+        # tools/pipeline_config.py is a delegating stub with no key-parsing
+        # logic of its own, and IS a subject (still product code that could
+        # smuggle a branch-name literal back in).
+        self.assertTrue(is_excluded(".claude/pipeline/tools/pipeline_config.py"))
+        self.assertFalse(is_excluded("tools/pipeline_config.py"))
 
     def test_agent_md_not_excluded(self):
         self.assertFalse(is_excluded(".claude/agents/reviewer.md"))

@@ -229,11 +229,13 @@ class TestListCountInvariant:
         by slice #1498 (PRD #1496 §2 criterion 4 / ADR-0087 D2), which
         registers ONE new check: QUERY-HONESTY. Bumped from 50 to 51 by
         slice #1508 (PRD #1501 §2 criteria 12-14 / ADR-0090 D1), which
-        registers ONE new check: RELEASE-GATE. This invariant guards
-        against ACCIDENTAL registry drift (duplicate/dropped IDs) —
-        deliberate additions and removals bump the literal in the same PR
-        that adds or deletes the check, per the established pattern for
-        this test.
+        registers ONE new check: RELEASE-GATE. Bumped from 51 to 52 by
+        slice #1603 (PRD "Make the pipeline an installable, upgradeable
+        package" / ADR-0092 D1), which registers ONE new check:
+        PACKAGE-INTEGRITY. This invariant guards against ACCIDENTAL
+        registry drift (duplicate/dropped IDs) — deliberate additions and
+        removals bump the literal in the same PR that adds or deletes the
+        check, per the established pattern for this test.
         """
         result = subprocess.run(
             [sys.executable, os.path.join(HEALTH_DIR, "health.py"), "--list"],
@@ -243,12 +245,12 @@ class TestListCountInvariant:
         assert result.returncode == 0, f"health.py --list failed: {result.stderr}"
         lines = [l for l in result.stdout.strip().splitlines() if l.strip()]
         count = len(lines)
-        assert count == 51, (
-            f"--list count changed! Expected 51, got {count}. "
+        assert count == 52, (
+            f"--list count changed! Expected 52, got {count}. "
             "Conservation violated (slice #968 §2 #8 / bumped by slice #1085, "
             "#1136; moved to 50 by slice #1240; moved to 51 by slice #1329; "
             "moved to 49 by slice #1483; moved to 50 by slice #1498; "
-            "moved to 51 by slice #1508)."
+            "moved to 51 by slice #1508; moved to 52 by slice #1603)."
         )
 
 
