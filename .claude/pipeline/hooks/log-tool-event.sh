@@ -47,8 +47,8 @@
 # NO jq IN THIS FILE — python3 only; jq ENOEXEC hazard is structurally irrelevant.
 #
 # Invoke style (settings.json registration):
-#   bash "$CLAUDE_PROJECT_DIR/.claude/hooks/log-tool-event.sh" session_start
-#   bash "$CLAUDE_PROJECT_DIR/.claude/hooks/log-tool-event.sh" auto
+#   bash "$CLAUDE_PROJECT_DIR/.claude/pipeline/hooks/log-tool-event.sh" session_start
+#   bash "$CLAUDE_PROJECT_DIR/.claude/pipeline/hooks/log-tool-event.sh" auto
 
 EVENT_TYPE="${1:-unknown}"
 

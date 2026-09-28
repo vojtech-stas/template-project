@@ -55,7 +55,7 @@ FIXTURE_FILES = [
     {"path": ".claude/agents/reviewer.md", "additions": 10, "deletions": 5},
     {"path": "decisions/0081-x.md", "additions": 100, "deletions": 0},
     {"path": ".claude/settings.json", "additions": 7, "deletions": 3},
-    {"path": ".claude/hooks/stop-reviewer-gate.sh", "additions": 4, "deletions": 1},
+    {"path": ".claude/pipeline/hooks/stop-reviewer-gate.sh", "additions": 4, "deletions": 1},
 ]
 # 15 (reviewer.md) + 10 (settings.json) + 5 (hook) == 30. The 100-line
 # decisions/ entry is correctly EXCLUDED (non-runtime, uncapped).

@@ -51,7 +51,7 @@ printf '{"hook":"session-start","status":"python3_selftest","result":"%s","ts":"
 # through the GH_OK block to its single terminal beacon.
 # #1535: `pwd -W` (else `pwd`; braced so a failed cd never yields the cwd) for
 # MSYS_NO_PATHCONV=1. Stdout names the branch; a failure re-runs it for stderr.
-_SS_TOOLS_DIR="$(cd "$SCRIPT_DIR/../../tools" && { pwd -W 2>/dev/null || pwd; })"
+_SS_TOOLS_DIR="$(cd "$SCRIPT_DIR/../../../tools" && { pwd -W 2>/dev/null || pwd; })"
 PIPELINE_CONFIG_PY="$_SS_TOOLS_DIR/pipeline_config.py"
 INTEGRATION_BRANCH=""
 _PC_ERR=""
@@ -94,7 +94,7 @@ LOG=$(git log --oneline -5 2>/dev/null || echo "(no log)")
 # block after one proven session cycle with the loud-warn behavior observed
 # live — see tools/repair-topology.md + PR body for the full rationale.
 DEPLOY_WARN=""
-HANDSHAKE_SH="$SCRIPT_DIR/../../tools/deploy-handshake.sh"
+HANDSHAKE_SH="$SCRIPT_DIR/../../../tools/deploy-handshake.sh"
 if [ -f "$HANDSHAKE_SH" ]; then
   DEPLOY_OUTPUT=$(bash "$HANDSHAKE_SH" 2>&1)
   DEPLOY_EXIT=$?
@@ -112,7 +112,7 @@ command -v jq >/dev/null 2>&1 && JQ_OK=1
 # ---- jq warning ---------------------------------------------------------------
 JQ_WARN=""
 if [ "$JQ_OK" -ne 1 ]; then
-  JQ_WARN=$(printf "\nWARNING: jq missing. PreToolUse Edit/Write hook degrades to rule-#10 ask. Install: bootstrap.sh or winget/brew/apt jq.\n")
+  JQ_WARN=$(printf "\nWARNING: jq missing. PreToolUse Edit/Write hook degrades to rule-#10 ask. Install: .claude/pipeline/bootstrap.sh or winget/brew/apt jq.\n")
 fi
 
 # ---- gh-unavailable warning ---------------------------------------------------

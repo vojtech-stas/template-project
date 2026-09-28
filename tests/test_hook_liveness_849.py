@@ -32,7 +32,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 REPO_ROOT = Path(__file__).parent.parent
 SETTINGS_PATH = REPO_ROOT / ".claude" / "settings.json"
-HOOKS_DIR = REPO_ROOT / ".claude" / "hooks"
+HOOKS_DIR = REPO_ROOT / ".claude" / "pipeline" / "hooks"
 HEALTH_PY = REPO_ROOT / "dashboard" / "health.py"
 
 

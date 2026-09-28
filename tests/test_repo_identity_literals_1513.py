@@ -84,13 +84,20 @@ class TestSubjectSetClassification(unittest.TestCase):
         self.assertTrue(is_subject_file("dashboard/health.py"))
 
     def test_hooks_is_subject(self):
-        self.assertTrue(is_subject_file(".claude/hooks/session-start.sh"))
+        # ADR-0092 D1 (slice #1605): the bare .claude/hooks/ root is moved
+        # (no tracked file remains there) -- it is dropped from the subject
+        # set, same pattern as the agents/skills drop in slice #1604. The
+        # package's own .claude/pipeline/hooks/ is the subject now.
+        self.assertFalse(is_subject_file(".claude/hooks/session-start.sh"))
+        self.assertTrue(is_subject_file(".claude/pipeline/hooks/session-start.sh"))
 
     def test_githooks_is_subject(self):
-        self.assertTrue(is_subject_file(".githooks/pre-commit"))
+        self.assertFalse(is_subject_file(".githooks/pre-commit"))
+        self.assertTrue(is_subject_file(".claude/pipeline/githooks/pre-commit"))
 
     def test_bootstrap_is_subject(self):
-        self.assertTrue(is_subject_file("bootstrap.sh"))
+        self.assertFalse(is_subject_file("bootstrap.sh"))
+        self.assertTrue(is_subject_file(".claude/pipeline/bootstrap.sh"))
 
     def test_non_skill_md_not_subject(self):
         self.assertFalse(is_subject_file(".claude/pipeline/skills/ship/notes.md"))

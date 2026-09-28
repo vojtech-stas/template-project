@@ -48,7 +48,7 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-HOOKS = REPO_ROOT / ".claude" / "hooks"
+HOOKS = REPO_ROOT / ".claude" / "pipeline" / "hooks"
 PRE_TOOL_BASH = HOOKS / "pre-tool-bash.sh"
 PRE_TOOL_EDIT = HOOKS / "pre-tool-edit.sh"
 STOP_GATE = HOOKS / "stop-reviewer-gate.sh"

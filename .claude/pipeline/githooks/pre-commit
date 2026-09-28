@@ -1,13 +1,13 @@
 #!/bin/sh
-# .githooks/pre-commit
+# .claude/pipeline/githooks/pre-commit
 #
 # Purpose:
 #   Local-side workflow enforcement for project-claude. Layer 1 of the
 #   three-layer bypass-prevention stack defined in ADR-0004 D3.
 #
 # When it runs:
-#   Before every `git commit` in any clone that has run `.githooks/install.sh`
-#   (which sets `git config core.hooksPath .githooks`).
+#   Before every `git commit` in any clone that has run `.claude/pipeline/githooks/install.sh`
+#   (which sets `git config core.hooksPath .claude/pipeline/githooks`).
 #
 # What it blocks:
 #   1. Commits while HEAD is the `main` branch — direct commits to main are
@@ -31,7 +31,7 @@
 #
 # See:
 #   - decisions/0004-bypass-prevention.md (D3 layer 1)
-#   - .githooks/install.sh
+#   - .claude/pipeline/githooks/install.sh
 
 set -u
 
@@ -45,7 +45,7 @@ if [ -z "$branch" ]; then
 fi
 
 # Resolve the configured release branch (ADR-0089 D1), located relative to
-# THIS script's own path (S1-c: `.githooks/` scripts use `$(dirname "$0")`).
+# THIS script's own path (S1-c: `.claude/pipeline/githooks/` scripts use `$(dirname "$0")`).
 # A resolver failure takes this hook's existing warn-and-allow fail-open
 # path (ADR-0004 D3 layer 1) — never a fallback literal.
 _pc_dir=$(dirname "$0")
@@ -97,7 +97,7 @@ if [ -z "$PYTHON" ]; then
     exit 0
 fi
 
-# Locate the repo root (the directory containing .githooks/).
+# Locate the repo root (the directory containing .claude/pipeline/githooks/).
 # Use `git rev-parse --show-toplevel`; handle paths with spaces via quoting.
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || REPO_ROOT=""
 

@@ -1275,6 +1275,11 @@ _GUARDRAIL_PATHS: tuple = (
     ".claude/hooks/",
     "tools/ci-checks.sh",
     ".githooks/",
+    # Package hooks/githooks SOURCES (ADR-0092 D1/D2, slice #1605) — the
+    # pre-move members above stay: a promotion diff spanning the move still
+    # names them.
+    ".claude/pipeline/hooks/",
+    ".claude/pipeline/githooks/",
     # Critic agent prompts (pre-move paths stay: a promotion diff spanning
     # the ADR-0092 D1 move still names them, slice #1604)
     ".claude/agents/reviewer.md",

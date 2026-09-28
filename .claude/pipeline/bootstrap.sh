@@ -9,7 +9,7 @@
 # extended by ADR-0089 D2, slice #1511):
 #   1. Sanity: confirm we're inside a git repo + `gh` is authenticated.
 #   2. Create the 8 repo-level labels (skip if they already exist).
-#   3. Install local git hooks (`git config core.hooksPath .githooks`).
+#   3. Install local git hooks (`git config core.hooksPath .claude/pipeline/githooks`).
 #   4. Detect the GitHub Project v2 board (manual hint if missing).
 #   4b. Create the configured integration branch from the release tip, when
 #       origin lacks it (ADR-0089 D2; idempotent, never forced).
@@ -35,7 +35,7 @@
 #
 # See:
 #   - decisions/0008-workflow-autolog-bootstrap-and-naming.md (D6)
-#   - .githooks/install.sh, .githooks/pre-commit, .githooks/commit-msg
+#   - .claude/pipeline/githooks/install.sh, .claude/pipeline/githooks/pre-commit, .claude/pipeline/githooks/commit-msg
 #   - tools/branch-protection-config.example.json (reference shape)
 
 set -uo pipefail
@@ -145,6 +145,7 @@ LABELS=(
     "bug|d73a4a|Class label: breaks the system's own promise, doc drift included (ADR-0090 D1)"
     "feature|1d76db|Class label: anything that is not a bug (ADR-0090 D1)"
     "lane|5319e7|Release-mode file-lane PR closing bug issues only (ADR-0090 D3/D4)"
+    "pipeline-upgrade|0e8a16|Upgrade PR closing one feature issue via git subtree pull (ADR-0092 D3/D4)"
 )
 
 create_label() {
@@ -186,19 +187,19 @@ fi
 
 # ---- step 3: install git hooks --------------------------------------------
 
-step 3 "install git hooks (core.hooksPath = .githooks)"
+step 3 "install git hooks (core.hooksPath = .claude/pipeline/githooks)"
 
 # Setting core.hooksPath is itself idempotent — setting it to the same value
 # is a no-op. We compare before/after to report an honest "already done" vs
 # "newly set" outcome in the summary.
 HOOKS_BEFORE=$(git -C "$REPO_ROOT" config --local --get core.hooksPath 2>/dev/null || echo "")
-if git -C "$REPO_ROOT" config --local core.hooksPath .githooks 2>/dev/null; then
-    if [[ "$HOOKS_BEFORE" == ".githooks" ]]; then
-        log "core.hooksPath was already '.githooks'; no change."
+if git -C "$REPO_ROOT" config --local core.hooksPath .claude/pipeline/githooks 2>/dev/null; then
+    if [[ "$HOOKS_BEFORE" == ".claude/pipeline/githooks" ]]; then
+        log "core.hooksPath was already '.claude/pipeline/githooks'; no change."
         note "✓ git hooks: already configured"
     else
-        log "core.hooksPath set to '.githooks' (was: '${HOOKS_BEFORE:-<unset>}')."
-        note "✓ git hooks: configured (.githooks)"
+        log "core.hooksPath set to '.claude/pipeline/githooks' (was: '${HOOKS_BEFORE:-<unset>}')."
+        note "✓ git hooks: configured (.claude/pipeline/githooks)"
     fi
 else
     warn "failed to set core.hooksPath."
@@ -208,16 +209,16 @@ fi
 # Best-effort: ensure the hook scripts are executable. On Windows filesystems
 # the bit is ignored, but chmod still succeeds; on POSIX it actually matters.
 # We silently skip any file that doesn't exist (e.g., partial clone).
-for f in "$REPO_ROOT/.githooks/pre-commit" "$REPO_ROOT/.githooks/install.sh" "$REPO_ROOT/.githooks/commit-msg"; do
+for f in "$REPO_ROOT/.claude/pipeline/githooks/pre-commit" "$REPO_ROOT/.claude/pipeline/githooks/install.sh" "$REPO_ROOT/.claude/pipeline/githooks/commit-msg"; do
     if [[ -f "$f" ]]; then
         chmod +x "$f" 2>/dev/null || warn "could not chmod +x '$f' (likely Windows filesystem; git index bit still applies)."
     fi
 done
 
-# Same idempotent chmod for Claude Code hook scripts under .claude/hooks/
+# Same idempotent chmod for Claude Code hook scripts under .claude/pipeline/hooks/
 # (per ADR-0023 D7). Glob expands to nothing if the directory is missing on a
 # partial clone; the `|| true` keeps the script best-effort.
-[ -d "$REPO_ROOT/.claude/hooks" ] && chmod +x "$REPO_ROOT"/.claude/hooks/*.sh 2>/dev/null || true
+[ -d "$REPO_ROOT/.claude/pipeline/hooks" ] && chmod +x "$REPO_ROOT"/.claude/pipeline/hooks/*.sh 2>/dev/null || true
 
 # ---- step 4: project board v2 (detect only; manual create if missing) -----
 
@@ -383,7 +384,7 @@ fi
 step 6 "python3 presence check (warn-only)"
 
 # python3 is required by the canonical workflow event logger
-# (.claude/hooks/log-tool-event.sh calls python3 for JSON emission) and by
+# (.claude/pipeline/hooks/log-tool-event.sh calls python3 for JSON emission) and by
 # the Playwright qa-tester route (step 8). We do NOT auto-install it —
 # a missing Python runtime is a host-setup concern. Warn-and-continue.
 if command -v python3 >/dev/null 2>&1; then
@@ -400,8 +401,8 @@ fi
 step 7 "jq install (idempotent; cross-platform)"
 
 # jq is required by:
-#   - .claude/hooks/pre-tool-edit.sh (parses tool_input.file_path JSON)
-#   - .claude/hooks/session-start.sh (emits hookSpecificOutput JSON)
+#   - .claude/pipeline/hooks/pre-tool-edit.sh (parses tool_input.file_path JSON)
+#   - .claude/pipeline/hooks/session-start.sh (emits hookSpecificOutput JSON)
 # On Windows Git Bash, jq is NOT installed by default, which triggers the
 # rule-#10 ask fallback on every Edit/Write (real user-impact today per
 # captured #222). Per ADR-0030 D1: detect, then OS-specific install if missing.

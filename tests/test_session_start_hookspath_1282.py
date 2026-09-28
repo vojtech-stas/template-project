@@ -46,8 +46,8 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-SESSION_START_SH = REPO_ROOT / ".claude" / "hooks" / "session-start.sh"
-LIB_ROOT_SH = REPO_ROOT / ".claude" / "hooks" / "lib-root.sh"
+SESSION_START_SH = REPO_ROOT / ".claude" / "pipeline" / "hooks" / "session-start.sh"
+LIB_ROOT_SH = REPO_ROOT / ".claude" / "pipeline" / "hooks" / "lib-root.sh"
 DEPLOY_HANDSHAKE_SH = REPO_ROOT / "tools" / "deploy-handshake.sh"
 
 _TRUNCATE_MARKER = "# ---- gh/jq availability"
@@ -104,12 +104,12 @@ def _build_fixture(tmp_path: Path) -> Path:
     _git("-C", str(repo), "config", "user.email", "test@example.com")
     _git("-C", str(repo), "config", "user.name", "Test")
 
-    hooks_dir = repo / ".claude" / "hooks"
+    hooks_dir = repo / ".claude" / "pipeline" / "hooks"
     hooks_dir.mkdir(parents=True)
     (hooks_dir / "session-start.sh").write_text("#!/bin/bash\necho hi\n")
     (repo / ".claude" / "settings.json").write_text('{"hooks": {}}\n')
-    githooks_dir = repo / ".githooks"
-    githooks_dir.mkdir()
+    githooks_dir = repo / ".claude" / "pipeline" / "githooks"
+    githooks_dir.mkdir(parents=True)
     (githooks_dir / "pre-commit").write_text("#!/bin/bash\nexit 0\n")
 
     _git("-C", str(repo), "add", ".")
@@ -155,7 +155,7 @@ def _run_session_start(fixture_repo: Path):
 
     harness_root = tempfile.mkdtemp(prefix="session_start_hookspath_1282_")
     try:
-        hooks_dir = Path(harness_root) / ".claude" / "hooks"
+        hooks_dir = Path(harness_root) / ".claude" / "pipeline" / "hooks"
         hooks_dir.mkdir(parents=True)
         tools_dir = Path(harness_root) / "tools"
         tools_dir.mkdir()
@@ -200,7 +200,7 @@ class TestSessionStartHooksPathCompare1282(unittest.TestCase):
             # Mirrors the real symptom's exact shape (measured 2026-08-23:
             # "F:\project_claude\.githooks" -- an absolute path resolving
             # to the correct .githooks dir, not the literal ".githooks").
-            githooks_abs = str((repo / ".githooks").resolve())
+            githooks_abs = str((repo / ".claude" / "pipeline" / "githooks").resolve())
             _git("-C", str(repo), "config", "core.hooksPath", githooks_abs)
             fields, result = _run_session_start(repo)
         combined = fields.get("HOOKS_WARN", "") + fields.get("DEPLOY_WARN", "")

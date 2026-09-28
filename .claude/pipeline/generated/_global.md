@@ -119,7 +119,7 @@ Atomic rules for the `pipeline` scope, generated from non-superseded ADR frontma
 - **PIP-030:** OpenAI runs use the shared canonical workflow through the OpenAI adapter, preserving gates and truthful platform evidence; adapter drift or missing required capability prevents a completion claim (ADR-0086 D1-D6).
 
 #### Source: ADR-0089 (`decisions/0089-per-repo-pipeline-identity.md`)
-- **PIP-031:** Pipeline executables (`tools/`, `dashboard/`, `.claude/hooks/`, `.githooks/`, `bootstrap.sh`) and agent/skill prompt commands name the integration or release branch only through `tools/pipeline_config.py`, which reads the tracked `.claude/pipeline.conf` (defaults `develop`/`main`). Agents branch from, diff against, verify on and open PRs to the integration branch. CI CHECK 29 fails on a literal branch token in that defined subject set (ADR-0089 D1/D3).
+- **PIP-031:** Pipeline executables (`tools/`, `dashboard/`, `.claude/pipeline/hooks/`, `.claude/pipeline/githooks/`, `.claude/pipeline/bootstrap.sh`) and agent/skill prompt commands name the integration or release branch only through `tools/pipeline_config.py`, which reads the tracked `.claude/pipeline.conf` (defaults `develop`/`main`). Agents branch from, diff against, verify on and open PRs to the integration branch. CI CHECK 29 fails on a literal branch token in that defined subject set (ADR-0089 D1/D3).
 - **PIP-032:** A health-check grandfather anchor is an ISO-8601 UTC instant in `dashboard/_constants.py` `GRANDFATHER_UNTIL`, compared against merge time through `grandfathered()`. It is never a PR/issue number or commit sha of this repo. CI CHECK 29 fails on a numeric or sha-valued anchor constant (ADR-0089 D4).
 
 #### Source: ADR-0090 (`decisions/0090-release-mode.md`)

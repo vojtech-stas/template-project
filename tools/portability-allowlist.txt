@@ -15,11 +15,11 @@
 # ADR's measurement found outside qa-proof/**, decisions/**, and this file
 # itself, at commit c06df1758c118a156d5da8367532768369847215.
 
-bootstrap.sh|C:/Program Files/Git/repos/...|MSYS path-conversion illustration comment (Class B arm 1)
+.claude/pipeline/bootstrap.sh|C:/Program Files/Git/repos/...|MSYS path-conversion illustration comment (Class B arm 1)
 tests/test_promote_ack_880.py|C:\foo\bar|MSYS fallback-conversion illustration comment (Class B arm 1+2)
 tests/test_promote_gate_parse_1036.py|C:\foo\bar|MSYS fallback-conversion illustration comment (Class B arm 1+2)
 tests/test_promote_sentinel_order_1038.py|C:\foo\bar|MSYS fallback-conversion illustration comment (Class B arm 1+2)
 tests/test_session_start_hookspath_1282.py|/c/Users/name|bash tilde-expansion hazard comment, placeholder account name (Class A+B arm 2)
 tests/test_session_start_hookspath_1282.py|F:\project_claude\.githooks|worked example of an absolute hooksPath value (Class B arm 1)
-tools/deploy-handshake.sh|F:\project_claude\.githooks|worked example of an absolute hooksPath value, drive-letter form (Class B arm 1)
-tools/deploy-handshake.sh|/f/project_claude/.githooks|same worked example, MSYS mount form (Class B arm 2)
+tools/deploy-handshake.sh|F:\project_claude\.claude/pipeline/githooks|worked example of an absolute hooksPath value, drive-letter form (Class B arm 1)
+tools/deploy-handshake.sh|/f/project_claude/.claude/pipeline/githooks|same worked example, MSYS mount form (Class B arm 2)

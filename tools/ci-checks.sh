@@ -735,7 +735,7 @@ fi
 # catch accidental autonomous-agent commits before they reach the remote.
 #
 # Patterns: key/token/private-key shape + entropy heuristic.
-# Gate of record (ADR-0042 D1); .githooks/pre-commit is the advisory mirror.
+# Gate of record (ADR-0042 D1); .claude/pipeline/githooks/pre-commit is the advisory mirror.
 # Allowlist: tools/secrets-allowlist.txt (reviewed false positives only).
 # Scope: tracked non-binary files in git diff HEAD (staged + working tree).
 #        Skips: decisions/*.md, .claude/logs/, docs/*.md (prose mentions only).
@@ -1086,8 +1086,8 @@ fi
 # ---------------------------------------------------------------------------
 # CHECK 21: DEPLOY-HANDSHAKE self-test backstop (PRD #1075 slice #1079)
 #   Runs tools/deploy-handshake.sh --self-test — the CI-SAFE internal-
-#   consistency leg only (script parses, .claude/hooks/ non-empty,
-#   .claude/settings.json valid JSON, .githooks/ present). Deliberately does
+#   consistency leg only (script parses, .claude/pipeline/hooks/ non-empty,
+#   .claude/settings.json valid JSON, .claude/pipeline/githooks/ present). Deliberately does
 #   NOT run the full local-leg comparison (running-vs-deployed-branch content
 #   hash, attached/detached HEAD) — GitHub Actions checks out PRs in DETACHED
 #   HEAD by design, so that comparison would always false-positive in CI.
@@ -1410,7 +1410,7 @@ fi  # end python3/git availability check
 # targets workflow-events.rejects.jsonl) is never false-positived.
 #
 # Subject set (ADR-0083 D3 / VER-009 -- a check's subject set is defined,
-# not assumed): every ".claude/hooks/*.sh" AND every ".claude/hooks/*.py",
+# not assumed): every ".claude/pipeline/hooks/*.sh" AND every ".claude/pipeline/hooks/*.py",
 # both globbed at run time -- never a single hard-coded filename, so a
 # second .py helper is covered the day it lands, not the day someone
 # remembers to add it here.
@@ -1472,7 +1472,7 @@ def join_continuations(content):
     return out
 
 
-hook_files = sorted(glob.glob(".claude/hooks/*.sh"))
+hook_files = sorted(glob.glob(".claude/pipeline/hooks/*.sh"))
 
 for path in hook_files:
     base = os.path.basename(path)
@@ -1688,10 +1688,10 @@ def check_python_source(source, filelabel, line_offset, base_filename):
 # Subject set is DERIVED from the glob, not asserted by a hard-coded single
 # path (ADR-0083 D3 / VER-009: "a check's subject set is defined, not
 # assumed"). D2's Enforcement clause scopes this leg to
-# ".claude/hooks/*.sh" AND ".claude/hooks/*.py" -- glob both the same way so
+# ".claude/pipeline/hooks/*.sh" AND ".claude/pipeline/hooks/*.py" -- glob both the same way so
 # a second .py helper landing tomorrow is covered on day one, not silently
 # under-scored the way the single hard-coded literal was.
-py_files = sorted(glob.glob(".claude/hooks/*.py"))
+py_files = sorted(glob.glob(".claude/pipeline/hooks/*.py"))
 for py_path in py_files:
     with open(py_path, "r", encoding="utf-8") as f:
         check_python_source(f.read(), py_path, 1, os.path.basename(py_path))

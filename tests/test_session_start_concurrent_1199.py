@@ -68,8 +68,8 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-SESSION_START_SH = REPO_ROOT / ".claude" / "hooks" / "session-start.sh"
-LIB_ROOT_SH = REPO_ROOT / ".claude" / "hooks" / "lib-root.sh"
+SESSION_START_SH = REPO_ROOT / ".claude" / "pipeline" / "hooks" / "session-start.sh"
+LIB_ROOT_SH = REPO_ROOT / ".claude" / "pipeline" / "hooks" / "lib-root.sh"
 
 # origin/develop HEAD at the point ADR-0079 D3 / slice #1197 landed -- the
 # state of session-start.sh BEFORE this slice's concurrency change. Named

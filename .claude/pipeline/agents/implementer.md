@@ -25,7 +25,7 @@ controller dispatches workers and retains the existing post-dispatch guards.
 Use the already-assigned `codex/<type>/<slice>-<slug>` branch from the recorded
 integration branch; do not execute the Claude branch-checkout recipe below.
 Keep the blind failing-test-before-fix sequence for every actual code defect.
-Use normal candidate hooks, including `git -c core.hooksPath=.githooks commit`
+Use normal candidate hooks, including `git -c core.hooksPath=.claude/pipeline/githooks commit`
 when hooksPath is unset. Attribute OpenAI commits truthfully, for example
 `Co-Authored-By: Codex <noreply@openai.com>`, replacing the Claude-only trailer.
 Run CI after the final commit and open via `tools/pipe/pr-open --base "$(python3 tools/pipeline_config.py integration)"`

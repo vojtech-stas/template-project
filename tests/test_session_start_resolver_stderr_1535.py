@@ -45,7 +45,7 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-HOOKS_DIR = REPO_ROOT / ".claude" / "hooks"
+HOOKS_DIR = REPO_ROOT / ".claude" / "pipeline" / "hooks"
 
 WARNING_TEXT = "resolver-warning-1535 stderr noise on a successful resolve"
 REFUSAL_TEXT = "resolver-refusal-1535 malformed pipeline.conf from the stub"
@@ -91,7 +91,7 @@ class TestSessionStartResolverStderr1535(unittest.TestCase):
         _git("-C", self.work, "remote", "add", "origin", bare)
         _git("-C", self.work, "push", "-q", "--no-verify", "origin", "trunk")
 
-        hooks = Path(self.work) / ".claude" / "hooks"
+        hooks = Path(self.work) / ".claude" / "pipeline" / "hooks"
         hooks.mkdir(parents=True)
         for name in ("session-start.sh", "lib-root.sh"):
             text = (HOOKS_DIR / name).read_text(encoding="utf-8")

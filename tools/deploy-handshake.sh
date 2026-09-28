@@ -14,15 +14,15 @@
 # disk at the ROOT checkout right now — what hooks actually execute) against
 # the DEPLOYED content (what is committed on the branch the ROOT checkout's
 # HEAD currently tracks). MATCH -> exit 0. MISMATCH, DETACHED HEAD, or a
-# core.hooksPath other than .githooks -> LOUD banner + exit 1.
+# core.hooksPath other than .claude/pipeline/githooks -> LOUD banner + exit 1.
 #
 # MECHANISM (git-plumbing only, never mutates the ROOT's real index/refs):
-#   - DEPLOYED hooks-dir hash:    git rev-parse <branch>:.claude/hooks       (tree oid)
+#   - DEPLOYED hooks-dir hash:    git rev-parse <branch>:.claude/pipeline/hooks       (tree oid)
 #   - DEPLOYED settings.json hash: git rev-parse <branch>:.claude/settings.json (blob oid)
 #   - RUNNING settings.json hash: git hash-object -- .claude/settings.json  (blob oid,
 #     literal on-disk bytes, independent of the real index)
 #   - RUNNING hooks-dir hash:     built via a THROWAWAY index (GIT_INDEX_FILE
-#     pointed at a scratch file) + `git write-tree --prefix=.claude/hooks/` —
+#     pointed at a scratch file) + `git write-tree --prefix=.claude/pipeline/hooks/` —
 #     this stages the literal on-disk directory contents into a private index
 #     and asks git for the tree oid of just that subdirectory, without ever
 #     touching the ROOT repo's real .git/index or any ref. (Loose objects may
@@ -56,7 +56,7 @@
 #   branch-vs-HEAD comparison this script performs for the "local leg" would
 #   ALWAYS report a false "deploy gap" in CI (there is no meaningful "branch
 #   the checkout tracks" concept for an ephemeral CI runner). CI can assert:
-#   the script parses, .claude/hooks/ exists and is non-empty, and
+#   the script parses, .claude/pipeline/hooks/ exists and is non-empty, and
 #   .claude/settings.json exists and is valid JSON. CI CANNOT assert the real
 #   deploy-gap invariant (running vs deployed-branch content, or attached-vs-
 #   detached HEAD) — that is exclusively the local/operator leg's job, run
@@ -77,7 +77,7 @@ START_DIR="${1:-${CLAUDE_PROJECT_DIR:-$(pwd)}}"
 
 # ---------------------------------------------------------------------------
 # Resolve ROOT: the git-common-dir parent, i.e. the checkout hooks actually
-# execute from (mirrors .claude/hooks/lib-root.sh + settings.json's own
+# execute from (mirrors .claude/pipeline/hooks/lib-root.sh + settings.json's own
 # resolution order).
 #
 # NOTE (MSYS_NO_PATHCONV trap, #1091): START_DIR may be MSYS-form (e.g.
@@ -103,8 +103,8 @@ ROOT=$(dirname "$COMMON")
 # ---------------------------------------------------------------------------
 if [ "$SELF_TEST" -eq 1 ]; then
   FAIL=0
-  if [ ! -d "$ROOT/.claude/hooks" ] || [ -z "$(ls -A "$ROOT/.claude/hooks" 2>/dev/null)" ]; then
-    echo "FAIL: deploy-handshake --self-test: .claude/hooks/ missing or empty at $ROOT" >&2
+  if [ ! -d "$ROOT/.claude/pipeline/hooks" ] || [ -z "$(ls -A "$ROOT/.claude/pipeline/hooks" 2>/dev/null)" ]; then
+    echo "FAIL: deploy-handshake --self-test: .claude/pipeline/hooks/ missing or empty at $ROOT" >&2
     FAIL=1
   fi
   if [ ! -f "$ROOT/.claude/settings.json" ]; then
@@ -116,8 +116,8 @@ if [ "$SELF_TEST" -eq 1 ]; then
       FAIL=1
     fi
   fi
-  if [ ! -d "$ROOT/.githooks" ]; then
-    echo "FAIL: deploy-handshake --self-test: .githooks/ directory missing at $ROOT" >&2
+  if [ ! -d "$ROOT/.claude/pipeline/githooks" ]; then
+    echo "FAIL: deploy-handshake --self-test: .claude/pipeline/githooks/ directory missing at $ROOT" >&2
     FAIL=1
   fi
   if [ "$FAIL" -eq 0 ]; then
@@ -139,10 +139,10 @@ if [ -z "$BRANCH" ]; then
 fi
 
 HOOKS_PATH=$(git -C "$ROOT" config --get core.hooksPath 2>/dev/null || echo "__unset__")
-# Compare PATH IDENTITY, not string equality (#1093 flapper): .githooks/install.sh
-# may write an ABSOLUTE hooksPath (e.g. "F:\project_claude\.githooks" or
-# "/f/project_claude/.githooks") that resolves to the SAME directory as the
-# documented relative ".githooks" — a bare string compare false-flags that as
+# Compare PATH IDENTITY, not string equality (#1093 flapper): .claude/pipeline/githooks/install.sh
+# may write an ABSOLUTE hooksPath (e.g. "F:\project_claude\.claude/pipeline/githooks" or
+# "/f/project_claude/.claude/pipeline/githooks") that resolves to the SAME directory as the
+# documented relative ".claude/pipeline/githooks" — a bare string compare false-flags that as
 # a deploy-gap even though the content and the resolved directory match.
 # Resolve both sides to a real, symlink-free absolute path via `cd ... && pwd -P`
 # before comparing; only report a genuine mismatch (unset OR resolves elsewhere).
@@ -154,26 +154,26 @@ if [ "$HOOKS_PATH" != "__unset__" ]; then
   esac
   HOOKS_PATH_RESOLVED=$(cd "$HOOKS_PATH_CANDIDATE" 2>/dev/null && pwd -P)
 fi
-EXPECTED_HOOKS_PATH_RESOLVED=$(cd "$ROOT/.githooks" 2>/dev/null && pwd -P)
+EXPECTED_HOOKS_PATH_RESOLVED=$(cd "$ROOT/.claude/pipeline/githooks" 2>/dev/null && pwd -P)
 if [ -z "$HOOKS_PATH_RESOLVED" ] || [ -z "$EXPECTED_HOOKS_PATH_RESOLVED" ] || \
    [ "$HOOKS_PATH_RESOLVED" != "$EXPECTED_HOOKS_PATH_RESOLVED" ]; then
-  BANNER_LINES+=("core.hooksPath is '$HOOKS_PATH' (resolved: '${HOOKS_PATH_RESOLVED:-<unresolvable>}'), expected to resolve to '$ROOT/.githooks' (resolved: '${EXPECTED_HOOKS_PATH_RESOLVED:-<unresolvable>}').")
+  BANNER_LINES+=("core.hooksPath is '$HOOKS_PATH' (resolved: '${HOOKS_PATH_RESOLVED:-<unresolvable>}'), expected to resolve to '$ROOT/.claude/pipeline/githooks' (resolved: '${EXPECTED_HOOKS_PATH_RESOLVED:-<unresolvable>}').")
 fi
 
 if [ -n "$BRANCH" ]; then
-  DEPLOYED_HOOKS_HASH=$(git -C "$ROOT" rev-parse "${BRANCH}:.claude/hooks" 2>/dev/null)
+  DEPLOYED_HOOKS_HASH=$(git -C "$ROOT" rev-parse "${BRANCH}:.claude/pipeline/hooks" 2>/dev/null)
   DEPLOYED_SETTINGS_HASH=$(git -C "$ROOT" rev-parse "${BRANCH}:.claude/settings.json" 2>/dev/null)
 
   RUNNING_SETTINGS_HASH=$(git -C "$ROOT" hash-object -- ".claude/settings.json" 2>/dev/null)
 
   TMP_INDEX="$(mktemp -u)"
-  GIT_INDEX_FILE="$TMP_INDEX" git -C "$ROOT" add -A -- .claude/hooks 2>/dev/null
-  RUNNING_HOOKS_HASH=$(GIT_INDEX_FILE="$TMP_INDEX" git -C "$ROOT" write-tree --prefix=.claude/hooks/ 2>/dev/null)
+  GIT_INDEX_FILE="$TMP_INDEX" git -C "$ROOT" add -A -- .claude/pipeline/hooks 2>/dev/null
+  RUNNING_HOOKS_HASH=$(GIT_INDEX_FILE="$TMP_INDEX" git -C "$ROOT" write-tree --prefix=.claude/pipeline/hooks/ 2>/dev/null)
   rm -f "$TMP_INDEX"
 
   if [ -z "$DEPLOYED_HOOKS_HASH" ] || [ -z "$RUNNING_HOOKS_HASH" ] || \
      [ "$DEPLOYED_HOOKS_HASH" != "$RUNNING_HOOKS_HASH" ]; then
-    BANNER_LINES+=(".claude/hooks/ content-hash MISMATCH — running=${RUNNING_HOOKS_HASH:-<none>} deployed(${BRANCH})=${DEPLOYED_HOOKS_HASH:-<none>}")
+    BANNER_LINES+=(".claude/pipeline/hooks/ content-hash MISMATCH — running=${RUNNING_HOOKS_HASH:-<none>} deployed(${BRANCH})=${DEPLOYED_HOOKS_HASH:-<none>}")
   fi
 
   if [ -z "$DEPLOYED_SETTINGS_HASH" ] || [ -z "$RUNNING_SETTINGS_HASH" ] || \

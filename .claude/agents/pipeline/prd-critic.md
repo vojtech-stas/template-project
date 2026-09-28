@@ -190,7 +190,7 @@ Unacceptable (FAIL) forms:
 
 **Rationale:** The `qa-tester` production-verify gate reads this line verbatim to know what to exercise (ADR-0037 D2 + D4). A missing or non-actionable line either breaks the gate (INVALID_INPUT) or causes it to exercise the wrong thing — catching non-actionability at PRD time costs one revision round; a broken gate post-merge costs a re-ship loop.
 
-**Examples:** `"Production check: N/A"` → FAIL. `"Production check: run grep -c 'PC-PRODUCTION-CHECK' .claude/pipeline/agents/prd-critic.md; assert ≥1"` → PASS. `"Production check: fire .claude/hooks/session-start.sh with a synthetic payload, assert exit 0 and a fresh ok beacon in hook-fires.jsonl"` → PASS.
+**Examples:** `"Production check: N/A"` → FAIL. `"Production check: run grep -c 'PC-PRODUCTION-CHECK' .claude/pipeline/agents/prd-critic.md; assert ≥1"` → PASS. `"Production check: fire .claude/pipeline/hooks/session-start.sh with a synthetic payload, assert exit 0 and a fresh ok beacon in hook-fires.jsonl"` → PASS.
 
 ### PC-LIVE-FEED
 

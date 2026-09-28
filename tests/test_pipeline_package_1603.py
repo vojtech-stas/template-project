@@ -607,7 +607,7 @@ class TestStubContract(unittest.TestCase):
         env.pop("_PTB_BEACON_DIR", None)
         payload = {"tool_name": "Bash", "tool_input": {"command": "git" + " push origin HEAD:main"}}
         r = subprocess.run(
-            [sys.executable, str(REPO_ROOT / ".claude" / "hooks" / "pre-tool-bash-classify.py")],
+            [sys.executable, str(REPO_ROOT / ".claude" / "pipeline" / "hooks" / "pre-tool-bash-classify.py")],
             input=json.dumps(payload), cwd=str(REPO_ROOT), capture_output=True, text=True,
             encoding="utf-8", env=env,
         )
@@ -621,7 +621,7 @@ class TestStubContract(unittest.TestCase):
         _git(["checkout", "-q", "-b", "main"], h)
         (h / "f.txt").write_text("x", encoding="utf-8")
         _git(["add", "-A"], h)
-        precommit = REPO_ROOT / ".githooks" / "pre-commit"
+        precommit = REPO_ROOT / ".claude" / "pipeline" / "githooks" / "pre-commit"
         # pre-commit sources lib-root.sh too; strip CLAUDE_PROJECT_DIR
         # defensively so LOG_DIR can only resolve against `h`'s own git repo
         # (cwd), never an ambient value pointing at this checkout (rule #21
@@ -655,10 +655,10 @@ class TestStubContract(unittest.TestCase):
         _git(["add", "-A"], work)
         _git(["commit", "-q", "-m", "chore(test): init"], work)
 
-        hooks_dir = work / ".claude" / "hooks"
+        hooks_dir = work / ".claude" / "pipeline" / "hooks"
         hooks_dir.mkdir(parents=True)
         for name in ("session-start.sh", "lib-root.sh", "log-tool-event.sh"):
-            text = (REPO_ROOT / ".claude" / "hooks" / name).read_text(encoding="utf-8")
+            text = (REPO_ROOT / ".claude" / "pipeline" / "hooks" / name).read_text(encoding="utf-8")
             (hooks_dir / name).write_text(text, encoding="utf-8", newline="\n")
 
         tools_dir = work / "tools"

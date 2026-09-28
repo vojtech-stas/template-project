@@ -27,7 +27,7 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-HOOK = REPO_ROOT / ".githooks" / "commit-msg"
+HOOK = REPO_ROOT / ".claude" / "pipeline" / "githooks" / "commit-msg"
 
 # Locate a POSIX shell to invoke the hook with, mirroring how git itself
 # invokes commit-msg hooks (via the shebang, or via sh on platforms where

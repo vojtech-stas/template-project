@@ -36,7 +36,7 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-HOOK = REPO_ROOT / ".claude" / "hooks" / "pre-tool-bash.sh"
+HOOK = REPO_ROOT / ".claude" / "pipeline" / "hooks" / "pre-tool-bash.sh"
 
 # CI-safe margin per PRD #1193 criterion 3a; the slice's own target is <=350 ms.
 CI_SAFE_MARGIN_MS = 500

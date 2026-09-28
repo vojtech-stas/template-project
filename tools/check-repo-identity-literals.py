@@ -11,18 +11,18 @@ or skill prompt to name a branch role only through `tools/pipeline_config.py`
 mechanically over the subject set D1 defines.
 
 Subject set (tracked files):
-  - `tools/**`, `dashboard/**`, `.claude/hooks/**`, `.githooks/**`
-  - `bootstrap.sh`
+  - `tools/**`, `dashboard/**`
   - `.claude/pipeline/tools/**`, `.claude/pipeline/dashboard/**`,
     `.claude/pipeline/hooks/**`, `.claude/pipeline/githooks/**`
   - `.claude/pipeline/bootstrap.sh`, `.claude/pipeline/install.sh`
   - `.claude/pipeline/agents/*.md`
   - `.claude/pipeline/skills/*/SKILL.md`
 
-Never subjects (ADR-0092 D1, slice #1604): the bare `.claude/agents/*.md`
-and `.claude/skills/*/SKILL.md` roots, which now hold only D2-generated
-shims (verdict is their source's) or host-owned files (owe nothing to
-PIP-031).
+Never subjects (ADR-0092 D1, slices #1604/#1605): the bare `.claude/agents/*.md`,
+`.claude/skills/*/SKILL.md`, `.claude/hooks/**`, `.githooks/**` and root
+`bootstrap.sh` roots, which now hold only D2-generated shims (verdict is
+their source's), host-owned files, or nothing at all (moved) — none owe
+anything to PIP-031.
 
 Excluded from the subject set:
   - `*.md` under `tools/`, `dashboard/`, `.claude/pipeline/tools/` and
@@ -122,15 +122,13 @@ def build_pattern(branch_names):
 
 def is_subject_file(relpath: str) -> bool:
     p = relpath.replace("\\", "/")
-    if p == "bootstrap.sh":
+    if p.startswith("tools/") or p.startswith("dashboard/"):
         return True
-    if (p.startswith("tools/") or p.startswith("dashboard/")
-            or p.startswith(".claude/hooks/") or p.startswith(".githooks/")):
-        return True
-    # ADR-0092 D1 (slice #1604): the bare .claude/agents/ and .claude/skills/
-    # roots now hold only D2 shims or host-owned files — neither is a
-    # subject (shims verdict is their source's; host-owned files owe
-    # nothing to PIP-031) — so they are dropped from the subject set here.
+    # ADR-0092 D1 (slices #1604/#1605): the bare .claude/agents/,
+    # .claude/skills/, .claude/hooks/, .githooks/ roots and the root
+    # bootstrap.sh now hold no tracked file at all (moved) — a bare
+    # reference to any of them is dropped from the subject set here, same
+    # pattern as the agents/skills drop in slice #1604.
     # ADR-0092 D1 "CHECK 29 in the package": the package's own tools/,
     # dashboard/, hooks/, githooks/, bootstrap.sh, install.sh, agents/*.md
     # and skills/*/SKILL.md join the subject set as each slice lands them.

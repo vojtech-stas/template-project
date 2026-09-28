@@ -47,7 +47,7 @@ class TestBranchGates(unittest.TestCase):
         self.assertTrue(requires_regression("fix/legacy"))
 
     def test_actual_precommit_branch_section_preserves_legacy_cases(self):
-        source = (ROOT / ".githooks/pre-commit").read_text(encoding="utf-8")
+        source = (ROOT / ".claude/pipeline/githooks/pre-commit").read_text(encoding="utf-8")
         section = source[source.index("if [ -z"):source.index(
             "# ---------------------------------------------------------------------------")]
         cases = {"main": 1, "": 0, "hotfix/legacy": 1, "HEAD": 1, "develop": 1}

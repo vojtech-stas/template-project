@@ -1,5 +1,5 @@
 #!/bin/sh
-# .githooks/commit-msg — mechanically enforce CLAUDE.md rule #5 (Conventional
+# .claude/pipeline/githooks/commit-msg — mechanically enforce CLAUDE.md rule #5 (Conventional
 # Commits). Sibling to pre-commit; runs AFTER $EDITOR closes and receives the
 # COMMIT_EDITMSG path as $1 per git's hook taxonomy. Blocks: non-conv-commits
 # subject, >72-char subject. Warns: missing Co-Authored-By trailer.

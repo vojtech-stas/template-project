@@ -35,7 +35,7 @@ from pathlib import Path
 # Repo root + hook path
 # ---------------------------------------------------------------------------
 REPO_ROOT = Path(__file__).parent.parent
-HOOK = REPO_ROOT / ".claude" / "hooks" / "log-tool-event.sh"
+HOOK = REPO_ROOT / ".claude" / "pipeline" / "hooks" / "log-tool-event.sh"
 
 
 def _bash_available() -> bool:

@@ -45,7 +45,7 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-BOOTSTRAP_SH = REPO_ROOT / "bootstrap.sh"
+BOOTSTRAP_SH = REPO_ROOT / ".claude" / "pipeline" / "bootstrap.sh"
 BASH = shutil.which("bash")
 
 _NOOP_SHIM_BODY = "#!/bin/bash\nexit 0\n"

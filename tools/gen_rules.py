@@ -135,7 +135,7 @@ SCOPE_TARGET: dict[str, str] = {
 # These tell Claude Code to load the rules file only when the relevant files
 # are being edited — the sole advantage of a separate rules file (ADR-0073 D1).
 SCOPE_PATHS: dict[str, str] = {
-    "hooks":     ".claude/hooks/**, .claude/settings.json",
+    "hooks":     ".claude/pipeline/hooks/**, .claude/settings.json",
     "isolation": ".claude/worktrees/**, tools/worktree-guard.sh",
     "docs":      "decisions/**, **/*.md",
     "slicing":   ".claude/pipeline/agents/slicer*.md, .claude/pipeline/skills/*/SKILL.md",
@@ -612,8 +612,9 @@ _RULE_STATEMENTS: dict[str, str] = {
     # ADR-0089: per-repo pipeline identity — configured branch roles (D1/D3)
     # + repo-agnostic history anchors (D4)
     "PIP-031": (
-        "Pipeline executables (`tools/`, `dashboard/`, `.claude/hooks/`, "
-        "`.githooks/`, `bootstrap.sh`) and agent/skill prompt commands name "
+        "Pipeline executables (`tools/`, `dashboard/`, "
+        "`.claude/pipeline/hooks/`, `.claude/pipeline/githooks/`, "
+        "`.claude/pipeline/bootstrap.sh`) and agent/skill prompt commands name "
         "the integration or release branch only through "
         "`tools/pipeline_config.py`, which reads the tracked "
         "`.claude/pipeline.conf` (defaults `develop`/`main`). Agents branch "

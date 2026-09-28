@@ -403,9 +403,9 @@ def discover_hooks() -> list:
                     if m:
                         script_name = m.group(1)
                         name = script_name
-                        script_path = _DISCOVERY_REPO_ROOT / ".claude" / "hooks" / script_name
+                        script_path = _DISCOVERY_REPO_ROOT / ".claude" / "pipeline" / "hooks" / script_name
                         hook_path = (
-                            f".claude/hooks/{script_name}"
+                            f".claude/pipeline/hooks/{script_name}"
                             if script_path.exists()
                             else ".claude/settings.json"
                         )

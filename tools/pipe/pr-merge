@@ -58,7 +58,7 @@ VERDICT ASSERTION (slice #1130 / PRD #1127 criterion 3a, ADR-0076 D3): before
 any merge attempt (default mode) or any confirm-poll (--confirm mode, unless
 already idempotently recorded), this wrapper refuses to proceed unless the PR
 carries a reviewer comment matching the exact `VERDICT:\s*APPROVE` signal
-`.claude/hooks/stop-reviewer-gate.sh` already greps (via `gh pr view <n>
+`.claude/pipeline/hooks/stop-reviewer-gate.sh` already greps (via `gh pr view <n>
 --json comments`). Refusal is non-zero exit with a named reason on stderr,
 BEFORE any gh side effect. On a confirmed merge, a `verdict` span (attrs:
 critic, round, verdict, pr — parsed from that same APPROVE comment) is
@@ -307,7 +307,7 @@ def _chain_record_green(deadline, sha=None):
 # VERDICT ASSERTION (slice #1130 / PRD #1127 criterion 3a/3b, ADR-0076 D3)
 # ---------------------------------------------------------------------------
 
-# The exact signal `.claude/hooks/stop-reviewer-gate.sh` greps:
+# The exact signal `.claude/pipeline/hooks/stop-reviewer-gate.sh` greps:
 #   gh pr view "$N" --json comments --jq '.comments | map(select(.body |
 #     test("VERDICT:\\s*APPROVE"))) | length'
 _VERDICT_APPROVE_RE = re.compile(r"VERDICT:\s*APPROVE")
@@ -357,7 +357,7 @@ def _verdict_attrs(pr, comment):
 def _assert_verdict_or_refuse(pr):
     """Precondition (ADR-0076 D3 / PRD #1127 criterion 3a): refuse (return
     (None, None)) unless the PR carries a reviewer comment matching the exact
-    `VERDICT:\\s*APPROVE` signal `.claude/hooks/stop-reviewer-gate.sh` greps.
+    `VERDICT:\\s*APPROVE` signal `.claude/pipeline/hooks/stop-reviewer-gate.sh` greps.
     A named reason is printed to stderr; the caller exits non-zero having
     performed NO merge attempt and written NO span. On success, returns
     `(comment, view)` — `_verdict_attrs` derives the verdict span from
