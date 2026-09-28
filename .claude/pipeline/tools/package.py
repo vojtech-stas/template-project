@@ -466,8 +466,21 @@ _PROMPT_PATH_PATTERNS = [
 
 _SINGLE_FILE_ROOTS = {"bootstrap.sh", "docs/observability.md"}
 
+# Roots this package has actually finished migrating into .claude/pipeline/,
+# as of the current slice. Update this set in the same PR that completes a
+# root's move (ADR-0092 D1 rename map) — e.g. slice #1605 adds ".claude/hooks"
+# and ".githooks", slice #1606 adds "tools", "dashboard" and "tests". A host
+# repo's tree never carried these pre-move roots to begin with, so "root
+# absent in the host's tree" cannot mean "migrated" the way it correctly does
+# in the home repo's own tree (D5 / PIP-037: a host-mode short-circuit that
+# reads that absence as migration is the shadow ADR-0092 D1 names). This
+# explicit set is the minimal honest fact host mode CAN read.
+_MOVED_ROOTS_HOST = frozenset({".claude/generated"})
 
-def _root_has_moved(repo_root: Path, root: str) -> bool:
+
+def _root_has_moved(repo_root: Path, root: str, mode: str) -> bool:
+    if mode != "home":
+        return root in _MOVED_ROOTS_HOST
     if root in _SINGLE_FILE_ROOTS:
         return _git_ls_files_count(repo_root, root) == 0
     return _git_ls_files_count(repo_root, root + "/") == 0
@@ -491,15 +504,11 @@ def _prompt_path_subjects(repo_root: Path, pkg_root: Path) -> list[Path]:
 
 
 def prompt_path_arm(repo_root: Path, pkg_root: Path) -> list[str]:
-    # The "has this root moved" question is only answerable from the home
-    # repository's own git tree (root present == not yet migrated, root
-    # absent == migrated into the package). A host's tree never carried
-    # home-only roots (tools/, dashboard/, tests/, ...) to begin with, so
-    # evaluating the same predicate there would misread "never present" as
-    # "migrated" and flag every package-shipped reference to still-home-only
-    # tooling. Skip the moved-root scan outside home mode (ADR-0092 D1/D5).
-    if pc.mode(str(repo_root)) != "home":
-        return []
+    # Runs in both home and host mode (ADR-0092 D1). "Has this root moved"
+    # is read via git in home mode (the home repo's own tree is the ground
+    # truth) and via the explicit _MOVED_ROOTS_HOST set in host mode — see
+    # _root_has_moved.
+    mode = pc.mode(str(repo_root))
     failures = []
     moved_cache: dict[str, bool] = {}
     for subject in _prompt_path_subjects(repo_root, pkg_root):
@@ -510,7 +519,7 @@ def prompt_path_arm(repo_root: Path, pkg_root: Path) -> list[str]:
                 if not pattern.search(line):
                     continue
                 if root not in moved_cache:
-                    moved_cache[root] = _root_has_moved(repo_root, root)
+                    moved_cache[root] = _root_has_moved(repo_root, root, mode)
                 if moved_cache[root]:
                     failures.append(
                         f"(prompt-path) {rel}:{lineno} names moved root "

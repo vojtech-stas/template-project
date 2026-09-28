@@ -125,7 +125,7 @@ This subagent ships in slice 1 of PRD #58 per ADR-0008 D8. From that merge forwa
 
 ## Conduct
 
-- Be specific. "Rule 1 FAIL: body says 'fix the prompts' without naming which prompt file — restate as e.g. 'rename FOO to BAR in `.claude/agents/reviewer.md`'" beats "actionable is wrong".
+- Be specific. "Rule 1 FAIL: body says 'fix the prompts' without naming which prompt file — restate as e.g. 'rename FOO to BAR in `.claude/pipeline/agents/reviewer.md`'" beats "actionable is wrong".
 - Be brief. Verdict ≤30 lines unless the item is unusually contentious.
 - Itemized findings only — the autopilot parses your list. No prose paragraphs in Findings.
 - State rule, evidence, verdict. No "I think". One verdict per invocation; you do not pre-revise for the autopilot.

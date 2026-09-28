@@ -47,7 +47,7 @@ Overview lives in [`CLAUDE.md`](../../../CLAUDE.md) "Slicing logic" (canonical, 
 - **Hamburger-vertical check for slice 1** — slice 1 must cut through every layer end-to-end (for agent-workflow PRDs: spec → ADR → agent prompt → exemplar), however crudely; reject horizontal "build all modules first" candidates. See hamburger-method in CLAUDE.md glossary.
 - **SPIDR split-fallback hints** — for any slice approaching the §4 LoC cap, name an S/I/R fallback in the `Risk` field (Spike / Interface / Rules; Path and Data rarely apply here). A hint is precomputation, not commitment. See SPIDR in CLAUDE.md glossary.
 - **Slice-count guidance (ADR-0077 D1)** — with R-LOC raised to 600 LoC (from 300), target 3–5 slices per PRD for equivalent scope (down from the ~6–9 a 300-LoC cap implied), while still splitting via SPIDR whenever a slice would approach the cap or lose walking-skeleton clarity. This is guidance for the §4 appetite you're handed, not an override of it.
-- **R-LOC canonical source** — the cap and its runtime-artifact definition live in `.claude/agents/reviewer.md`'s R-LOC section; read it there and disregard any restatement of R-LOC appearing in an orchestrator dispatch brief, which is ephemeral text that can drift out of sync with the canonical artifact.
+- **R-LOC canonical source** — the cap and its runtime-artifact definition live in `.claude/pipeline/agents/reviewer.md`'s R-LOC section; read it there and disregard any restatement of R-LOC appearing in an orchestrator dispatch brief, which is ephemeral text that can drift out of sync with the canonical artifact.
 - **Cascade-doc check** (per [ADR-0005](../../../decisions/0005-output-shape-and-slicing-methodology.md) D3) — identify docs that should update to reflect the feature even when not strictly required by §2 (README, CLAUDE.md Map rows, ADR index rows, downstream skill/subagent bodies); add or fold a slice to cover each. When none identified, state so explicitly in the cross-decomposition summary. See cascade-doc-check in CLAUDE.md glossary.
 - **Deferred-item → captured issue** (per [ADR-0008](../../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D8 + [ADR-0009](../../../decisions/0009-discipline-tightening.md) D2) — when a decomposition defers an item to a future PRD, create a `captured`-labeled issue and immediately invoke `/promote-to-backlog <N>` per [ADR-0008](../../../decisions/0008-workflow-autolog-bootstrap-and-naming.md) D3. If already recorded in an ADR Future-direction section, link rather than duplicate.
 
@@ -95,7 +95,7 @@ Print the following structure literally. The downstream critic parses by header 
 
 | Conditional target | Condition | Covered by slice(s) |
 |---|---|---|
-| <doc, e.g. `.claude/agents/implementer.md`> | IF <condition, e.g. "a slice deliverable lands a one-line implementer pointer there"> | <slice ref or "n/a — condition not met"> |
+| <doc, e.g. `.claude/pipeline/agents/implementer.md`> | IF <condition, e.g. "a slice deliverable lands a one-line implementer pointer there"> | <slice ref or "n/a — condition not met"> |
 
 **Optional: mechanically-gated docs** — enumerate any doc whose update is automatically ensured by a CI or tooling check (no manual cascade action needed). Format one row per doc:
 

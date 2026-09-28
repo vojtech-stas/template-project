@@ -378,7 +378,7 @@ gh pr diff <PR> --patch | grep -E '^\+[0-9]+\.\s+\*\*.*rule #[0-9]+' | grep -v '
 **Mechanic:** Fires ONLY when the diff adds a new deterministic check, or tightens an existing one, in `dashboard/health.py`, `tools/ci-checks.sh`, `.githooks/`, or a critic rubric. Check whether the PR body names the contract clause the check enforces — an ADR `D<n>` or a generated rule id (`HOK-008`, `PIP-014`, …). If no clause is named → BLOCK.
 
 ```bash
-gh pr diff <PR> --name-only | grep -E 'dashboard/health\.py|tools/ci-checks\.sh|\.githooks/|\.claude/agents/.*-critic\.md|\.claude/agents/reviewer\.md'
+gh pr diff <PR> --name-only | grep -E 'dashboard/health\.py|tools/ci-checks\.sh|\.githooks/|\.claude/(pipeline/agents|agents/pipeline)/.*-critic\.md|\.claude/(pipeline/agents|agents/pipeline)/reviewer\.md'
 gh pr view <PR> --json body -q .body | grep -cE 'ADR-[0-9]{4} D[0-9]+|\b[A-Z]{3}-[0-9]{3}\b'
 ```
 

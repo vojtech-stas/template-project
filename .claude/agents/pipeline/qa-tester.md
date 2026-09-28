@@ -434,7 +434,7 @@ FAIL when: exit code wrong OR output assertion fails. Record specifics in REASON
 
 Used when the merged diff's dominant changed-path matches `decisions/*`, `docs/*`, or `README.md`. This is the change type with no runtime exercise — pure grep/assertion.
 
-**Step 1 — Parse the assertion.** Extract the grep pattern + file target from the "Production check:" line (e.g., `"static: grep -c 'PC-PRODUCTION-CHECK' .claude/agents/prd-critic.md >= 1"` → `grep -c 'PC-PRODUCTION-CHECK' .claude/agents/prd-critic.md`).
+**Step 1 — Parse the assertion.** Extract the grep pattern + file target from the "Production check:" line (e.g., `"static: grep -c 'PC-PRODUCTION-CHECK' .claude/pipeline/agents/prd-critic.md >= 1"` → `grep -c 'PC-PRODUCTION-CHECK' .claude/pipeline/agents/prd-critic.md`).
 
 **Step 2 — Run each assertion.** Execute via `Bash` or `Grep`. Multiple assertions in the "Production check:" line are run sequentially.
 

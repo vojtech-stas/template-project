@@ -38,8 +38,8 @@ If `WHOLE_REPO: true` is present → execute the protocol below and return with 
 
 **Step 2 — Seam spot-reads.** After the map pass, read the seam/connecting files that wire subsystems together. Seam files are those that dispatch across subsystems, cite multiple ADRs, or define shared schemas. Prioritized set (read the ones that exist; skip missing):
 - `.claude/skills/ship/SKILL.md` — the primary dispatcher (invokes agents, wires pipeline)
-- `.claude/agents/reviewer.md` — sole merge gate; its rubric cites many ADRs
-- `.claude/agents/codebase-critic.md` (this file) — to check self-consistency
+- `.claude/pipeline/agents/reviewer.md` — sole merge gate; its rubric cites many ADRs
+- `.claude/pipeline/agents/codebase-critic.md` (this file) — to check self-consistency
 - `dashboard/_constants.py` — the single-sourced `KNOWN_CRITICS` roster (ADR-0088 D4) — the roster-duplication seam the dashboard-re-impl class lives in
 - `tools/ci-checks.sh` — the deterministic CI gate; cross-references the dashboard/ health registry + decisions
 
