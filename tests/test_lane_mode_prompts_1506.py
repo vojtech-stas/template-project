@@ -30,8 +30,8 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-IMPLEMENTER = REPO_ROOT / ".claude" / "agents" / "implementer.md"
-REVIEWER = REPO_ROOT / ".claude" / "agents" / "reviewer.md"
+IMPLEMENTER = REPO_ROOT / ".claude" / "pipeline" / "agents" / "implementer.md"
+REVIEWER = REPO_ROOT / ".claude" / "pipeline" / "agents" / "reviewer.md"
 PR_MERGE = REPO_ROOT / "tools" / "pipe" / "pr-merge"
 
 

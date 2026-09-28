@@ -27,7 +27,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
 GUARD_SH = REPO_ROOT / "tools" / "worktree-guard.sh"
-QA_TESTER_MD = REPO_ROOT / ".claude" / "agents" / "qa-tester.md"
+QA_TESTER_MD = REPO_ROOT / ".claude" / "pipeline" / "agents" / "qa-tester.md"
 
 
 def _bash_available() -> bool:

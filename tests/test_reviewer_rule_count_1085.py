@@ -28,7 +28,7 @@ import re
 import unittest
 from pathlib import Path
 
-REVIEWER_MD = Path(__file__).parent.parent / ".claude" / "agents" / "reviewer.md"
+REVIEWER_MD = Path(__file__).parent.parent / ".claude" / "pipeline" / "agents" / "reviewer.md"
 
 _R_HEADING_RE = re.compile(r'^###\s+(R-[A-Z-]+)\s+—\s+(.+)$', re.MULTILINE)
 _RULE_COUNT_CLAIM_RE = re.compile(r'map 1:1 to the (\d+) hard-block rules')

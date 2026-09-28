@@ -24,7 +24,7 @@ import unittest
 from pathlib import Path
 
 QA_TESTER_MD = (
-    Path(__file__).parent.parent / ".claude" / "agents" / "qa-tester.md"
+    Path(__file__).parent.parent / ".claude" / "pipeline" / "agents" / "qa-tester.md"
 )
 
 

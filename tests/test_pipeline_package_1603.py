@@ -724,7 +724,7 @@ class TestStubContract(unittest.TestCase):
 
 class TestConsumerSweep(unittest.TestCase):
     def test_slicing_rule_names_package_skills(self):
-        text = (REPO_ROOT / ".claude" / "rules" / "slicing.md").read_text(encoding="utf-8")
+        text = (REPO_ROOT / ".claude" / "rules" / "pipeline" / "slicing.md").read_text(encoding="utf-8")
         self.assertGreaterEqual(text.count(".claude/pipeline/skills/*/SKILL.md"), 1)
 
     def test_grill_skill_retargeted_in_ci_checks(self):

@@ -23,7 +23,7 @@ from pathlib import Path
 # Helpers
 # ---------------------------------------------------------------------------
 
-REVIEWER_MD = Path(__file__).parent.parent / ".claude" / "agents" / "reviewer.md"
+REVIEWER_MD = Path(__file__).parent.parent / ".claude" / "pipeline" / "agents" / "reviewer.md"
 
 
 def _reviewer_text() -> str:

@@ -66,7 +66,7 @@ class TestBranchGates(unittest.TestCase):
                 self.assertEqual(result.returncode, expected, result.stderr)
 
     def test_ship_and_reviewer_execute_shared_label_free_fix_selector(self):
-        for path in (".claude/skills/ship/SKILL.md", ".claude/agents/reviewer.md"):
+        for path in (".claude/pipeline/skills/ship/SKILL.md", ".claude/pipeline/agents/reviewer.md"):
             text = (ROOT / path).read_text(encoding="utf-8")
             self.assertIn("python tools/workflow_branch.py", text)
             self.assertIn("requires_regression", text)
@@ -140,8 +140,8 @@ class TestInstructions(unittest.TestCase):
         for source in workflow.GLOBAL_SOURCES:
             self.assertIn(source, actual)
         for scope in ("docs", "isolation", "slicing"):
-            self.assertIn(f".claude/rules/{scope}.md", actual)
-        self.assertIn(".claude/rules/docs.md", workflow.instructions(ROOT, ["AGENTS.md"]))
+            self.assertIn(f".claude/pipeline/rules/{scope}.md", actual)
+        self.assertIn(".claude/pipeline/rules/docs.md", workflow.instructions(ROOT, ["AGENTS.md"]))
 
     def test_path_refusals(self):
         for path in ("", "../x", "a/../x", "/tmp/x", "C:/x", "a//b", "a/./b", "a\0b"):
@@ -153,7 +153,7 @@ class TestInstructions(unittest.TestCase):
             root = Path(tmp)
             with self.assertRaises((workflow.Refusal, FileNotFoundError)):
                 workflow.instructions(root, [])
-            rules = root / ".claude/rules/isolation.md"
+            rules = root / ".claude/pipeline/rules/isolation.md"
             rules.parent.mkdir(parents=True)
             rules.write_text("---\npaths: wrong\n---\n", encoding="utf-8")
             with self.assertRaisesRegex(workflow.Refusal, "malformed"):
@@ -269,7 +269,7 @@ class ProofFixture(unittest.TestCase):
         # in-repo glob that ever produced it, and this repo carries no
         # tracked *.html file for the health.py _ROUTE_TABLE's general
         # "*.html -> browser" fallback to match either. workflow.routes()
-        # (which reads the live .claude/agents/qa-tester.md table this
+        # (which reads the live .claude/pipeline/agents/qa-tester.md table this
         # fixture copies at setUp, above) can therefore never return
         # "browser" for any real changed_paths against this repo today; the
         # browser proof-validation branch in openai_workflow.py itself is

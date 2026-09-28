@@ -115,7 +115,7 @@ def _run_with_fixture(adrs: list, scope_target_override: dict | None = None):
         claude_md = Path(tmpdir) / "CLAUDE.md"
         # CLAUDE.md must contain the @import line for --check to pass
         claude_md.write_text(
-            "# CLAUDE.md placeholder\n\n@.claude/generated/_global.md\n",
+            "# CLAUDE.md placeholder\n\n@generated/_global.md\n",
             encoding="utf-8",
         )
         global_rules_file = rules_dir / "_global.md"
@@ -157,7 +157,7 @@ def _run_check_with_fixture(adrs: list, scope_target_override: dict | None = Non
         rules_dir.mkdir(parents=True, exist_ok=True)
         claude_md = Path(tmpdir) / "CLAUDE.md"
         claude_md.write_text(
-            "# CLAUDE.md placeholder\n\n@.claude/generated/_global.md\n",
+            "# CLAUDE.md placeholder\n\n@generated/_global.md\n",
             encoding="utf-8",
         )
         global_rules_file = rules_dir / "_global.md"
@@ -311,7 +311,7 @@ class TestGenRulesGlobalScope(unittest.TestCase):
         _, _, claude_content = _run_with_fixture(adrs)
         # CLAUDE.md must have the @import line
         self.assertIn(
-            "@.claude/generated/_global.md",
+            "@generated/_global.md",
             claude_content,
             "CLAUDE.md must contain @import line for _global.md",
         )
@@ -435,7 +435,7 @@ class TestGenRulesCheckMode(unittest.TestCase):
             rules_dir = Path(tmpdir) / ".claude" / "rules"
             claude_md = Path(tmpdir) / "CLAUDE.md"
             claude_md.write_text(
-                "# placeholder\n\n@.claude/generated/_global.md\n",
+                "# placeholder\n\n@generated/_global.md\n",
                 encoding="utf-8",
             )
             global_rules_file = rules_dir / "_global.md"
@@ -460,7 +460,7 @@ class TestGenRulesCheckMode(unittest.TestCase):
             global_rules_file = rules_dir / "_global.md"
             # CLAUDE.md has the @import line, but _global.md is absent
             claude_md.write_text(
-                "# placeholder\n\n@.claude/generated/_global.md\n",
+                "# placeholder\n\n@generated/_global.md\n",
                 encoding="utf-8",
             )
             with (
@@ -580,7 +580,7 @@ class TestGenRulesRealFrontmatter(unittest.TestCase):
 
     def test_hooks_area_scope_has_paths_frontmatter(self):
         """Real .claude/rules/hooks.md must exist and contain paths: frontmatter."""
-        rules_file = _REPO_ROOT / ".claude" / "rules" / "hooks.md"
+        rules_file = _REPO_ROOT / ".claude" / "pipeline" / "rules" / "hooks.md"
         self.assertTrue(
             rules_file.exists(),
             ".claude/rules/hooks.md must exist (AREA scope; run gen_rules.py first)",
@@ -595,7 +595,7 @@ class TestGenRulesRealFrontmatter(unittest.TestCase):
 
     def test_global_md_exists_with_global_rules(self):
         """Real .claude/generated/_global.md must exist and contain PIP-001 rule."""
-        global_md = _REPO_ROOT / ".claude" / "generated" / "_global.md"
+        global_md = _REPO_ROOT / ".claude" / "pipeline" / "generated" / "_global.md"
         self.assertTrue(global_md.exists(), ".claude/generated/_global.md must exist")
         content = global_md.read_text(encoding="utf-8")
         self.assertIn(
@@ -606,11 +606,11 @@ class TestGenRulesRealFrontmatter(unittest.TestCase):
 
     def test_claude_md_has_global_import_line(self):
         """Real CLAUDE.md must contain the @import line for _global.md."""
-        claude_md = _REPO_ROOT / "CLAUDE.md"
+        claude_md = _REPO_ROOT / ".claude" / "pipeline" / "CLAUDE.md"
         self.assertTrue(claude_md.exists(), "CLAUDE.md must exist")
         content = claude_md.read_text(encoding="utf-8")
         self.assertIn(
-            "@.claude/generated/_global.md",
+            "@generated/_global.md",
             content,
             "CLAUDE.md must @import .claude/generated/_global.md",
         )
@@ -652,7 +652,7 @@ class TestRuleIdConservationBaseline(unittest.TestCase):
             rules_dir.mkdir(parents=True, exist_ok=True)
             claude_md = Path(tmpdir) / "CLAUDE.md"
             claude_md.write_text(
-                "# CLAUDE.md placeholder\n\n@.claude/generated/_global.md\n",
+                "# CLAUDE.md placeholder\n\n@generated/_global.md\n",
                 encoding="utf-8",
             )
             global_rules_file = rules_dir / "_global.md"
@@ -696,7 +696,7 @@ class TestAllAreaScopePathsFrontmatter(unittest.TestCase):
     def test_all_area_scope_files_exist(self):
         """Each AREA scope file must exist in .claude/rules/."""
         for scope in self._AREA_SCOPES:
-            rules_file = _REPO_ROOT / ".claude" / "rules" / f"{scope}.md"
+            rules_file = _REPO_ROOT / ".claude" / "pipeline" / "rules" / f"{scope}.md"
             self.assertTrue(
                 rules_file.exists(),
                 f".claude/rules/{scope}.md must exist (AREA scope; run gen_rules.py)",
@@ -705,7 +705,7 @@ class TestAllAreaScopePathsFrontmatter(unittest.TestCase):
     def test_all_area_scope_files_have_paths_key(self):
         """Each AREA scope file must contain a 'paths:' frontmatter key."""
         for scope in self._AREA_SCOPES:
-            rules_file = _REPO_ROOT / ".claude" / "rules" / f"{scope}.md"
+            rules_file = _REPO_ROOT / ".claude" / "pipeline" / "rules" / f"{scope}.md"
             if not rules_file.exists():
                 self.skipTest(f".claude/rules/{scope}.md not found")
             content = rules_file.read_text(encoding="utf-8")
@@ -717,7 +717,7 @@ class TestAllAreaScopePathsFrontmatter(unittest.TestCase):
 
     def test_isolation_scope_paths_value(self):
         """isolation scope paths: must reference worktrees and worktree-guard.sh."""
-        rules_file = _REPO_ROOT / ".claude" / "rules" / "isolation.md"
+        rules_file = _REPO_ROOT / ".claude" / "pipeline" / "rules" / "isolation.md"
         if not rules_file.exists():
             self.skipTest(".claude/rules/isolation.md not found")
         content = rules_file.read_text(encoding="utf-8")
@@ -725,7 +725,7 @@ class TestAllAreaScopePathsFrontmatter(unittest.TestCase):
 
     def test_docs_scope_paths_value(self):
         """docs scope paths: must reference decisions/ and *.md."""
-        rules_file = _REPO_ROOT / ".claude" / "rules" / "docs.md"
+        rules_file = _REPO_ROOT / ".claude" / "pipeline" / "rules" / "docs.md"
         if not rules_file.exists():
             self.skipTest(".claude/rules/docs.md not found")
         content = rules_file.read_text(encoding="utf-8")
@@ -745,7 +745,7 @@ class TestAllGlobalScopesInGlobalMd(unittest.TestCase):
     ]
 
     def _global_md_content(self) -> str:
-        global_md = _REPO_ROOT / ".claude" / "generated" / "_global.md"
+        global_md = _REPO_ROOT / ".claude" / "pipeline" / "generated" / "_global.md"
         self.assertTrue(global_md.exists(), ".claude/generated/_global.md must exist")
         return global_md.read_text(encoding="utf-8")
 
@@ -783,7 +783,7 @@ class TestAllGlobalScopesInGlobalMd(unittest.TestCase):
 
     def test_global_rules_not_inlined_in_claude_md(self):
         """CLAUDE.md must NOT contain inline generated-region markers or full rule bodies."""
-        claude_md_path = _REPO_ROOT / "CLAUDE.md"
+        claude_md_path = _REPO_ROOT / ".claude" / "pipeline" / "CLAUDE.md"
         self.assertTrue(claude_md_path.exists(), "CLAUDE.md must exist")
         content = claude_md_path.read_text(encoding="utf-8")
         # Generated-region markers must NOT be present (moved to @import)
@@ -799,7 +799,7 @@ class TestAllGlobalScopesInGlobalMd(unittest.TestCase):
         )
         # CLAUDE.md must have the @import line instead
         self.assertIn(
-            "@.claude/generated/_global.md",
+            "@generated/_global.md",
             content,
             "CLAUDE.md must @import _global.md",
         )
