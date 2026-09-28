@@ -3,8 +3,9 @@ tests/test_lane_mode_prompts_1506.py
 
 PR #1528 fix round (slice #1506 / PRD #1501, ADR-0090 D4): the prompt-side
 findings of the orchestrator-supervised lane run (lane PR #1539). Static
-reads of `.claude/agents/implementer.md` `## Lane mode` and
-`.claude/agents/reviewer.md`, the only enforcement a prompt clause has
+reads of `.claude/pipeline/agents/implementer.md` `## Lane mode` and
+`.claude/pipeline/agents/reviewer.md` (ADR-0092 D1 package paths, slice
+#1604), the only enforcement a prompt clause has
 (its mechanical twins are the code tests in
 `test_release_check_resolver_1506.py` and
 `test_pr_merge_lane_closes_anchor_1506.py`).
