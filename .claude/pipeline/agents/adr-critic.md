@@ -153,7 +153,7 @@ No proposed edits to existing ADR files.
 
 **Check:** (1) Read every Decision. (2) Identify those introducing rules, conventions, or recurring obligations. (3) For each, verify sub-checks (a), (b), (c). Any absent → FAIL.
 
-**Rationale:** The same prose-decay evidence that motivated rule #23 (ADR-0056 Context: 0–17% prose-rule compliance) applies to ADRs themselves. An ADR that introduces a rule without naming enforcement is an ADR that hopes agents will comply rather than building compliance in. The three sub-checks (enforcement + parsimony + shadow) form the minimum due-diligence set: enforcement makes the rule real; parsimony prevents mechanism proliferation; shadow-naming enables future audit tests. Per [ADR-0056](../../decisions/0056-no-rule-without-a-check.md) D2.
+**Rationale:** The same prose-decay evidence that motivated rule #23 (ADR-0056 Context: 0–17% prose-rule compliance) applies to ADRs themselves. An ADR that introduces a rule without naming enforcement is an ADR that hopes agents will comply rather than building compliance in. The three sub-checks (enforcement + parsimony + shadow) form the minimum due-diligence set: enforcement makes the rule real; parsimony prevents mechanism proliferation; shadow-naming enables future audit tests. Per [ADR-0056](../../../decisions/0056-no-rule-without-a-check.md) D2.
 
 **Examples:** "D1 introduces reviewer rule R-FOO but cites no enforcement mechanism and isn't tagged advisory" → FAIL(a). "D2 adds a new hook validation but doesn't explain why the existing pre-commit hook doesn't cover it" → FAIL(b). "D3 introduces a rule but doesn't name the anti-pattern it prevents" → FAIL(c). "D1 introduces R-FOO, names the CI grep that checks it, states existing checks don't cover it, and names 'silent scope drift' as the shadow" → PASS.
 
@@ -173,7 +173,7 @@ Run for each superseded ADR number named in the `Supersedes:` header.
 
 **Bootstrap-mode:** per ADR-0004 D2, AC-PROPAGATION binds forward from the merge of its ship slice (slice 2 of PRD #794). ADRs accepted before that merge are not retroactively re-gated.
 
-**Rationale:** When an ADR is superseded, every runtime prompt that cites its D-IDs as live authority becomes a dead citation (the ADR-0064 D2 / DOCS-11 class). Without a Propagation section, the superseding ADR author has no record of which prompts need updating, and reviewers have no way to verify the sweep was complete. The mandatory enumeration + disposition pattern makes supersession propagation observable and auditable at draft time — the same principle that motivates rule #18/ADR-0045 at write time, applied at supersession time. Per [ADR-0064](../../decisions/0064-rule-layer-integrity.md) D1.
+**Rationale:** When an ADR is superseded, every runtime prompt that cites its D-IDs as live authority becomes a dead citation (the ADR-0064 D2 / DOCS-11 class). Without a Propagation section, the superseding ADR author has no record of which prompts need updating, and reviewers have no way to verify the sweep was complete. The mandatory enumeration + disposition pattern makes supersession propagation observable and auditable at draft time — the same principle that motivates rule #18/ADR-0045 at write time, applied at supersession time. Per [ADR-0064](../../../decisions/0064-rule-layer-integrity.md) D1.
 
 **Examples:** "Draft supersedes ADR-0026; no `## Propagation` section; `grep ADR-0026 .claude/agents/` returns 3 hits" → FAIL. "Draft supersedes ADR-0026; `## Propagation` section lists adr-critic.md (grandfather: KB-layer flagging preserved as advisory per ADR-0032) but omits reviewer.md which also cites it" → FAIL. "Draft supersedes ADR-0026; `## Propagation` covers all 3 grepped files with per-file dispositions" → PASS.
 
@@ -181,7 +181,7 @@ Run for each superseded ADR number named in the `Supersedes:` header.
 
 ## Additional responsibility — flag affected topics (non-blocking)
 
-When auditing a draft ADR that cites or extends prior ADRs, flag *"this ADR affects topics X, Y"* in the verdict's `### Recommendations (non-blocking)` section so the implementer is aware of potential cascade-doc implications. Per [ADR-0032](../../decisions/0032-workflow-only-architecture.md), the separate KB layer no longer exists and R-TRUTH-DOC is retired. ADR-0026 topic-flagging responsibility remains as a non-blocking advisory only.
+When auditing a draft ADR that cites or extends prior ADRs, flag *"this ADR affects topics X, Y"* in the verdict's `### Recommendations (non-blocking)` section so the implementer is aware of potential cascade-doc implications. Per [ADR-0032](../../../decisions/0032-workflow-only-architecture.md), the separate KB layer no longer exists and R-TRUTH-DOC is retired. ADR-0026 topic-flagging responsibility remains as a non-blocking advisory only.
 
 **How to check:** parse the draft for `ADR-NNNN` references; consider which topics in CLAUDE.md/subagent prompts the new ADR would affect. Tool budget: 1-2 `Read` calls; honors the read-only critic contract.
 
@@ -189,7 +189,7 @@ When auditing a draft ADR that cites or extends prior ADRs, flag *"this ADR affe
 
 ## Output format
 
-The canonical verdict template + CRITIC trailer field schema is defined in [ADR-0005](../../decisions/0005-output-shape-and-slicing-methodology.md) D1. 5 required body sections in order: Header → Subject of review → Rubric → Findings → Summary. Recommendations is a permitted non-blocking extension after Summary, before the trailer.
+The canonical verdict template + CRITIC trailer field schema is defined in [ADR-0005](../../../decisions/0005-output-shape-and-slicing-methodology.md) D1. 5 required body sections in order: Header → Subject of review → Rubric → Findings → Summary. Recommendations is a permitted non-blocking extension after Summary, before the trailer.
 
 **CRITIC trailer mandatory keys (per ADR-0054 D2):** every trailer — BLOCK and APPROVE alike — MUST include these three core keys in this order: `VERDICT`, `REASON`, `ROUND`. Per-agent extension keys (e.g. `FAILED_RULES`, `FINDINGS_COUNT`, `ESCALATE`) are allowed only after the core three.
 

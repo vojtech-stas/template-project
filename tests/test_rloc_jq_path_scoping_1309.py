@@ -45,7 +45,7 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-REVIEWER_MD = REPO_ROOT / ".claude" / "agents" / "reviewer.md"
+REVIEWER_MD = REPO_ROOT / ".claude" / "pipeline" / "agents" / "reviewer.md"
 
 # Baseline fixture from PRD #1266 §2 criterion 1: a non-runtime path sits
 # between two runtime paths. Order matters -- it is what exercises the

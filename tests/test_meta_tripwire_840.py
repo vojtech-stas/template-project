@@ -28,7 +28,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
 HEALTH_PY = REPO_ROOT / "dashboard" / "health.py"
-REVIEWER_MD = REPO_ROOT / ".claude" / "agents" / "reviewer.md"
+REVIEWER_MD = REPO_ROOT / ".claude" / "pipeline" / "agents" / "reviewer.md"
 
 # Ensure dashboard/ is importable.
 _DASHBOARD_DIR = str(REPO_ROOT / "dashboard")

@@ -17,7 +17,7 @@ class TestOpenAISkills(unittest.TestCase):
 
     def test_router_has_canonical_reference_and_mapping_without_copied_body(self):
         text = gen.render(ROOT, "ship")
-        self.assertIn("../../../.claude/skills/ship/SKILL.md", text)
+        self.assertIn("../../../.claude/pipeline/skills/ship/SKILL.md", text)
         self.assertIn("../../../docs/openai-workflow.md", text)
         self.assertIn("qa-verify and prd-close", text)
         self.assertIn("complete discovery pending", text)
@@ -26,9 +26,9 @@ class TestOpenAISkills(unittest.TestCase):
     def test_generation_drift_metadata_extra_and_missing_source(self):
         with tempfile.TemporaryDirectory(prefix="openai-skills-") as tmp:
             root = Path(tmp)
-            source = root / ".claude/skills/ship/SKILL.md"
+            source = root / ".claude/pipeline/skills/ship/SKILL.md"
             source.parent.mkdir(parents=True)
-            source.write_bytes((ROOT / ".claude/skills/ship/SKILL.md").read_bytes())
+            source.write_bytes((ROOT / ".claude/pipeline/skills/ship/SKILL.md").read_bytes())
             with redirect_stdout(io.StringIO()):
                 self.assertFalse(gen.generate(root, check=True))
                 self.assertFalse((root / ".agents").exists())
@@ -62,7 +62,7 @@ class TestOpenAISkills(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="openai-skills-") as tmp:
             root = Path(tmp)
             for name in ("ship", "future"):
-                path = root / ".claude/skills" / name / "SKILL.md"
+                path = root / ".claude/pipeline/skills" / name / "SKILL.md"
                 path.parent.mkdir(parents=True)
                 path.write_text(f"---\nname: {name}\ndescription: example\n---\n",
                                 encoding="utf-8")
@@ -75,7 +75,7 @@ class TestOpenAISkills(unittest.TestCase):
     def test_bad_discovery_metadata_refuses(self):
         with tempfile.TemporaryDirectory(prefix="openai-skills-") as tmp:
             root = Path(tmp)
-            path = root / ".claude/skills/ship/SKILL.md"
+            path = root / ".claude/pipeline/skills/ship/SKILL.md"
             path.parent.mkdir(parents=True)
             for text in ("body", "---\nname: wrong\ndescription: x\n---\n",
                          "---\nname: ship\n---\n",

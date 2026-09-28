@@ -211,13 +211,27 @@ def pristine(repo_root: Path) -> tuple[bool, str]:
 
 
 # ---------------------------------------------------------------------------
-# Shims (ADR-0092 D2) — this slice: skills/grill-me/ only.
+# Shims (ADR-0092 D2) — skills, agents and area rules (slice #1604 extends
+# slice 1's skills/grill-me/-only set to the whole D2 shim table).
 # ---------------------------------------------------------------------------
 
-# (package-relative source, repo-relative shim path)
-_SHIM_SPECS = [
-    ("skills/grill-me/SKILL.md", ".claude/skills/grill-me/SKILL.md"),
-]
+
+def _discover_shim_specs(pkg_root: Path) -> list[tuple[str, str]]:
+    """(package-relative source, repo-relative shim path) pairs, per the D2
+    shim table:
+      skills/<n>/SKILL.md -> .claude/skills/<n>/SKILL.md
+      agents/<n>.md        -> .claude/agents/pipeline/<n>.md
+      rules/<n>.md         -> .claude/rules/pipeline/<n>.md
+    `generated/` is never shimmed (imported instead, ADR-0092 D2)."""
+    specs: list[tuple[str, str]] = []
+    for skill_md in sorted((pkg_root / "skills").glob("*/SKILL.md")):
+        name = skill_md.parent.name
+        specs.append((f"skills/{name}/SKILL.md", f".claude/skills/{name}/SKILL.md"))
+    for agent_md in sorted((pkg_root / "agents").glob("*.md")):
+        specs.append((f"agents/{agent_md.name}", f".claude/agents/pipeline/{agent_md.name}"))
+    for rule_md in sorted((pkg_root / "rules").glob("*.md")):
+        specs.append((f"rules/{rule_md.name}", f".claude/rules/pipeline/{rule_md.name}"))
+    return specs
 
 _LINK_RE = re.compile(r"(\[[^\]]*\]\()([^)\s]+)(\))")
 
@@ -284,7 +298,7 @@ def _normalize_eol(text: str) -> str:
 
 
 def _shim_pairs(pkg_root: Path):
-    for source_rel, shim_rel in _SHIM_SPECS:
+    for source_rel, shim_rel in _discover_shim_specs(pkg_root):
         source_path = pkg_root / source_rel
         shim_path = pkg_root.parent.parent / shim_rel  # pkg_root = <repo>/.claude/pipeline
         yield source_rel, source_path, shim_path
@@ -452,8 +466,21 @@ _PROMPT_PATH_PATTERNS = [
 
 _SINGLE_FILE_ROOTS = {"bootstrap.sh", "docs/observability.md"}
 
+# Roots this package has actually finished migrating into .claude/pipeline/,
+# as of the current slice. Update this set in the same PR that completes a
+# root's move (ADR-0092 D1 rename map) — e.g. slice #1605 adds ".claude/hooks"
+# and ".githooks", slice #1606 adds "tools", "dashboard" and "tests". A host
+# repo's tree never carried these pre-move roots to begin with, so "root
+# absent in the host's tree" cannot mean "migrated" the way it correctly does
+# in the home repo's own tree (D5 / PIP-037: a host-mode short-circuit that
+# reads that absence as migration is the shadow ADR-0092 D1 names). This
+# explicit set is the minimal honest fact host mode CAN read.
+_MOVED_ROOTS_HOST = frozenset({".claude/generated"})
 
-def _root_has_moved(repo_root: Path, root: str) -> bool:
+
+def _root_has_moved(repo_root: Path, root: str, mode: str) -> bool:
+    if mode != "home":
+        return root in _MOVED_ROOTS_HOST
     if root in _SINGLE_FILE_ROOTS:
         return _git_ls_files_count(repo_root, root) == 0
     return _git_ls_files_count(repo_root, root + "/") == 0
@@ -477,6 +504,11 @@ def _prompt_path_subjects(repo_root: Path, pkg_root: Path) -> list[Path]:
 
 
 def prompt_path_arm(repo_root: Path, pkg_root: Path) -> list[str]:
+    # Runs in both home and host mode (ADR-0092 D1). "Has this root moved"
+    # is read via git in home mode (the home repo's own tree is the ground
+    # truth) and via the explicit _MOVED_ROOTS_HOST set in host mode — see
+    # _root_has_moved.
+    mode = pc.mode(str(repo_root))
     failures = []
     moved_cache: dict[str, bool] = {}
     for subject in _prompt_path_subjects(repo_root, pkg_root):
@@ -487,7 +519,7 @@ def prompt_path_arm(repo_root: Path, pkg_root: Path) -> list[str]:
                 if not pattern.search(line):
                     continue
                 if root not in moved_cache:
-                    moved_cache[root] = _root_has_moved(repo_root, root)
+                    moved_cache[root] = _root_has_moved(repo_root, root, mode)
                 if moved_cache[root]:
                     failures.append(
                         f"(prompt-path) {rel}:{lineno} names moved root "

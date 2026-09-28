@@ -46,7 +46,7 @@ class TestReviewerCanonicalCap(unittest.TestCase):
     here rather than restating the number)."""
 
     def setUp(self):
-        self.text = _read(".claude/agents/reviewer.md")
+        self.text = _read(".claude/pipeline/agents/reviewer.md")
 
     def test_states_600_cap(self):
         self.assertIn("600 LoC of runtime-artifact code", self.text)
@@ -69,7 +69,7 @@ class TestReviewerCanonicalCap(unittest.TestCase):
 
 class TestClaudeMdCap(unittest.TestCase):
     def setUp(self):
-        self.text = _read("CLAUDE.md")
+        self.text = _read(".claude/pipeline/CLAUDE.md")
 
     def test_i4_states_600(self):
         self.assertIn("≤600 LoC of runtime-artifact diff", self.text)
@@ -91,7 +91,7 @@ class TestClaudeMdCap(unittest.TestCase):
 
 class TestSlicerGuidance(unittest.TestCase):
     def test_slicer_md_has_count_guidance(self):
-        text = _read(".claude/agents/slicer.md")
+        text = _read(".claude/pipeline/agents/slicer.md")
         self.assertIn("ADR-0077 D1", text)
         self.assertIn("3", text)  # sanity: guidance mentions the new range
         self.assertRegex(text, r"3.5 slices per PRD")
@@ -99,7 +99,7 @@ class TestSlicerGuidance(unittest.TestCase):
 
 class TestSlicerCriticCap(unittest.TestCase):
     def setUp(self):
-        self.text = _read(".claude/agents/slicer-critic.md")
+        self.text = _read(".claude/pipeline/agents/slicer-critic.md")
 
     def test_invest_small_states_600(self):
         self.assertIn("≤600 runtime-artifact LoC", self.text)
@@ -136,7 +136,7 @@ class TestSlicerCriticCap(unittest.TestCase):
 
 class TestOtherLiveReferences(unittest.TestCase):
     def test_implementer_md_states_600(self):
-        text = _read(".claude/agents/implementer.md")
+        text = _read(".claude/pipeline/agents/implementer.md")
         self.assertIn("R-LOC 600 cap", text)
         self.assertNotIn("R-LOC 300 cap", text)
 

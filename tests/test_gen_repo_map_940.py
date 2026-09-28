@@ -287,19 +287,20 @@ class TestGenRepoMapCheckMode(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestGenRepoMapRealRepo(unittest.TestCase):
-    """Integration: real .claude/generated/_repo-map.md and CLAUDE.md."""
+    """Integration: real .claude/pipeline/generated/_repo-map.md and CLAUDE.md
+    (relocated into the package per ADR-0092 D1, slice #1604)."""
 
     def test_repo_map_file_exists(self):
-        """Real .claude/generated/_repo-map.md must exist."""
-        repo_map = _REPO_ROOT / ".claude" / "generated" / "_repo-map.md"
+        """Real .claude/pipeline/generated/_repo-map.md must exist."""
+        repo_map = _REPO_ROOT / ".claude" / "pipeline" / "generated" / "_repo-map.md"
         self.assertTrue(
             repo_map.exists(),
-            ".claude/generated/_repo-map.md must exist (run 'python tools/gen_repo_map.py')",
+            ".claude/pipeline/generated/_repo-map.md must exist (run 'python tools/gen_repo_map.py')",
         )
 
     def test_repo_map_has_at_least_10_rows(self):
         """Real _repo-map.md must have ≥10 table rows (AC from slice #940)."""
-        repo_map = _REPO_ROOT / ".claude" / "generated" / "_repo-map.md"
+        repo_map = _REPO_ROOT / ".claude" / "pipeline" / "generated" / "_repo-map.md"
         if not repo_map.exists():
             self.skipTest("_repo-map.md not found")
         content = repo_map.read_text(encoding="utf-8")
@@ -318,14 +319,15 @@ class TestGenRepoMapRealRepo(unittest.TestCase):
         )
 
     def test_claude_md_imports_repo_map(self):
-        """Real CLAUDE.md must contain the @import line for _repo-map.md."""
-        claude_md = _REPO_ROOT / "CLAUDE.md"
-        self.assertTrue(claude_md.exists(), "CLAUDE.md must exist")
+        """Real pipeline CLAUDE.md must contain the @import line for
+        _repo-map.md (relocated per ADR-0092 D1, slice #1604)."""
+        claude_md = _REPO_ROOT / ".claude" / "pipeline" / "CLAUDE.md"
+        self.assertTrue(claude_md.exists(), "pipeline CLAUDE.md must exist")
         content = claude_md.read_text(encoding="utf-8")
         self.assertIn(
-            "@.claude/generated/_repo-map.md",
+            "@generated/_repo-map.md",
             content,
-            "CLAUDE.md must @import .claude/generated/_repo-map.md",
+            "pipeline CLAUDE.md must @import generated/_repo-map.md",
         )
 
     def test_gen_repo_map_check_exits_zero(self):

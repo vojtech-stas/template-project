@@ -23,7 +23,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 
 REPO_ROOT = Path(__file__).parent.parent
-REVIEWER_MD = REPO_ROOT / ".claude" / "agents" / "reviewer.md"
+REVIEWER_MD = REPO_ROOT / ".claude" / "pipeline" / "agents" / "reviewer.md"
 HEALTH_PY = REPO_ROOT / "dashboard" / "health.py"
 
 
@@ -128,7 +128,7 @@ class TestRuleEnforcerMapValidity(unittest.TestCase):
         health = _import_health()
         if not hasattr(health, "RULE_ENFORCER_MAP"):
             self.skipTest("RULE_ENFORCER_MAP not yet defined")
-        slicer_path = REPO_ROOT / ".claude" / "agents" / "slicer-critic.md"
+        slicer_path = REPO_ROOT / ".claude" / "pipeline" / "agents" / "slicer-critic.md"
         if not slicer_path.exists():
             self.skipTest("slicer-critic.md not found")
         slicer_text = slicer_path.read_text(encoding="utf-8")

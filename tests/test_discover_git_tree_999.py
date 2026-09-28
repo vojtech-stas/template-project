@@ -46,7 +46,7 @@ class TestDiscoverGitTree999(unittest.TestCase):
 
     def setUp(self):
         """Create an untracked decoy skill dir in the real repo root."""
-        self._decoy_dir = REPO_ROOT / ".claude" / "skills" / "zzdecoy999"
+        self._decoy_dir = REPO_ROOT / ".claude" / "pipeline" / "skills" / "zzdecoy999"
         self._decoy_file = self._decoy_dir / "SKILL.md"
         self._decoy_dir.mkdir(parents=True, exist_ok=True)
         self._decoy_file.write_text(
@@ -59,7 +59,7 @@ class TestDiscoverGitTree999(unittest.TestCase):
         # Confirm the decoy is NOT tracked (sanity guard)
         result = subprocess.run(
             ["git", "-C", str(REPO_ROOT), "ls-files",
-             ".claude/skills/zzdecoy999/SKILL.md"],
+             ".claude/pipeline/skills/zzdecoy999/SKILL.md"],
             capture_output=True, text=True,
         )
         self.assertEqual(
@@ -79,7 +79,7 @@ class TestDiscoverGitTree999(unittest.TestCase):
     def _tracked_skill_count(self) -> int:
         """Ask git how many SKILL.md files are tracked (the ground truth)."""
         result = subprocess.run(
-            ["git", "-C", str(REPO_ROOT), "ls-files", ".claude/skills/*/SKILL.md"],
+            ["git", "-C", str(REPO_ROOT), "ls-files", ".claude/pipeline/skills/*/SKILL.md"],
             capture_output=True, text=True, timeout=10,
         )
         lines = [l.strip() for l in result.stdout.splitlines() if l.strip()]

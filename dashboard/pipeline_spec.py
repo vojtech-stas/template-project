@@ -86,25 +86,25 @@ NODES = {
         "kind": "agent",
         "label": "prd-critic",
         "stage": "S2",
-        "path": ".claude/agents/prd-critic.md",
+        "path": ".claude/pipeline/agents/prd-critic.md",
     },
     "adr-critic": {
         "kind": "agent",
         "label": "adr-critic",
         "stage": "S2",
-        "path": ".claude/agents/adr-critic.md",
+        "path": ".claude/pipeline/agents/adr-critic.md",
     },
     "slicer": {
         "kind": "agent",
         "label": "slicer",
         "stage": "S2",
-        "path": ".claude/agents/slicer.md",
+        "path": ".claude/pipeline/agents/slicer.md",
     },
     "slicer-critic": {
         "kind": "agent",
         "label": "slicer-critic",
         "stage": "S2",
-        "path": ".claude/agents/slicer-critic.md",
+        "path": ".claude/pipeline/agents/slicer-critic.md",
     },
 
     # --- agents (Stage 3: Implementation) ----------------------------------
@@ -112,13 +112,13 @@ NODES = {
         "kind": "agent",
         "label": "implementer",
         "stage": "S3",
-        "path": ".claude/agents/implementer.md",
+        "path": ".claude/pipeline/agents/implementer.md",
     },
     "reviewer": {
         "kind": "agent",
         "label": "reviewer",
         "stage": "S3",
-        "path": ".claude/agents/reviewer.md",
+        "path": ".claude/pipeline/agents/reviewer.md",
     },
 
     # --- skills (Stage 4: Acceptance) ----------------------------------------
@@ -134,7 +134,7 @@ NODES = {
         "kind": "agent",
         "label": "qa-tester",
         "stage": "S4",
-        "path": ".claude/agents/qa-tester.md",
+        "path": ".claude/pipeline/agents/qa-tester.md",
     },
 
     # --- skills (Side workflows) -------------------------------------------
@@ -150,13 +150,13 @@ NODES = {
         "kind": "agent",
         "label": "backlog-critic",
         "stage": "SS",
-        "path": ".claude/agents/backlog-critic.md",
+        "path": ".claude/pipeline/agents/backlog-critic.md",
     },
     "codebase-critic": {
         "kind": "agent",
         "label": "codebase-critic",
         "stage": "SS",
-        "path": ".claude/agents/codebase-critic.md",
+        "path": ".claude/pipeline/agents/codebase-critic.md",
     },
 
     # --- artifact pseudo-nodes (no file path) --------------------------------

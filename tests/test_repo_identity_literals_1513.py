@@ -56,11 +56,26 @@ main = _mod.main
 
 
 class TestSubjectSetClassification(unittest.TestCase):
-    def test_agent_prompt_is_subject(self):
-        self.assertTrue(is_subject_file(".claude/agents/reviewer.md"))
+    def test_package_agent_prompt_is_subject(self):
+        # ADR-0092 D1 (slice #1604): the package agent SOURCE is the subject
+        # now; the bare .claude/agents/ path holds no source anymore.
+        self.assertTrue(is_subject_file(".claude/pipeline/agents/reviewer.md"))
 
-    def test_skill_prompt_is_subject(self):
-        self.assertTrue(is_subject_file(".claude/skills/ship/SKILL.md"))
+    def test_package_skill_prompt_is_subject(self):
+        self.assertTrue(is_subject_file(".claude/pipeline/skills/ship/SKILL.md"))
+
+    def test_bare_agents_path_not_subject(self):
+        # ADR-0092 D1 (slice #1604): a bare .claude/agents/*.md file now
+        # holds only host-owned content (never a package shim, since agent
+        # shims live at .claude/agents/pipeline/), and owes nothing to
+        # PIP-031.
+        self.assertFalse(is_subject_file(".claude/agents/reviewer.md"))
+
+    def test_bare_skills_path_not_subject(self):
+        # A bare .claude/skills/<n>/SKILL.md may be a D2-generated shim
+        # (verdict is its source's) or a host-owned skill (owes nothing to
+        # PIP-031) — neither is a subject.
+        self.assertFalse(is_subject_file(".claude/skills/ship/SKILL.md"))
 
     def test_tools_py_is_subject(self):
         self.assertTrue(is_subject_file("tools/ci-checks.sh"))
@@ -78,7 +93,7 @@ class TestSubjectSetClassification(unittest.TestCase):
         self.assertTrue(is_subject_file("bootstrap.sh"))
 
     def test_non_skill_md_not_subject(self):
-        self.assertFalse(is_subject_file(".claude/skills/ship/notes.md"))
+        self.assertFalse(is_subject_file(".claude/pipeline/skills/ship/notes.md"))
 
     def test_unrelated_path_not_subject(self):
         self.assertFalse(is_subject_file("decisions/0089-per-repo-pipeline-identity.md"))
@@ -102,7 +117,7 @@ class TestSubjectSetClassification(unittest.TestCase):
         self.assertFalse(is_excluded("tools/pipeline_config.py"))
 
     def test_agent_md_not_excluded(self):
-        self.assertFalse(is_excluded(".claude/agents/reviewer.md"))
+        self.assertFalse(is_excluded(".claude/pipeline/agents/reviewer.md"))
 
 
 class TestTokenShapes(unittest.TestCase):
@@ -152,7 +167,7 @@ class TestTokenShapes(unittest.TestCase):
         self.assertFalse(self._hits("# see origin/main for details", path="tools/example.sh"))
 
     def test_comment_only_line_not_exempt_in_md(self):
-        self.assertTrue(self._hits("# see origin/main for details", path=".claude/agents/foo.md"))
+        self.assertTrue(self._hits("# see origin/main for details", path=".claude/pipeline/agents/foo.md"))
 
     def test_non_comment_line_in_code_file_still_flagged(self):
         self.assertTrue(self._hits("git fetch origin/main  # not a comment-only line"))
@@ -165,7 +180,7 @@ class TestScanRepoIntegration(unittest.TestCase):
     def test_planted_literal_is_caught(self):
         with tempfile.TemporaryDirectory() as tmp:
             subprocess.run(["git", "init", "-q", tmp], check=True)
-            agents_dir = Path(tmp) / ".claude" / "agents"
+            agents_dir = Path(tmp) / ".claude" / "pipeline" / "agents"
             agents_dir.mkdir(parents=True)
             planted = agents_dir / "planted.md"
             planted.write_text("Verify ADR existence on origin/main.\n", encoding="utf-8")
@@ -179,12 +194,12 @@ class TestScanRepoIntegration(unittest.TestCase):
             violations = scan_repo(tmp, pattern)
             self.assertIsNotNone(violations)
             paths = [v[0].replace("\\", "/") for v in violations]
-            self.assertIn(".claude/agents/planted.md", paths)
+            self.assertIn(".claude/pipeline/agents/planted.md", paths)
 
     def test_clean_repo_passes(self):
         with tempfile.TemporaryDirectory() as tmp:
             subprocess.run(["git", "init", "-q", tmp], check=True)
-            agents_dir = Path(tmp) / ".claude" / "agents"
+            agents_dir = Path(tmp) / ".claude" / "pipeline" / "agents"
             agents_dir.mkdir(parents=True)
             clean = agents_dir / "clean.md"
             clean.write_text("Verify ADR existence on the integration branch.\n", encoding="utf-8")
@@ -201,7 +216,7 @@ class TestScanRepoIntegration(unittest.TestCase):
     def test_main_exit_code_reflects_violations(self):
         with tempfile.TemporaryDirectory() as tmp:
             subprocess.run(["git", "init", "-q", tmp], check=True)
-            agents_dir = Path(tmp) / ".claude" / "agents"
+            agents_dir = Path(tmp) / ".claude" / "pipeline" / "agents"
             agents_dir.mkdir(parents=True)
             (agents_dir / "planted.md").write_text(
                 "checkout origin/develop before editing.\n", encoding="utf-8"

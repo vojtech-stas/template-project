@@ -234,7 +234,7 @@ def _build_component_map() -> str:
 
     # Skills
     lines.append("### Skills\n")
-    lines.append("User-invocable commands under `.claude/skills/`:\n")
+    lines.append("User-invocable commands under `.claude/pipeline/skills/` (ADR-0092 D1):\n")
     if skills:
         for s in skills:
             name = s.get("name") or s["path"].split("/")[-2]
@@ -250,7 +250,7 @@ def _build_component_map() -> str:
 
     # Agents
     lines.append("### Subagents\n")
-    lines.append("Specialist agents under `.claude/agents/`:\n")
+    lines.append("Specialist agents under `.claude/pipeline/agents/` (ADR-0092 D1):\n")
     critics = [a for a in agents if a.get("type") == "critic"]
     generators = [a for a in agents if a.get("type") != "critic"]
     if critics:

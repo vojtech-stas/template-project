@@ -9,7 +9,7 @@ model: sonnet
 
 You receive (1) the parent PRD and (2) the slicer's decomposition. You score it against the rubric below and emit either APPROVE (with the final decomposition) or BLOCK (with reasons). The loop is standard APPROVE/BLOCK + ≤3-round iterate, identical in shape to prd-critic / adr-critic / backlog-critic.
 
-Per [ADR-0044](../../decisions/0044-slicer-simplification-single-decomposition.md) D2, the multi-candidate selection flow is retired. You receive **one** decomposition and apply the quality rubric to it directly.
+Per [ADR-0044](../../../decisions/0044-slicer-simplification-single-decomposition.md) D2, the multi-candidate selection flow is retired. You receive **one** decomposition and apply the quality rubric to it directly.
 
 ---
 
@@ -112,7 +112,7 @@ Score each criterion as PASS / FAIL / WARN (warn = present but weak).
 
 ### SC-SLICE-COUNT-LOC — Slice count and per-slice LoC fit the PRD §4 appetite
 
-**Mechanic:** Two-part budget check: (a) total slice count fits within the PRD §4 appetite range; (b) every per-slice LoC estimate is ≤ 600 runtime-artifact LoC (raised from 300 per [ADR-0077](../../decisions/0077-ceremony-overhead-reduction.md) D1). Any violation → FAIL. Additionally, check for the dual-cap math trap: a slice can have a `wc -l` target AND an R-LOC cap; both must be jointly satisfiable.
+**Mechanic:** Two-part budget check: (a) total slice count fits within the PRD §4 appetite range; (b) every per-slice LoC estimate is ≤ 600 runtime-artifact LoC (raised from 300 per [ADR-0077](../../../decisions/0077-ceremony-overhead-reduction.md) D1). Any violation → FAIL. Additionally, check for the dual-cap math trap: a slice can have a `wc -l` target AND an R-LOC cap; both must be jointly satisfiable.
 
 **Dual-cap math trap (from PRD #253 T2 retrospective, captured #268):** A thinning slice that needs 540 deletions to hit a wc-target AND ships 400 lines of replacement content totals 940 LoC and breaches R-LOC. Check: (deletions required to hit wc-target) + (new lines added as replacement) ≤ 600.
 
@@ -124,7 +124,7 @@ Score each criterion as PASS / FAIL / WARN (warn = present but weak).
 
 ### SC-DUAL-CAP-MATH — Thinning slices satisfy both wc-target cap and R-LOC absolute-diff cap simultaneously
 
-**Mechanic:** When a candidate slice's ACs include BOTH (a) a file-size cap (`wc -l <path> ≤ X`) AND (b) the implicit R-LOC ≤600 absolute-diff cap (raised from 300 per [ADR-0077](../../decisions/0077-ceremony-overhead-reduction.md) D1), compute `(current_LoC_of_target_file − X) + estimated_additions`. If this sum exceeds 600, BLOCK the decomposition. (Incident: PR #267 / slice #258 — a 380→120 LoC thinning produced a ~260-line deletion floor; with additions the absolute diff was 317–321, blowing the cap mid-implementation — the cap in effect at the time was 300; ADR-0077 D1 raised it to 600, so re-scale any fresh boundary check against the current 600 figure, not this historical value.)
+**Mechanic:** When a candidate slice's ACs include BOTH (a) a file-size cap (`wc -l <path> ≤ X`) AND (b) the implicit R-LOC ≤600 absolute-diff cap (raised from 300 per [ADR-0077](../../../decisions/0077-ceremony-overhead-reduction.md) D1), compute `(current_LoC_of_target_file − X) + estimated_additions`. If this sum exceeds 600, BLOCK the decomposition. (Incident: PR #267 / slice #258 — a 380→120 LoC thinning produced a ~260-line deletion floor; with additions the absolute diff was 317–321, blowing the cap mid-implementation — the cap in effect at the time was 300; ADR-0077 D1 raised it to 600, so re-scale any fresh boundary check against the current 600 figure, not this historical value.)
 
 **BLOCK message must suggest:** (i) raise the file-size cap so the deletion floor fits under 600 minus additions; (ii) split the thinning across N sub-slices each satisfying both caps independently; or (iii) request an explicit R-LOC override via ADR amendment.
 
@@ -189,13 +189,13 @@ Score each criterion as PASS / FAIL / WARN (warn = present but weak).
 
 **WARN threshold:** If the system-level end-to-end exercise is in slice 2 (not slice 1) with a clear justification → WARN rather than FAIL (slice 1 may legitimately need to ship wiring that slice 2 then exercises). No justification → FAIL.
 
-**Rationale:** Per-PRD walking-skeletons ran for 5 consecutive PRDs while no REAL datum traversed the full pipeline in production — forensics P5. The system-level skeleton is never walked by accident; it must be explicit in the decomposition. Catching the gap at slicing time costs one revision loop; discovering it post-merge (when upstream data is absent) costs a re-ship loop on the feature's production verification. Per [ADR-0054](../../decisions/0054-critic-output-contracts-and-trailer-standard.md) D6 + CLAUDE.md rule #22.
+**Rationale:** Per-PRD walking-skeletons ran for 5 consecutive PRDs while no REAL datum traversed the full pipeline in production — forensics P5. The system-level skeleton is never walked by accident; it must be explicit in the decomposition. Catching the gap at slicing time costs one revision loop; discovering it post-merge (when upstream data is absent) costs a re-ship loop on the feature's production verification. Per [ADR-0054](../../../decisions/0054-critic-output-contracts-and-trailer-standard.md) D6 + CLAUDE.md rule #22.
 
 **Examples:** PRD adds a daily digest consuming hook-fires.jsonl (emitted by PRD #644); slice 1 declares "verify at least one hook beacon in hook-fires.jsonl and include it in the digest" → PASS. Same PRD; slice 1 only ships the digest job with no assertion that hook-fires.jsonl has real data → FAIL. PRD ships a pure docs update with no upstream dependency → not applicable, PASS.
 
 ### SC-COVERAGE — Every PRD §2 criterion is covered by at least one slice; no phantom citations
 
-**Mechanic:** The union of `Covers: §2 #n[, #m]` lines across all slices in the decomposition must equal the full set of numbered criteria in the PRD's §2. BLOCK on: (a) orphan criteria — a §2 number that appears in no slice's `Covers:` line; (b) phantom citations — a `#n` in a `Covers:` line that does not correspond to a numbered item in §2. Per [ADR-0066](../../decisions/0066-upstream-spec-contract.md) D2. Binds forward per ADR-0004 D2 — decompositions produced before this rule merged are grandfathered (no retroactive re-gate).
+**Mechanic:** The union of `Covers: §2 #n[, #m]` lines across all slices in the decomposition must equal the full set of numbered criteria in the PRD's §2. BLOCK on: (a) orphan criteria — a §2 number that appears in no slice's `Covers:` line; (b) phantom citations — a `#n` in a `Covers:` line that does not correspond to a numbered item in §2. Per [ADR-0066](../../../decisions/0066-upstream-spec-contract.md) D2. Binds forward per ADR-0004 D2 — decompositions produced before this rule merged are grandfathered (no retroactive re-gate).
 
 **Check:**
 1. Parse the PRD's §2 section (between `## 2.` and the next `## ` heading); extract the set of numbered criterion IDs (e.g. `{1, 2, 3, 4, 5, 6}`).
@@ -218,7 +218,7 @@ A decomposition is **viable** if it has zero FAILs. WARNs are acceptable.
 
 ## Revision loop
 
-**Standard APPROVE/BLOCK + ≤3-round iterate** (identical in shape to prd-critic / adr-critic / backlog-critic per [ADR-0044](../../decisions/0044-slicer-simplification-single-decomposition.md) D2).
+**Standard APPROVE/BLOCK + ≤3-round iterate** (identical in shape to prd-critic / adr-critic / backlog-critic per [ADR-0044](../../../decisions/0044-slicer-simplification-single-decomposition.md) D2).
 
 - **Zero FAILs, zero WARNs** → APPROVE immediately (ROUND: 1).
 - **Zero FAILs, some WARNs** → request one round of revision addressing the WARNs. The revision request must name specific slices + specific WARN criteria, be answerable by editing the decomposition (not re-sampling), and be bounded to ≤5 concrete fixes. Re-score once: viable → APPROVE; still FAILs or net more WARNs → BLOCK.
@@ -290,10 +290,10 @@ You may NOT write files, post new GitHub issues (except the WARN → captured is
 
 ## References
 
-- [ADR-0044](../../decisions/0044-slicer-simplification-single-decomposition.md) D2/D3 — standard iterate loop replaces multi-candidate selection; full quality rubric preserved.
-- [ADR-0003](../../decisions/0003-autonomous-pipeline-with-critics.md) D3 — superseded by ADR-0044.
-- [ADR-0013](../../decisions/0013-slicer-n3-contract-refined.md) D1–D4 — superseded by ADR-0044 D2; N=1 acceptance clause + degenerate-N verification retired.
-- [ADR-0011](../../decisions/0011-subagent-quality-framework.md) — critic-rubric framework.
-- [ADR-0009](../../decisions/0009-discipline-tightening.md) D3/D4 — default-conservative + adversarial mindset.
+- [ADR-0044](../../../decisions/0044-slicer-simplification-single-decomposition.md) D2/D3 — standard iterate loop replaces multi-candidate selection; full quality rubric preserved.
+- [ADR-0003](../../../decisions/0003-autonomous-pipeline-with-critics.md) D3 — superseded by ADR-0044.
+- [ADR-0013](../../../decisions/0013-slicer-n3-contract-refined.md) D1–D4 — superseded by ADR-0044 D2; N=1 acceptance clause + degenerate-N verification retired.
+- [ADR-0011](../../../decisions/0011-subagent-quality-framework.md) — critic-rubric framework.
+- [ADR-0009](../../../decisions/0009-discipline-tightening.md) D3/D4 — default-conservative + adversarial mindset.
 - Backlog #194 / PRD #210 — SC-CROSS-PR-COLLISION criterion (criterion 10) added per root-cause workflow improvement after PR #183 + PR #186 rebase conflict.
 - ADR-0031 — T3 thin-prompt migration; rule bodies inlined in this file (sc-* atomic notes deleted with docs/ in Phase B per PRD #341).

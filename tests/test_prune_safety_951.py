@@ -7,8 +7,9 @@ Two test groups:
      by `tools/worktree-guard.sh prune`, and prune logs a skip message,
      even when all other reclaim conditions (no-PR, clean, 0-ahead, aged)
      are satisfied.
-  2. qa-tester contract: .claude/agents/qa-tester.md contains the
-     synchronous-long-command rule and .gate-running marker contract.
+  2. qa-tester contract: .claude/pipeline/agents/qa-tester.md (ADR-0092 D1
+     package path, slice #1604) contains the synchronous-long-command rule
+     and .gate-running marker contract.
 
 All assertions use a synthetic git repo fixture (never the live worktree
 set) — the shared-.git isolation discipline per the #543/#545 incident.
@@ -27,7 +28,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
 GUARD_SH = REPO_ROOT / "tools" / "worktree-guard.sh"
-QA_TESTER_MD = REPO_ROOT / ".claude" / "agents" / "qa-tester.md"
+QA_TESTER_MD = REPO_ROOT / ".claude" / "pipeline" / "agents" / "qa-tester.md"
 
 
 def _bash_available() -> bool:

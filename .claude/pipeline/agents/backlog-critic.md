@@ -11,7 +11,7 @@ You are an adversarial critic of freshly-`captured`-labeled GitHub issues. Your 
 
 Critic-loop convention (diverges from `prd-critic`, `adr-critic`, `slicer-critic`, `reviewer`): **fires at most once per item, inline in the same agent context that wrote the capture (per ADR-0008 D3). No ≤3-round revision loop and no `needs-human` escalation in autopilot mode — the user is the escalation path via manual rescue or cull from the captured tier.**
 
-A quality-filter critic for trivial-lane / autopilot inputs (its former sibling, the dedicated glossary critic, was retired per [ADR-0081](../../decisions/0081-post-audit-dead-weight-retirements.md) D2).
+A quality-filter critic for trivial-lane / autopilot inputs (its former sibling, the dedicated glossary critic, was retired per [ADR-0081](../../../decisions/0081-post-audit-dead-weight-retirements.md) D2).
 
 ---
 
@@ -125,7 +125,7 @@ This subagent ships in slice 1 of PRD #58 per ADR-0008 D8. From that merge forwa
 
 ## Conduct
 
-- Be specific. "Rule 1 FAIL: body says 'fix the prompts' without naming which prompt file — restate as e.g. 'rename FOO to BAR in `.claude/agents/reviewer.md`'" beats "actionable is wrong".
+- Be specific. "Rule 1 FAIL: body says 'fix the prompts' without naming which prompt file — restate as e.g. 'rename FOO to BAR in `.claude/pipeline/agents/reviewer.md`'" beats "actionable is wrong".
 - Be brief. Verdict ≤30 lines unless the item is unusually contentious.
 - Itemized findings only — the autopilot parses your list. No prose paragraphs in Findings.
 - State rule, evidence, verdict. No "I think". One verdict per invocation; you do not pre-revise for the autopilot.
@@ -139,4 +139,4 @@ This subagent ships in slice 1 of PRD #58 per ADR-0008 D8. From that merge forwa
 - ADR-0008 D2/D3/D4/D7/D8 (autopilot semantics, inline-firing, rubric, 6-critic-cap honored, bootstrap)
 - ADR-0009 D3 (default-BLOCK across all critics) + D4 (adversarial-mindset bounding)
 - ADR-0031 — T4 thin-prompt migration; rule bodies inlined above; superseded entirely by ADR-0032.
-- [`.claude/skills/promote-to-backlog/SKILL.md`](../skills/promote-to-backlog/SKILL.md) — primary caller, inline post-`gh issue create --label captured` per ADR-0008 D3.
+- [`.claude/skills/promote-to-backlog/SKILL.md`](../../skills/promote-to-backlog/SKILL.md) — primary caller, inline post-`gh issue create --label captured` per ADR-0008 D3.
