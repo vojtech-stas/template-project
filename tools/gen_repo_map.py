@@ -169,7 +169,7 @@ def _build_repo_map() -> str:
         (".agents/skills/",  "Generated OpenAI routers; ship-only D6 inventory"),
         (".claude/pipeline/rules/", "Generated AREA-scope rule SOURCES (path-scoped); shimmed at .claude/rules/pipeline/ (ADR-0092 D1/D2)"),
         (".claude/pipeline/generated/", "Generated GLOBAL rules + repo-map (.claude/pipeline/CLAUDE.md @import-only, never shimmed; ADR-0092 D1/D2)"),
-        (".claude/hooks/",   "Claude Code hook scripts"),
+        (".claude/pipeline/hooks/", "Claude Code hook SOURCES; merged into .claude/settings.json's package-owned entries (ADR-0092 D2)"),
         (".claude/pipeline/", "The pipeline product: one git subtree, installed and upgraded via its own tools/package.py (ADR-0092 D1)"),
         ("dashboard/",       "CLI-only pipeline tooling: health checks, trace read-model, README generator (ADR-0088)"),
         ("tools/",           "CLI scripts for CI, generation, and promotion"),

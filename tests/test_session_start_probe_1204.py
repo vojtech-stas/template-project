@@ -27,7 +27,7 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-SESSION_START_SH = REPO_ROOT / ".claude" / "hooks" / "session-start.sh"
+SESSION_START_SH = REPO_ROOT / ".claude" / "pipeline" / "hooks" / "session-start.sh"
 
 
 class TestSessionStartProbeRepointed1204(unittest.TestCase):

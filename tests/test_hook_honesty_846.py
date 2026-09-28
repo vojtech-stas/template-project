@@ -23,7 +23,7 @@ from pathlib import Path
 # Helpers
 # ---------------------------------------------------------------------------
 
-HOOKS_DIR = Path(__file__).parent.parent / ".claude" / "hooks"
+HOOKS_DIR = Path(__file__).parent.parent / ".claude" / "pipeline" / "hooks"
 
 
 def _read_hook(name: str) -> str:

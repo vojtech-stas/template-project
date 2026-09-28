@@ -71,19 +71,19 @@ def _build_fixture(tmp_path: Path, set_hooks_path: bool = True) -> Path:
     _git("-C", str(repo), "config", "user.email", "test@example.com")
     _git("-C", str(repo), "config", "user.name", "Test")
 
-    hooks_dir = repo / ".claude" / "hooks"
+    hooks_dir = repo / ".claude" / "pipeline" / "hooks"
     hooks_dir.mkdir(parents=True)
     (hooks_dir / "session-start.sh").write_text("#!/bin/bash\necho hi\n")
     (repo / ".claude" / "settings.json").write_text('{"hooks": {}}\n')
-    githooks_dir = repo / ".githooks"
-    githooks_dir.mkdir()
+    githooks_dir = repo / ".claude" / "pipeline" / "githooks"
+    githooks_dir.mkdir(parents=True)
     (githooks_dir / "pre-commit").write_text("#!/bin/bash\nexit 0\n")
 
     _git("-C", str(repo), "add", ".")
     _git("-C", str(repo), "commit", "-m", "init")
 
     if set_hooks_path:
-        _git("-C", str(repo), "config", "core.hooksPath", ".githooks")
+        _git("-C", str(repo), "config", "core.hooksPath", ".claude/pipeline/githooks")
 
     return repo
 
@@ -141,7 +141,7 @@ class TestHandshakeMsysNoPathconv(unittest.TestCase):
         -> exit 1 WITH the DEPLOY-GAP banner (not the path-resolution error)."""
         with tempfile.TemporaryDirectory() as tmp:
             repo = _build_fixture(Path(tmp))
-            (repo / ".claude" / "hooks" / "session-start.sh").write_text(
+            (repo / ".claude" / "pipeline" / "hooks" / "session-start.sh").write_text(
                 "#!/bin/bash\necho MUTATED\n"
             )
             result = _run_handshake_no_pathconv(repo)

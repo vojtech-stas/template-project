@@ -19,7 +19,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.parent
 GUARD_SH = REPO_ROOT / "tools" / "worktree-guard.sh"
 CI_SH = REPO_ROOT / "tools" / "ci-checks.sh"
-SESSION_START_SH = REPO_ROOT / ".claude" / "hooks" / "session-start.sh"
+SESSION_START_SH = REPO_ROOT / ".claude" / "pipeline" / "hooks" / "session-start.sh"
 
 
 def _read(path: Path) -> str:
@@ -238,7 +238,7 @@ class TestSessionStartDevelop(unittest.TestCase):
         located relative to this script's own path (S1-c), through the
         `pwd -W` fallback idiom the other bash call sites use (#1535)."""
         self.assertIn(
-            '_SS_TOOLS_DIR="$(cd "$SCRIPT_DIR/../../tools" && { pwd -W 2>/dev/null || pwd; })"',
+            '_SS_TOOLS_DIR="$(cd "$SCRIPT_DIR/../../../tools" && { pwd -W 2>/dev/null || pwd; })"',
             self.content,
         )
         self.assertIn('PIPELINE_CONFIG_PY="$_SS_TOOLS_DIR/pipeline_config.py"', self.content)

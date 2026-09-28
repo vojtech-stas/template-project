@@ -32,7 +32,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 REPO_ROOT = Path(__file__).parent.parent
 SETTINGS_PATH = REPO_ROOT / ".claude" / "settings.json"
-HOOKS_DIR = REPO_ROOT / ".claude" / "hooks"
+HOOKS_DIR = REPO_ROOT / ".claude" / "pipeline" / "hooks"
 HEALTH_PY = REPO_ROOT / "dashboard" / "health.py"
 
 
@@ -313,22 +313,53 @@ class TestFunctionalEmptyVar(unittest.TestCase):
             return False
 
     def test_empty_var_resolves_hook(self):
-        """CLAUDE_PROJECT_DIR="" + settings.json invocation pattern → exit 0."""
+        """CLAUDE_PROJECT_DIR="" + settings.json invocation pattern → exit 0.
+
+        The invocation's own fallback resolves the repo root via
+        `git rev-parse --git-common-dir`. Run from a linked worktree that
+        would resolve to the MAIN checkout's `.git` -- a different tree that
+        may not carry this branch's own hook scripts (the #1629 round-1
+        finding: a worktree-local run silently exercised the root checkout's
+        pre-move `.claude/hooks/pre-tool-bash.sh`, not this PR's code, and so
+        passed locally while CI -- a fresh, non-worktree checkout -- was red
+        on the stale `.claude/hooks/` path this test used to hard-code).
+        Build a throwaway, self-contained git repo carrying ONLY this PR's
+        hook scripts, so `git-common-dir` inside it resolves to ITSELF no
+        matter what checkout shape the test runs from.
+        """
         if not self._bash_available():
             self.skipTest("bash not available in this environment")
 
         # Build the invocation command exactly as settings.json does after the fix:
-        # bash "${CLAUDE_PROJECT_DIR:-$(dirname "$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)")}/.claude/hooks/pre-tool-bash.sh"
+        # bash "${CLAUDE_PROJECT_DIR:-$(dirname "$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)")}/.claude/pipeline/hooks/pre-tool-bash.sh"
         hook_invocation = (
             'bash "${CLAUDE_PROJECT_DIR:-$(dirname "$(git rev-parse '
-            '--path-format=absolute --git-common-dir 2>/dev/null)")}/.claude/hooks/pre-tool-bash.sh"'
+            '--path-format=absolute --git-common-dir 2>/dev/null)")}/.claude/pipeline/hooks/pre-tool-bash.sh"'
         )
 
         with tempfile.TemporaryDirectory() as tmp:
+            throwaway_repo = Path(tmp) / "throwaway-repo"
+            throwaway_hooks = throwaway_repo / ".claude" / "pipeline" / "hooks"
+            throwaway_hooks.mkdir(parents=True)
+            for name in ("lib-root.sh", "pre-tool-bash.sh", "pre-tool-bash-classify.py"):
+                (throwaway_hooks / name).write_bytes((HOOKS_DIR / name).read_bytes())
+                (throwaway_hooks / name).chmod(0o755)
+            # pre-tool-bash-classify.py resolves its sibling tools/pipeline_config.py
+            # relative to its own file location (never cwd/toplevel) -- carry it too.
+            throwaway_tools = throwaway_repo / ".claude" / "pipeline" / "tools"
+            throwaway_tools.mkdir(parents=True)
+            pipeline_config_src = REPO_ROOT / ".claude" / "pipeline" / "tools" / "pipeline_config.py"
+            (throwaway_tools / "pipeline_config.py").write_bytes(pipeline_config_src.read_bytes())
+            subprocess.run(
+                ["git", "init", "--quiet", str(throwaway_repo)],
+                check=True, capture_output=True, timeout=15,
+            )
+
+            log_dir = Path(tmp) / "logs"
             env = os.environ.copy()
             env["CLAUDE_PROJECT_DIR"] = ""
             # Use a temp WORKFLOW_LOG_DIR so we don't pollute real logs
-            env["WORKFLOW_LOG_DIR"] = tmp
+            env["WORKFLOW_LOG_DIR"] = str(log_dir)
 
             result = subprocess.run(
                 ["bash", "-c", hook_invocation],
@@ -336,7 +367,7 @@ class TestFunctionalEmptyVar(unittest.TestCase):
                 capture_output=True,
                 text=True,
                 env=env,
-                cwd=str(REPO_ROOT),
+                cwd=str(throwaway_repo),
                 timeout=15,
             )
 

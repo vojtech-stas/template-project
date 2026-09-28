@@ -299,17 +299,17 @@ If prompt contains both `production-verify mode` AND `ui-mode`/`bash-mode` token
 | Changed-path glob | Proof class | Required proof |
 |---|---|---|
 | `dashboard/**` | **command-run** | command output excerpt + exit codes |
-| `.claude/hooks/**`, `.claude/settings.json` | **hook-fire** | happy-path proof (a pasted verbatim `ok` beacon line + exit code) AND induced-failure proof (a pasted verbatim `ERROR` beacon line shown firing) |
+| `.claude/pipeline/hooks/**`, `.claude/settings.json` | **hook-fire** | happy-path proof (a pasted verbatim `ok` beacon line + exit code) AND induced-failure proof (a pasted verbatim `ERROR` beacon line shown firing) |
 | `tools/**`, `.claude/skills/**`, `.claude/pipeline/skills/**`, `.claude/pipeline/agents/**`, `.claude/pipeline/tools/**`, `.claude/pipeline/install.sh` | **command-run** | command output excerpt + exit codes |
 | `decisions/**`, `docs/**`, `README.md` | **static** | grep count= |
 | `.github/workflows/**`, `tools/ci-checks.sh` | **command-run + failing-canary** | the command-run proof PLUS a deliberately-failing canary shown to fail before the green run |
 | `AGENTS.md`, `.agents/**` | **command-run + static** | resolver/router command output + exit codes AND static source assertions with grep count= |
 
 **Negative-path escalation rows (ADR-0061 D4):**
-- PRs touching `.claude/hooks/**` or `.claude/settings.json`: require a **happy-path proof AND an induced-failure proof** — the ERROR beacon's verbatim line must be shown firing, not merely described (ADR-0083 D4(a)). A happy-path-only proof is insufficient for hook-fire changes.
+- PRs touching `.claude/pipeline/hooks/**` or `.claude/settings.json`: require a **happy-path proof AND an induced-failure proof** — the ERROR beacon's verbatim line must be shown firing, not merely described (ADR-0083 D4(a)). A happy-path-only proof is insufficient for hook-fire changes.
 - PRs touching `.github/workflows/**` or `tools/ci-checks.sh`: require a **deliberately-failing canary** shown to fail before the final green run is evidence. A green-only run is not admissible.
 
-**Multi-glob union (ADR-0061 D1):** when a PR touches multiple glob categories, the required proof class is the **union** of all matching classes (not just the highest-priority). Document each matched glob and its required proof in REASON. Example: a PR touching both `.claude/hooks/**` and `tools/**` requires both a hook-fire happy-path+induced-failure proof AND a command-run output+exit proof.
+**Multi-glob union (ADR-0061 D1):** when a PR touches multiple glob categories, the required proof class is the **union** of all matching classes (not just the highest-priority). Document each matched glob and its required proof in REASON. Example: a PR touching both `.claude/pipeline/hooks/**` and `tools/**` requires both a hook-fire happy-path+induced-failure proof AND a command-run output+exit proof.
 
 **Tiebreak for single-route selection (legacy):** when the union is functionally identical to one route (all matched globs resolve to the same proof class), document as that route. Priority order for readability (highest → lowest): `browser > hook-fire > command-run > static`. This priority is descriptive only; the TABLE above is the authority.
 
@@ -382,9 +382,9 @@ FAIL when: any of the three assertions fails. Record which assertion(s) failed i
 
 **Step 6 — Clean up.** `rm -f /tmp/qa-pv-$$.py`.
 
-### Hook-fire route behavior (`.claude/hooks/*` / `.claude/settings.json`)
+### Hook-fire route behavior (`.claude/pipeline/hooks/*` / `.claude/settings.json`)
 
-Used when the merged diff's dominant changed-path matches `.claude/hooks/*` or `.claude/settings.json`.
+Used when the merged diff's dominant changed-path matches `.claude/pipeline/hooks/*` or `.claude/settings.json`.
 
 Cannot rely on a fresh Claude Code session to fire the hook naturally — synthesize the input:
 
@@ -395,7 +395,7 @@ Cannot rely on a fresh Claude Code session to fire the hook naturally — synthe
 **Step 3 — Fire the hook.** Run the hook script via `Bash` with the synthetic payload:
 
 ```bash
-bash .claude/hooks/<name>.sh < /tmp/hook-test-payload.json
+bash .claude/pipeline/hooks/<name>.sh < /tmp/hook-test-payload.json
 ```
 
 or supply via environment variable if the hook reads `$HOOK_PAYLOAD` — mirror the `.claude/settings.json` invocation shape.
@@ -467,7 +467,7 @@ When the table-mandated route's required tooling is unavailable in the verificat
 
 ### Hook-fire route registration-liveness assertion (per ADR-0054 D5)
 
-Before asserting the hook, verify the hook is actually registered and will fire in the live Claude Code environment. Manual script invocation (`bash .claude/hooks/<name>.sh < payload`) only proves script-correctness — NOT that Claude Code fires the hook on real events.
+Before asserting the hook, verify the hook is actually registered and will fire in the live Claude Code environment. Manual script invocation (`bash .claude/pipeline/hooks/<name>.sh < payload`) only proves script-correctness — NOT that Claude Code fires the hook on real events.
 
 **Additional step (insert between Step 1 and Step 2 of hook-fire route):**
 
@@ -580,7 +580,7 @@ No `gh issue create` in production-verify mode (no PROVISIONAL_PASS concept here
 ## References
 
 - [ADR-0020](../../../decisions/0020-qa-automation-writer-executor.md) — your primary spec for bash-mode. D1 (writer/executor split), D2 (LLM-extract + EXTRACT_FAILED), D3 (sequential walk + tool boundaries — D3 tool-boundary clause narrowed by ADR-0025 D1 to add browser tools for ui-mode; all other ADR-0020 decisions preserved), D4 (plan persisted as PRD comment), D5 (auto-close on all-PASS + all-judgment-ACCEPT), D9 (generator role, critic-parsimony honored), D10 (refines ADR-0003 D4 terminal human checkpoint).
-- [ADR-0025](../../../decisions/0025-qa-tester-ui-mode-playwright.md) — primary spec for ui-mode structure. D1 (dual-mode contract + tool-boundary narrowing of ADR-0020 D3), D2 (driver choice — **superseded by ADR-0050 D1**; headless Playwright/Chrome replaces Claude_Preview), D3 (LLM-judges results — PASS/PROVISIONAL_PASS/FAIL verdict shape), D4 (PROVISIONAL_PASS auto-captures + `/promote-to-backlog` inline), D5 (dogfood self-test on every invocation; tool calls updated per ADR-0050 D3), D6 (critic-parsimony honored — no new critic), D7 (bootstrap.sh Playwright library install — **reinstated** per ADR-0050 D1: `pip install playwright` only; no chromium binary), D8 (bootstrap-mode forward-only), D9 (cascade-doc updates).
+- [ADR-0025](../../../decisions/0025-qa-tester-ui-mode-playwright.md) — primary spec for ui-mode structure. D1 (dual-mode contract + tool-boundary narrowing of ADR-0020 D3), D2 (driver choice — **superseded by ADR-0050 D1**; headless Playwright/Chrome replaces Claude_Preview), D3 (LLM-judges results — PASS/PROVISIONAL_PASS/FAIL verdict shape), D4 (PROVISIONAL_PASS auto-captures + `/promote-to-backlog` inline), D5 (dogfood self-test on every invocation; tool calls updated per ADR-0050 D3), D6 (critic-parsimony honored — no new critic), D7 (.claude/pipeline/bootstrap.sh Playwright library install — **reinstated** per ADR-0050 D1: `pip install playwright` only; no chromium binary), D8 (bootstrap-mode forward-only), D9 (cascade-doc updates).
 - [ADR-0050](../../../decisions/0050-headless-playwright-browser-driver.md) — driver swap spec. D1 (headless Playwright/Chrome replaces Claude_Preview MCP, supersedes ADR-0049 D1/D2); D2 (tool-boundary update — browser route via Bash-executed Playwright Python scripts; Claude_Preview MCP tools dropped); D3 (dogfood self-test updated to headless Playwright); D4 (ADR-0049 D4 fallback chain obsoleted — headless has no hidden-window timeout); D5 (parsimony + caps honored, no new critic, qa-tester stays a generator).
 - [ADR-0049](../../../decisions/0049-claude-preview-browser-driver.md) — **superseded** by ADR-0050 D1/D2 (Claude_Preview driver choice + tool-boundary). D3 (proof-posting: orchestrator commits proof, qa-tester returns the path) is PRESERVED (scope formalized by ADR-0084). D4 (screenshot fallback chain) is OBSOLETED. D5 (parsimony) is PRESERVED.
 - [ADR-0005](../../../decisions/0005-output-shape-and-slicing-methodology.md) D1c — canonical GENERATOR trailer shape; per-agent extensions for both modes named here (bash-mode: PASS/FAIL/JUDGMENT/EXTRACT_FAILED_COUNT; ui-mode: UI_PASS/UI_PROVISIONAL_PASS/UI_FAIL_COUNT + UI_CAPTURED_ISSUES).

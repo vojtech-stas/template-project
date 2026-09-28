@@ -22,7 +22,7 @@
 #
 #   root-sync
 #     Resolves the root repo via `git --git-common-dir` → dirname (same pattern as
-#     .claude/hooks/log-event.sh). If the root tree is clean, ff-syncs to
+#     .claude/pipeline/hooks/log-tool-event.sh). If the root tree is clean, ff-syncs to
 #     origin/<integration>: `git -C <root> checkout <integration> &&
 #     git -C <root> merge --ff-only origin/<integration>`.
 #     STRICT: ff-only, clean-only, non-zero on failure. Never reset/force/non-ff.

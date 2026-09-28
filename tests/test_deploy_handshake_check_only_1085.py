@@ -61,7 +61,7 @@ def _run_handshake(repo: Path, *extra_args):
     )
 
 
-def _build_fixture(tmp_path: Path, hooks_path_value: str = ".githooks") -> Path:
+def _build_fixture(tmp_path: Path, hooks_path_value: str = ".claude/pipeline/githooks") -> Path:
     """Synthetic repo: .claude/hooks/session-start.sh + .claude/settings.json
     + .githooks/, committed on 'main'. hooks_path_value is written verbatim
     to core.hooksPath (mirrors test_deploy_handshake_1079.py's fixture, with
@@ -75,12 +75,12 @@ def _build_fixture(tmp_path: Path, hooks_path_value: str = ".githooks") -> Path:
     _git("-C", str(repo), "config", "user.email", "test@example.com")
     _git("-C", str(repo), "config", "user.name", "Test")
 
-    hooks_dir = repo / ".claude" / "hooks"
+    hooks_dir = repo / ".claude" / "pipeline" / "hooks"
     hooks_dir.mkdir(parents=True)
     (hooks_dir / "session-start.sh").write_text("#!/bin/bash\necho hi\n")
     (repo / ".claude" / "settings.json").write_text('{"hooks": {}}\n')
-    githooks_dir = repo / ".githooks"
-    githooks_dir.mkdir()
+    githooks_dir = repo / ".claude" / "pipeline" / "githooks"
+    githooks_dir.mkdir(parents=True)
     (githooks_dir / "pre-commit").write_text("#!/bin/bash\nexit 0\n")
 
     _git("-C", str(repo), "add", ".")
@@ -115,7 +115,7 @@ class TestCheckOnlyNeverBlocks(unittest.TestCase):
         reported as STATUS: FAIL (data), never as a non-zero process exit."""
         with tempfile.TemporaryDirectory() as tmp:
             repo = _build_fixture(Path(tmp))
-            (repo / ".claude" / "hooks" / "session-start.sh").write_text(
+            (repo / ".claude" / "pipeline" / "hooks" / "session-start.sh").write_text(
                 "#!/bin/bash\necho MUTATED\n"
             )
             result = _run_handshake(repo, "--check-only")
@@ -163,7 +163,7 @@ class TestHooksPathIdentityComparison(unittest.TestCase):
 
     def test_relative_hooks_path_passes(self):
         with tempfile.TemporaryDirectory() as tmp:
-            repo = _build_fixture(Path(tmp), hooks_path_value=".githooks")
+            repo = _build_fixture(Path(tmp), hooks_path_value=".claude/pipeline/githooks")
             result = _run_handshake(repo, "--check-only")
         self.assertIn("STATUS: PASS", result.stdout, msg=result.stdout)
 
@@ -172,7 +172,7 @@ class TestHooksPathIdentityComparison(unittest.TestCase):
         #1093 shape) must PASS, not false-flag a deploy-gap."""
         with tempfile.TemporaryDirectory() as tmp:
             repo = _build_fixture(Path(tmp), hooks_path_value=None)
-            abs_githooks = str((repo / ".githooks").resolve())
+            abs_githooks = str((repo / ".claude" / "pipeline" / "githooks").resolve())
             _git("-C", str(repo), "config", "core.hooksPath", abs_githooks)
             result = _run_handshake(repo, "--check-only")
         self.assertIn(

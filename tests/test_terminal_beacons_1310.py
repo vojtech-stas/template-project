@@ -87,9 +87,9 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PRE_TOOL_EDIT = REPO_ROOT / ".claude" / "hooks" / "pre-tool-edit.sh"
-STOP_GATE = REPO_ROOT / ".claude" / "hooks" / "stop-reviewer-gate.sh"
-PRE_TOOL_BASH = REPO_ROOT / ".claude" / "hooks" / "pre-tool-bash.sh"
+PRE_TOOL_EDIT = REPO_ROOT / ".claude" / "pipeline" / "hooks" / "pre-tool-edit.sh"
+STOP_GATE = REPO_ROOT / ".claude" / "pipeline" / "hooks" / "stop-reviewer-gate.sh"
+PRE_TOOL_BASH = REPO_ROOT / ".claude" / "pipeline" / "hooks" / "pre-tool-bash.sh"
 
 # Synthetic id — must never reach a production data store (CLAUDE.md rule #21).
 FIXTURE_SID = "live-fire-1310-fixture"

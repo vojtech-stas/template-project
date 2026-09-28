@@ -74,7 +74,7 @@ These checks are queryable via the health check registry
 
 **Promotion event log:** each promotion appends a `{"v":2,"event":"promotion","from":"<integration>","to":"<release>","sha":"..."}` event to `.claude/logs/workflow-events.jsonl` (recorded, CLI-queryable; this repo's configured values render as `"from":"develop","to":"main"`).
 
-The sole human-blocking role in this model is acking guardrail-machinery promotions (batches touching `.github/workflows/**`, `.claude/settings.json`, `.claude/hooks/**`, `tools/ci-checks.sh`, `.githooks/**`, `*-critic.md`, or the promotion gate itself). The `R-SENSITIVE-DETECTOR` health row tallies these and their ack status. Per ADR-0070 D4.
+The sole human-blocking role in this model is acking guardrail-machinery promotions (batches touching `.github/workflows/**`, `.claude/settings.json`, `.claude/pipeline/hooks/**`, `tools/ci-checks.sh`, `.claude/pipeline/githooks/**`, `*-critic.md`, or the promotion gate itself). The `R-SENSITIVE-DETECTOR` health row tallies these and their ack status. Per ADR-0070 D4.
 
 ## Fixtures
 

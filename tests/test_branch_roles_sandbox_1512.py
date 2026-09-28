@@ -48,9 +48,9 @@ except ImportError:
     pytest = None
 
 REPO_ROOT = Path(__file__).parent.parent
-PRE_COMMIT = REPO_ROOT / ".githooks" / "pre-commit"
-PRE_TOOL_BASH = REPO_ROOT / ".claude" / "hooks" / "pre-tool-bash.sh"
-SESSION_START_SH = REPO_ROOT / ".claude" / "hooks" / "session-start.sh"
+PRE_COMMIT = REPO_ROOT / ".claude" / "pipeline" / "githooks" / "pre-commit"
+PRE_TOOL_BASH = REPO_ROOT / ".claude" / "pipeline" / "hooks" / "pre-tool-bash.sh"
+SESSION_START_SH = REPO_ROOT / ".claude" / "pipeline" / "hooks" / "session-start.sh"
 DASHBOARD_DIR = REPO_ROOT / "dashboard"
 
 

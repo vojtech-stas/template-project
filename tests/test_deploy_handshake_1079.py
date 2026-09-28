@@ -1,11 +1,11 @@
 """
 Regression tests for slice #1079 — deploy-gap immunity handshake.
 
-tools/deploy-handshake.sh compares the RUNNING content of .claude/hooks/ +
+tools/deploy-handshake.sh compares the RUNNING content of .claude/pipeline/hooks/ +
 .claude/settings.json (resolved from git-common-dir parent — the checkout
 hooks actually execute from) against the DEPLOYED branch's committed content
 (the branch the root checkout's HEAD tracks). Per PRD #1075 criterion 4:
-MATCH -> exit 0; MISMATCH, DETACHED HEAD, or hooksPath != .githooks -> LOUD
+MATCH -> exit 0; MISMATCH, DETACHED HEAD, or hooksPath != .claude/pipeline/githooks -> LOUD
 banner + exit 1.
 
 All fixtures are synthetic temp git repos (via Python's tempfile module) —
@@ -68,9 +68,9 @@ class TestDeployHandshake(unittest.TestCase):
         # the test-before-impl acceptance criterion ("fails before, passes after").
 
     def _build_fixture(self, tmp_path: Path, set_hooks_path: bool = True) -> Path:
-        """Synthetic repo: .claude/hooks/session-start.sh + .claude/settings.json
-        + .githooks/, committed on 'main', with core.hooksPath configured
-        (unless set_hooks_path=False)."""
+        """Synthetic repo: .claude/pipeline/hooks/session-start.sh + .claude/settings.json
+        + .claude/pipeline/githooks/, committed on 'main', with core.hooksPath
+        configured (unless set_hooks_path=False)."""
         repo = tmp_path / "repo"
         repo.mkdir()
         r = _git("init", "-b", "main", str(repo), check=False)
@@ -81,19 +81,19 @@ class TestDeployHandshake(unittest.TestCase):
         _git("-C", str(repo), "config", "user.email", "test@example.com")
         _git("-C", str(repo), "config", "user.name", "Test")
 
-        hooks_dir = repo / ".claude" / "hooks"
+        hooks_dir = repo / ".claude" / "pipeline" / "hooks"
         hooks_dir.mkdir(parents=True)
         (hooks_dir / "session-start.sh").write_text("#!/bin/bash\necho hi\n")
         (repo / ".claude" / "settings.json").write_text('{"hooks": {}}\n')
-        githooks_dir = repo / ".githooks"
-        githooks_dir.mkdir()
+        githooks_dir = repo / ".claude" / "pipeline" / "githooks"
+        githooks_dir.mkdir(parents=True)
         (githooks_dir / "pre-commit").write_text("#!/bin/bash\nexit 0\n")
 
         _git("-C", str(repo), "add", ".")
         _git("-C", str(repo), "commit", "-m", "init")
 
         if set_hooks_path:
-            _git("-C", str(repo), "config", "core.hooksPath", ".githooks")
+            _git("-C", str(repo), "config", "core.hooksPath", ".claude/pipeline/githooks")
 
         return repo
 
@@ -116,7 +116,7 @@ class TestDeployHandshake(unittest.TestCase):
         """A hook file mutated on disk (uncommitted) -> exit 1 + banner."""
         with tempfile.TemporaryDirectory() as tmp:
             repo = self._build_fixture(Path(tmp))
-            (repo / ".claude" / "hooks" / "session-start.sh").write_text(
+            (repo / ".claude" / "pipeline" / "hooks" / "session-start.sh").write_text(
                 "#!/bin/bash\necho MUTATED\n"
             )
             result = _run_handshake(repo)
@@ -146,7 +146,7 @@ class TestDeployHandshake(unittest.TestCase):
 
     # (d) hooksPath unset -> exit 1
     def test_hooks_path_unset_exits_nonzero(self):
-        """core.hooksPath unset (.githooks/install.sh never run) -> exit 1."""
+        """core.hooksPath unset (.claude/pipeline/githooks/install.sh never run) -> exit 1."""
         with tempfile.TemporaryDirectory() as tmp:
             repo = self._build_fixture(Path(tmp), set_hooks_path=False)
             result = _run_handshake(repo)

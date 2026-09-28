@@ -280,7 +280,7 @@ def _build_component_map() -> str:
     lines.append("### Hooks\n")
     lines.append(
         "Claude Code session hooks configured in `.claude/settings.json`"
-        " (scripts in `.claude/hooks/`):\n"
+        " (scripts in `.claude/pipeline/hooks/`):\n"
     )
     if hooks:
         seen_hooks = set()

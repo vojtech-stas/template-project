@@ -22,9 +22,9 @@ This repo is designed to be cloned under your own owner/name and run as-is — n
    ```
 3. **Run bootstrap** — creates all required labels (including `needs-human-check`), installs git hooks via `core.hooksPath`, checks that `gh`, `git`, and `python3` are on your PATH, creates the configured integration branch from the release branch's tip if your clone doesn't already have one, and applies branch protection R1+R2+R4 to both configured branches (per [ADR-0089](decisions/0089-per-repo-pipeline-identity.md) D1/D2 — this repo's configured pair is `develop`/`main`; a fresh template clone gets `develop`/`main` too unless you edit `.claude/pipeline.conf`):
    ```bash
-   bash bootstrap.sh
+   bash .claude/pipeline/bootstrap.sh
    ```
-4. **Optionally create a project board** — `bootstrap.sh` detects an existing GitHub Project v2 board named "project-claude"; create one via `gh project create --title "project-claude"` if you want the Backlog/Captured columns. The pipeline works without it, but the board gives you a visual queue.
+4. **Optionally create a project board** — `.claude/pipeline/bootstrap.sh` detects an existing GitHub Project v2 board named "project-claude"; create one via `gh project create --title "project-claude"` if you want the Backlog/Captured columns. The pipeline works without it, but the board gives you a visual queue.
 5. **Open in Claude Code** — `CLAUDE.md` auto-loads; the agents are oriented. Start with `/grill-me` for your first feature.
 
 **Runtime identity — nothing to configure.** `dashboard/collector.py` resolves the repo slug via `gh repo view --json nameWithOwner` (with a `git remote get-url origin` parse fallback). Every API payload, PR link, and escalation mention derives from that single source at runtime. For unusual multi-remote or CI setups, set the `DASH_REPO_SLUG` environment variable (e.g. `DASH_REPO_SLUG=my-org/my-repo`) to override resolution.
@@ -67,7 +67,7 @@ A literal walkthrough of the first full feature cycle. Pick something tiny — e
 ```bash
 git clone https://github.com/<your-owner>/<your-repo> my-new-project
 cd my-new-project
-./bootstrap.sh         # creates labels, installs git hooks, applies branch protection
+./.claude/pipeline/bootstrap.sh         # creates labels, installs git hooks, applies branch protection
 ```
 
 **2. Open the repo in Claude Code.** `CLAUDE.md` auto-loads; the agents are oriented.
@@ -259,7 +259,7 @@ The loop convention (generator proposes → critic challenges against explicit r
 
 Per [ADR-0004](decisions/0004-bypass-prevention.md) D3, three independent failure-domain defenses prevent the pipeline from being bypassed:
 
-1. **Pre-commit hook** — [`.githooks/pre-commit`](.githooks/pre-commit) checks branch-name regex and refuses commits to `main`. Install with `.githooks/install.sh` (idempotent `git config core.hooksPath .githooks`).
+1. **Pre-commit hook** — [`.claude/pipeline/githooks/pre-commit`](.claude/pipeline/githooks/pre-commit) checks branch-name regex and refuses commits to `main`. Install with `.claude/pipeline/githooks/install.sh` (idempotent `git config core.hooksPath .claude/pipeline/githooks`).
 2. **Branch protection R1 + R2** — live on `develop`: no direct push (R1), require pull request (R2). `main` advances only via the promotion gate (`tools/promote.sh` + `RELEASE-READY`; per ADR-0070 D1). R4 (required CI status checks) is live per [ADR-0042](decisions/0042-github-actions-ci-gate-r4.md); R3 (required approving reviews) remains deferred to a future PRD that adds bot identity.
 3. **Reviewer rule R-CLOSES** — PRs without `Closes #<slice-issue>` referencing a valid `slice`-labeled issue are BLOCKed at review time.
 
@@ -271,7 +271,7 @@ The pipeline is complemented at the Claude Code session level by **hooks** ([`.c
 
 **Layer 4 — Claude Code session hooks** (per [ADR-0023](decisions/0023-validation-and-notification-hooks-extension.md), extending [ADR-0015](decisions/0015-claude-code-hooks-adoption.md) D6; 5 hooks across the full ADR-0015 → ADR-0023 → ADR-0028 → ADR-0029 → ADR-0030 wave):
 
-1. **SessionStart state injection** — [`.claude/hooks/session-start.sh`](.claude/hooks/session-start.sh) emits `additionalContext` with branch + divergence vs `origin/develop` + recent commits + open slice/PR/captured counts; mitigates the recurring stale-worktree false-alarm (#173) at the moment of session start.
+1. **SessionStart state injection** — [`.claude/pipeline/hooks/session-start.sh`](.claude/pipeline/hooks/session-start.sh) emits `additionalContext` with branch + divergence vs `origin/develop` + recent commits + open slice/PR/captured counts; mitigates the recurring stale-worktree false-alarm (#173) at the moment of session start.
 2. **PreToolUse rule-#10 escalation** — `PreToolUse(Edit|MultiEdit|Write)` emits `permissionDecision: "ask"` when the main agent (not a subagent) writes a tracked file; preserves trivial-lane I3 ergonomics over hard-deny.
 3. **PreToolUse dangerous-git deny** — `PreToolUse(Bash)` emits `permissionDecision: "deny"` on `git push ... origin main` (any flavor), mechanically enforcing rule #4.
 4. **UserPromptSubmit grill-suggestion** — feature-request-shaped prompts get a non-blocking nudge toward `/grill-me` before `/ship` if the prompt does not already invoke a pipeline command.
@@ -280,8 +280,8 @@ The pipeline is complemented at the Claude Code session level by **hooks** ([`.c
 **Recent hook wave (ADR-0028–ADR-0030):**
 
 - [ADR-0028](decisions/0028-pretooluse-spec-gate.md) — **PreToolUse spec-existence gate** (spec-gate): artifact-gated enforcement of rule #10; BLOCKs tracked-file edits when no in-flight PRD/slice issue + matching branch exist; extends [ADR-0023](decisions/0023-validation-and-notification-hooks-extension.md) D3 with a deny-layer before the existing ask fallback; trivial-lane (`hotfix/`) carveout preserved.
-- [ADR-0029](decisions/0029-stop-reviewer-signoff-gate.md) — **Stop reviewer-signoff gate** (`stop-reviewer-gate.sh`): the 5th `.claude/hooks/` script in the wave hooks sequence; blocks session-stop without reviewer `APPROVE`; `STOP_GATE_BYPASS=1` override.
-- [ADR-0030](decisions/0030-windows-gitbash-hardening.md) — **Windows Git Bash hardening**: `bootstrap.sh` adds idempotent jq install; the Playwright-MCP install was later deprecated per ADR-0049 D1 (Claude_Preview is harness-provided); `pre-tool-edit.sh` allowlist restructured for `/` and `\` portability.
+- [ADR-0029](decisions/0029-stop-reviewer-signoff-gate.md) — **Stop reviewer-signoff gate** (`stop-reviewer-gate.sh`): the 5th `.claude/pipeline/hooks/` script in the wave hooks sequence; blocks session-stop without reviewer `APPROVE`; `STOP_GATE_BYPASS=1` override.
+- [ADR-0030](decisions/0030-windows-gitbash-hardening.md) — **Windows Git Bash hardening**: `.claude/pipeline/bootstrap.sh` adds idempotent jq install; the Playwright-MCP install was later deprecated per ADR-0049 D1 (Claude_Preview is harness-provided); `pre-tool-edit.sh` allowlist restructured for `/` and `\` portability.
 
 **Workflow event log.** Per [ADR-0016](decisions/0016-workflow-event-log-jsonl.md), three additional hooks (`PostToolUse(Agent)`, `PostToolUse(Bash)`, `Stop`) append JSONL events to [`.claude/logs/workflow-events.jsonl`](.claude/logs/) for run-time observability — which subagents fired, which bash commands ran, where session boundaries fell. Greppable from any session (`grep '"event":"agent_complete"' .claude/logs/workflow-events.jsonl`) and read by future audit-meta tooling.
 
@@ -294,11 +294,11 @@ The critics and the output-emitting skills (`slicer`, `qa-plan`, `ship`) conform
 ```bash
 git clone https://github.com/<your-owner>/<your-repo> my-new-project
 cd my-new-project
-./bootstrap.sh         # one-time: labels, git hooks, branch protection (idempotent)
+./.claude/pipeline/bootstrap.sh         # one-time: labels, git hooks, branch protection (idempotent)
 # open in Claude Code — CLAUDE.md auto-loads, the agents are oriented
 ```
 
-[`bootstrap.sh`](bootstrap.sh) is the canonical fresh-clone setup per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6 (branch-role steps per [ADR-0089](decisions/0089-per-repo-pipeline-identity.md) D2): it creates the 6 repo labels (`prd`, `slice`, `backlog`, `captured`, `trivial`, `needs-human`), installs the pre-commit hook via `core.hooksPath`, detects the GitHub Project v2 board, creates the configured integration branch from the release branch's tip when your clone doesn't already have one, and applies branch protection R1+R2+R4 to both configured branches. Every step is idempotent (safe to re-run) and best-effort (single-step failures warn-and-continue).
+[`.claude/pipeline/bootstrap.sh`](.claude/pipeline/bootstrap.sh) is the canonical fresh-clone setup per [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6 (branch-role steps per [ADR-0089](decisions/0089-per-repo-pipeline-identity.md) D2): it creates the 6 repo labels (`prd`, `slice`, `backlog`, `captured`, `trivial`, `needs-human`), installs the pre-commit hook via `core.hooksPath`, detects the GitHub Project v2 board, creates the configured integration branch from the release branch's tip when your clone doesn't already have one, and applies branch protection R1+R2+R4 to both configured branches. Every step is idempotent (safe to re-run) and best-effort (single-step failures warn-and-continue).
 
 Then: `/grill-me` to start a new feature, `/ship` to hand off to the autonomous pipeline, `/qa-plan` to verify when the last slice merges.
 
@@ -310,8 +310,8 @@ Then: `/grill-me` to start a new feature, `/ship` to hand off to the autonomous 
 
 All operational content lives in skills + subagents + CLAUDE.md + ADRs; no separate KB layer per [ADR-0032](decisions/0032-workflow-only-architecture.md).
 
-- **[`bootstrap.sh`](bootstrap.sh)** — fresh-clone setup script (labels, git hooks, branch protection); see [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6.
-- **[`.githooks/`](.githooks/)** — workflow-enforcement pre-commit hook.
+- **[`.claude/pipeline/bootstrap.sh`](.claude/pipeline/bootstrap.sh)** — fresh-clone setup script (labels, git hooks, branch protection); see [ADR-0008](decisions/0008-workflow-autolog-bootstrap-and-naming.md) D6.
+- **[`.claude/pipeline/githooks/`](.claude/pipeline/githooks/)** — workflow-enforcement pre-commit hook.
 - This README.
 
 ### Observability
@@ -352,15 +352,15 @@ Specialist agents under `.claude/pipeline/agents/` (ADR-0092 D1):
 
 ### Hooks
 
-Claude Code session hooks configured in `.claude/settings.json` (scripts in `.claude/hooks/`):
+Claude Code session hooks configured in `.claude/settings.json` (scripts in `.claude/pipeline/hooks/`):
 
-- **[`session-start`](.claude/hooks/session-start.sh)** (`SessionStart`) — session-start.sh — deterministic read-only session context injection.
-- **[`user-prompt-submit`](.claude/hooks/user-prompt-submit.sh)** (`UserPromptSubmit`) — UserPromptSubmit hook — nudge feature-request prompts toward /grill-me per ADR-0023 D5.
-- **[`pre-tool-edit`](.claude/hooks/pre-tool-edit.sh)** (`PreToolUse · Edit|MultiEdit|Write`) — PreToolUse(Edit|MultiEdit|Write) hook — extended per ADR-0028 with spec-gate;
-- **[`pre-tool-bash`](.claude/hooks/pre-tool-bash.sh)** (`PreToolUse · Bash`) — PreToolUse(Bash) hook — deny-guard for dangerous git ops and incident-backed pipeline bypasses.
-- **[`auto`](.claude/hooks/log-tool-event.sh)** (`PreToolUse · Agent|Skill`) — log-tool-event.sh — parameterized python3-based hook logger (PRD #668 slice #669).
-- **[`auto`](.claude/hooks/log-tool-event.sh)** (`PostToolUse · Agent|Bash|AskUserQuestion|Edit|MultiEdit|Write`) — log-tool-event.sh — parameterized python3-based hook logger (PRD #668 slice #669).
-- **[`stop-reviewer-gate`](.claude/hooks/stop-reviewer-gate.sh)** (`Stop`) — Stop event hook — block session-stop if in-flight PR lacks reviewer subagent APPROVE per ADR-0029.
+- **[`session-start`](.claude/pipeline/hooks/session-start.sh)** (`SessionStart`) — session-start.sh — deterministic read-only session context injection.
+- **[`user-prompt-submit`](.claude/pipeline/hooks/user-prompt-submit.sh)** (`UserPromptSubmit`) — UserPromptSubmit hook — nudge feature-request prompts toward /grill-me per ADR-0023 D5.
+- **[`pre-tool-edit`](.claude/pipeline/hooks/pre-tool-edit.sh)** (`PreToolUse · Edit|MultiEdit|Write`) — PreToolUse(Edit|MultiEdit|Write) hook — extended per ADR-0028 with spec-gate;
+- **[`pre-tool-bash`](.claude/pipeline/hooks/pre-tool-bash.sh)** (`PreToolUse · Bash`) — PreToolUse(Bash) hook — deny-guard for dangerous git ops and incident-backed pipeline bypasses.
+- **[`auto`](.claude/pipeline/hooks/log-tool-event.sh)** (`PreToolUse · Agent|Skill`) — log-tool-event.sh — parameterized python3-based hook logger (PRD #668 slice #669).
+- **[`auto`](.claude/pipeline/hooks/log-tool-event.sh)** (`PostToolUse · Agent|Bash|AskUserQuestion|Edit|MultiEdit|Write`) — log-tool-event.sh — parameterized python3-based hook logger (PRD #668 slice #669).
+- **[`stop-reviewer-gate`](.claude/pipeline/hooks/stop-reviewer-gate.sh)** (`Stop`) — Stop event hook — block session-stop if in-flight PR lacks reviewer subagent APPROVE per ADR-0029.
 
 ### Architecture Decision Records
 

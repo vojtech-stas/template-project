@@ -1275,6 +1275,11 @@ _GUARDRAIL_PATHS: tuple = (
     ".claude/hooks/",
     "tools/ci-checks.sh",
     ".githooks/",
+    # Package hooks/githooks SOURCES (ADR-0092 D1/D2, slice #1605) — the
+    # pre-move members above stay: a promotion diff spanning the move still
+    # names them.
+    ".claude/pipeline/hooks/",
+    ".claude/pipeline/githooks/",
     # Critic agent prompts (pre-move paths stay: a promotion diff spanning
     # the ADR-0092 D1 move still names them, slice #1604)
     ".claude/agents/reviewer.md",
@@ -2130,7 +2135,7 @@ def _build_hook_trio_composite(
     what_to_do_str = (
         "Check sub-signals: CAPTURE-SLO (sessions with live events), "
         "HOOK-INTEGRITY (attempt-vs-ok ratio), HOOK-LIVENESS (beacon lag). "
-        "See .claude/hooks/ and .claude/logs/hook-fires.jsonl."
+        "See .claude/pipeline/hooks/ and .claude/logs/hook-fires.jsonl."
     ) if rollup != "PASS" else ""
     return {
         "id": "TELEMETRY-LIVE",
@@ -2684,7 +2689,7 @@ def check_rule_coverage() -> dict:
 
     Path A — inline signal in CLAUDE.md text (legacy heuristic, preserved):
       - "CI grep", "ci-checks", "tools/ci-checks"
-      - "hook validation", "pre-commit", ".claude/hooks"
+      - "hook validation", "pre-commit", ".claude/hooks", ".claude/pipeline/hooks"
       - "dashboard evaluator", "health check", "trail evaluator"
       - "output-contract", "trailer schema"
       - "reviewer rule", "R-RULE", "(Mechanized by", "(Enforced at", "(enforced by"
@@ -2723,7 +2728,7 @@ def check_rule_coverage() -> dict:
     # Path A: Coverage signals — one match anywhere in the rule's line-block is sufficient.
     _COVERAGE_SIGNALS = (
         "CI grep", "ci-checks", "tools/ci-checks",
-        "hook validation", "pre-commit", ".claude/hooks",
+        "hook validation", "pre-commit", ".claude/hooks", ".claude/pipeline/hooks",
         "dashboard evaluator", "health check", "trail evaluator",
         "output-contract", "trailer schema",
         "reviewer rule", "R-RULE", "(Mechanized by", "(Enforced at", "(enforced by",
@@ -3203,7 +3208,11 @@ _ROUTE_TABLE = [
     # is a command-line library. *.html stays browser for host UIs.
     ("dashboard/**", "command-run"),
     ("*.html", "browser"),
+    # Pre-move members stay: a promotion diff spanning the ADR-0092 D1
+    # .claude/hooks/ -> .claude/pipeline/hooks/ and bootstrap.sh ->
+    # .claude/pipeline/bootstrap.sh move (slice #1605) still names them.
     (".claude/hooks/**", "hook-fire"),
+    (".claude/pipeline/hooks/**", "hook-fire"),
     (".claude/settings.json", "hook-fire"),
     ("tools/**", "command-run"),
     (".claude/skills/**", "command-run"),
@@ -3216,6 +3225,7 @@ _ROUTE_TABLE = [
     ("*.md", "static"),
     ("CLAUDE.md", "static"),
     ("bootstrap.sh", "static"),
+    (".claude/pipeline/bootstrap.sh", "static"),
 ]
 
 # Proof tokens per route class (ADR-0061 D1 / rule #20).

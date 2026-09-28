@@ -37,7 +37,7 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).parent.parent
-HOOK = REPO_ROOT / ".claude" / "hooks" / "pre-tool-bash.sh"
+HOOK = REPO_ROOT / ".claude" / "pipeline" / "hooks" / "pre-tool-bash.sh"
 
 
 def _resolve_jq_dir():

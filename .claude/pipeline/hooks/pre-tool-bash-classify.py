@@ -36,7 +36,7 @@ BOUNDARY_TOKENS = {";", "&", "&&", "|", "||"}
 ENV_PREFIX_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_]*=')
 
 _THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-_PIPELINE_CONFIG_PY = os.path.join(_THIS_DIR, "..", "..", "tools", "pipeline_config.py")
+_PIPELINE_CONFIG_PY = os.path.join(_THIS_DIR, "..", "tools", "pipeline_config.py")
 
 
 def _load_pipeline_config():

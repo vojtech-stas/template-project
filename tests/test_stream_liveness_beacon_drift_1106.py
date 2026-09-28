@@ -38,7 +38,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).parent.parent
 DASHBOARD_DIR = REPO_ROOT / "dashboard"
 SETTINGS_PATH = REPO_ROOT / ".claude" / "settings.json"
-HOOKS_DIR = REPO_ROOT / ".claude" / "hooks"
+HOOKS_DIR = REPO_ROOT / ".claude" / "pipeline" / "hooks"
 
 sys.path.insert(0, str(DASHBOARD_DIR))
 from discovery import _event_type_from_cmd, _read_hook_name  # noqa: E402

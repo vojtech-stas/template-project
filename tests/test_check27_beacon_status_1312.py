@@ -77,7 +77,7 @@ def _run_check27(source: str, fixture_root: Path):
 
 
 def _hooks_dir(fixture_root: Path) -> Path:
-    d = fixture_root / ".claude" / "hooks"
+    d = fixture_root / ".claude" / "pipeline" / "hooks"
     d.mkdir(parents=True, exist_ok=True)
     return d
 

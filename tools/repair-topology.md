@@ -18,9 +18,9 @@ Common triggers per PRD #1075 criterion 4:
   this IS the deploy-gap state the PRD's forensic audit found: the #879 hook
   consolidation shipped six weeks ago and never executed once because the
   root checkout sat detached at an old sha).
-- `core.hooksPath` is not `.githooks` (`.githooks/install.sh` was never run,
+- `core.hooksPath` is not `.claude/pipeline/githooks` (`.claude/pipeline/githooks/install.sh` was never run,
   or ran against the wrong checkout).
-- The on-disk content of `.claude/hooks/` or `.claude/settings.json` differs
+- The on-disk content of `.claude/pipeline/hooks/` or `.claude/settings.json` differs
   from what is committed on the branch the root checkout's `HEAD` names.
 
 ## Repair steps
@@ -41,9 +41,9 @@ Common triggers per PRD #1075 criterion 4:
    the correct, safe failure mode; a real divergence needs human judgment,
    not an automated force-move.
 
-3. **Install `.githooks` as `core.hooksPath`.**
+3. **Install `.claude/pipeline/githooks` as `core.hooksPath`.**
    ```
-   bash .githooks/install.sh
+   bash .claude/pipeline/githooks/install.sh
    ```
 
 4. **Re-run the handshake — it MUST pass.**
@@ -51,8 +51,8 @@ Common triggers per PRD #1075 criterion 4:
    bash tools/deploy-handshake.sh
    ```
    Exit 0 confirms: `HEAD` resolves to `refs/heads/main` (attached, not
-   detached), `core.hooksPath` is `.githooks`, and the running
-   `.claude/hooks/` + `.claude/settings.json` content matches what is
+   detached), `core.hooksPath` is `.claude/pipeline/githooks`, and the running
+   `.claude/pipeline/hooks/` + `.claude/settings.json` content matches what is
    committed on `main`. If it still fails, do not consider the repair done —
    diagnose the reported mismatch before closing out.
 

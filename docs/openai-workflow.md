@@ -208,7 +208,7 @@ the full integrated production checks and all children are complete.
 Generate/stage docs explicitly, commit with normal hooks and truthful authorship,
 run CI after the final commit, push the assigned branch, then use
 tools/pipe/pr-open --base develop. If core.hooksPath is unset, use the per-command
-git -c core.hooksPath=.githooks commit; never bypass hooks or alter shared config.
+git -c core.hooksPath=.claude/pipeline/githooks commit; never bypass hooks or alter shared config.
 Only the independent reviewer invokes pr-merge after its APPROVE and required CI.
 Closes references targeting develop do not prove issue closure (#1232).
 
