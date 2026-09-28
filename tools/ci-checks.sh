@@ -1163,7 +1163,7 @@ else
     fi
 fi
 
-GRILL_SKILL=".claude/skills/grill-me/SKILL.md"
+GRILL_SKILL=".claude/pipeline/skills/grill-me/SKILL.md"
 if [ ! -f "$GRILL_SKILL" ]; then
     fail "CHECK 24b: $GRILL_SKILL not found"
 else
@@ -1746,6 +1746,37 @@ else
     else
         echo "$CHECK29_OUTPUT" >&2
         fail "CHECK 29 (REPO-IDENTITY-LITERALS): branch-name or history-anchor literal(s) found (ADR-0089 D1/D4)"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# CHECK 30: PACKAGE-INTEGRITY (PRD "Make the pipeline an installable,
+# upgradeable package" / slice #1603, ADR-0092 D1-D3). Fails CLOSED — this
+# check never prints SKIP: a missing python3, dashboard/health.py or
+# .claude/pipeline/tools/package.py is itself a PACKAGE-INTEGRITY defect,
+# not a soft-degrade condition (ADR-0092 D1's layout arm covers the
+# package's own required members; this outer guard covers the delegation
+# path itself).
+#
+#   Delegates to dashboard/health.py's PACKAGE-INTEGRITY row, which in turn
+#   delegates to the one implementation, .claude/pipeline/tools/package.py
+#   check (ADR-0064 D3 single-implementation pattern).
+# ---------------------------------------------------------------------------
+echo "--- CHECK 30: PACKAGE-INTEGRITY (ADR-0092 D1-D3) ---"
+if ! command -v python3 > /dev/null 2>&1; then
+    fail "CHECK 30: python3 not available"
+elif [ ! -f "dashboard/health.py" ]; then
+    fail "CHECK 30: dashboard/health.py not found"
+elif [ ! -f ".claude/pipeline/tools/package.py" ]; then
+    fail "CHECK 30: .claude/pipeline/tools/package.py not found"
+else
+    CHECK30_OUTPUT=$(python3 dashboard/health.py --check PACKAGE-INTEGRITY 2>&1)
+    CHECK30_EXIT=$?
+    if [ "$CHECK30_EXIT" -eq 0 ]; then
+        pass "CHECK 30 (PACKAGE-INTEGRITY) — $CHECK30_OUTPUT"
+    else
+        echo "$CHECK30_OUTPUT" >&2
+        fail "CHECK 30 (PACKAGE-INTEGRITY): $CHECK30_OUTPUT"
     fi
 fi
 

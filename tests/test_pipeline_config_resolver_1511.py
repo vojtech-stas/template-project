@@ -30,7 +30,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-PIPELINE_CONFIG_PY = REPO_ROOT / "tools" / "pipeline_config.py"
+# Retargeted to the package path (ADR-0092 D1 / slice #1603): this test
+# exercises the real parser, which now lives under .claude/pipeline/. The
+# root tools/pipeline_config.py is a pure delegating stub with no parsing
+# logic of its own to test (see pk_stub_forwards in
+# tests/test_pipeline_package_1603.py for the stub's own contract).
+PIPELINE_CONFIG_PY = REPO_ROOT / ".claude" / "pipeline" / "tools" / "pipeline_config.py"
 
 
 def _load_pipeline_config():

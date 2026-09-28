@@ -183,3 +183,5 @@ Auto-loaded project vocabulary. Soft cap ~35 entries per [ADR-0012](decisions/00
 @.claude/generated/_global.md
 
 @.claude/generated/_repo-map.md
+
+@.claude/pipeline/CLAUDE.md
