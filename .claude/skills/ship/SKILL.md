@@ -69,7 +69,7 @@ hook activation belong to later slices. Never advertise full-PRD readiness here.
 2. **Repair**: fix environment state (kill stray servers, run `bash tools/worktree-guard.sh branch-restore` to restore a drifted worktree, clean stale lock files) and retry.
 3. **Re-decompose**: if the blocked path is a design dead-end, re-run the slicer on the affected PRD with updated context.
 
-In all three cases, capture the root cause per rule #13 (symptom + root cause + proposed workflow change as a `captured`-labeled issue) before continuing. Stopping without rerouting is a last resort, not a first response.
+In all three cases, capture the root cause per rule #13 (symptom + root cause + proposed workflow change, riding the body of the fixing PR when a fix lands here, or a `captured`+`root-cause` issue only when it does not — ADR-0090 D5) before continuing. Stopping without rerouting is a last resort, not a first response.
 
 ## Queue-drain entry mode
 
@@ -129,7 +129,7 @@ A **release** run (QD11) counts differently: concurrency is **distinct file lane
 
 A discovery made mid-run whose remedy fits the trivial lane is **appended to this run's queue**, not filed and forgotten. This protocol changes only **where** a trivial fix lands, never **what** qualifies as one: I3's definition is untouched.
 
-**1 — Qualify.** Apply I3's own test to the **remedy**, not to the discovery: a two-line grep fix found while reading a 200-line defect still qualifies. Uncertain → it does not qualify. Non-qualifying discoveries capture as before (rule #11), and a workflow mistake owes its root-cause capture (rule #13) whether or not a code remedy lands here — fix-in-run covers the remedy, never the capture obligation.
+**1 — Qualify.** Apply I3's own test to the **remedy**, not to the discovery: a two-line grep fix found while reading a 200-line defect still qualifies. Uncertain → it does not qualify. Non-qualifying discoveries capture as before (rule #11), and a workflow mistake still owes its root-cause record (rule #13) whether or not a code remedy lands here — the record rides the fixing PR's own body when one lands, and becomes a `captured`+`root-cause` issue only when the mistake is unfixable in this run (ADR-0090 D5).
 
 **2 — Record at discovery**, before starting the work: append `fix_queued`. A fix discovered but unrecorded is exactly the loss this protocol exists to prevent. Its `item` is the fix's own handle for the whole run — there is no issue number yet and may never be one — and **every later record about that fix repeats that handle verbatim**: the DRAIN-LEDGER parity assertion matches on it, so a renamed handle reads as an unlanded fix. Form the handle as `fix:<kebab-slug>` `(advisory — the row matches handles, it does not parse their shape; a colliding or unreadable handle in a real run is the evidence trigger to mechanize the form)`.
 
@@ -199,6 +199,9 @@ Per [ADR-0090](../../../decisions/0090-release-mode.md) D1–D4. `/ship release 
 9. **Ledger fields.** Write exactly one `item_start`/`item_done` pair per **bug** (never per lane — a lane can hold many bugs), and `triaged.lane` carries the lane branch name as a non-empty string (DRAIN-LEDGER release mode, [`dashboard/health.py`](../../../dashboard/health.py) `check_drain_ledger`).
 10. **Exclusive lanes run alone.** A bug with no cited path (an exclusive lane) never runs concurrently with any other lane — it is the one case release mode still serializes.
 11. **Sub-lanes run one after another.** Lanes that share a `group` id come from one file group and can touch the same files, so at most one of them is in flight. Take them in plan order, and dispatch the next only after the previous one's PR has merged, so its packet is built from an integration branch that already carries that merge. Every sub-lane counts as one lane toward the cap of 15.
+
+**Mid-run find (ADR-0090 D5).** A bug found while working a lane is fixed in the run whatever its size — never filed and left for the next version. Trivial-lane size takes QD7's hotfix protocol unchanged. A bigger bug is appended to the lane that owns its files, if that lane has not yet merged; otherwise it is given a new lane, branched off the bug whose work surfaced it (`fix/<that-bug's-number>-lane-<slug>`). Either way the fix is recorded `fix_queued`, then `fixed_in_run`, under QD7's same parity rule. Only a mistake unfixable in this run becomes a `captured`+`root-cause` issue, which holds the version through its `bug` class (D1) rather than draining silently into the next one.
+
 12. **Terminal (unbounded form only).** When no lane is left to dispatch and none is in flight:
     1. Re-run `tools/release.py freeze <V> --next <W> --features <list>` with the **same** `--features` list as at release start. It sweeps this run's own new captures, slices posted since, and any class the owner flipped (ADR-0090 D1). A refusal here names an unclassified issue: classify it, then re-run.
     2. Run `tools/release.py verify --reopen <n>…` over every bug the run closed. Any bug it reopens, and any bug the re-freeze admitted, goes back through steps 3–11.

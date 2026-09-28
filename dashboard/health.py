@@ -3643,6 +3643,21 @@ def check_merge_integrity() -> dict:
             "behind_total": behind_total}
 
 
+# T0 for CAPTURE-SHAPE's PR leg (ADR-0090 D5): the committer time of BASE
+# (the parent of slice 1's squash commit eb6907d on `develop`), an ISO-8601
+# UTC instant per ADR-0089 D4 arm (b) — `dashboard/_constants.py` exposed no
+# `GRANDFATHER_UNTIL` at this slice's branch time, so this stays a module
+# constant here (its name carries GRANDFATHER on purpose, so it's findable).
+# PRs merged at or before this instant are outside the PR leg's judgment.
+_CAPTURE_SHAPE_PR_GRANDFATHER_UNTIL = "2026-09-23T14:58:59Z"
+
+# Explicit --limit on the PR leg's unfiltered read (A8/truncation). When the
+# listing hits this cap and every returned PR merged after T0, older PRs may
+# be hiding past the cap — the read reports itself unconfirmed rather than a
+# possibly-incomplete conforming count.
+_CAPTURE_SHAPE_PR_LEG_LIMIT = 100
+
+
 def check_capture_shape() -> dict:
     """CAPTURE-SHAPE: shape-conforming fraction of root-cause-labeled issue bodies.
 
@@ -3652,6 +3667,12 @@ def check_capture_shape() -> dict:
        verbatim block in the Symptom section.
     3. Counter of 3-section-shaped captured issues missing the root-cause label
        (surfaced only, never auto-relabeled).
+    4. PR leg (ADR-0090 D5): a `pr-records: <conforming>/<total>` detail part
+       over PRs merged after T0. `<total>` counts merged PRs whose body has
+       `**Root cause:**`; `<conforming>` counts those among them that also
+       carry `**Symptom:**`, `**Proposed:**` and the PR label `root-cause`.
+       Non-conformers are named. An unconfirmed or truncated read never
+       reads as a confirmed count (C4).
 
     Per ADR-0063 D1/D2/D3. Bind-forward: pre-ADR-0063 issues grandfathered.
     """
@@ -3746,6 +3767,78 @@ def check_capture_shape() -> dict:
         if _heading_re.search(body):
             unlabeled_candidates.append(issue["number"])
 
+    # Step 3: PR leg (ADR-0090 D5) — merged PRs after T0 that ride a
+    # root-cause record directly in the PR body instead of a `captured` issue.
+    # Unfiltered read (C4): never pass --label.
+    from datetime import datetime as _datetime
+
+    def _parse_ts(s: str):
+        try:
+            return _datetime.fromisoformat(s.replace("Z", "+00:00"))
+        except Exception:
+            return None
+
+    try:
+        pr_rc, pr_out, pr_source = _health_gh_fetch(
+            ["pr", "list", "--state", "merged",
+             "--limit", str(_CAPTURE_SHAPE_PR_LEG_LIMIT),
+             "--json", "number,body,labels,mergedAt"],
+            ttl=60.0, timeout=5.0, with_source=True,
+        )
+    except Exception as exc:
+        pr_rc, pr_source = 1, f"computing: {exc}"
+
+    pr_non_conformers: list = []
+    if pr_rc != 0:
+        pr_records_part = f"pr-records: unconfirmed (source={pr_source})"
+        pr_leg_ok = False
+    else:
+        try:
+            pr_items = _json.loads(pr_out)
+            if not isinstance(pr_items, list):
+                raise ValueError("payload is not a JSON list")
+        except Exception as exc:
+            pr_records_part = f"pr-records: unconfirmed (source={pr_source}: unparsable payload: {exc})"
+            pr_leg_ok = False
+        else:
+            t0_dt = _parse_ts(_CAPTURE_SHAPE_PR_GRANDFATHER_UNTIL)
+            after_t0 = []
+            all_after_t0 = bool(pr_items)
+            for pr in pr_items:
+                m_dt = _parse_ts(pr.get("mergedAt") or "")
+                if m_dt is None or t0_dt is None or m_dt <= t0_dt:
+                    all_after_t0 = False
+                    continue
+                after_t0.append(pr)
+
+            if len(pr_items) >= _CAPTURE_SHAPE_PR_LEG_LIMIT and all_after_t0:
+                pr_records_part = "pr-records: unconfirmed (truncated)"
+                pr_leg_ok = False
+            else:
+                pr_total = 0
+                pr_conforming = 0
+                for pr in after_t0:
+                    body = pr.get("body", "") or ""
+                    if "**Root cause:**" not in body:
+                        continue
+                    pr_total += 1
+                    labels = [
+                        l.get("name", "") for l in (pr.get("labels") or [])
+                        if isinstance(l, dict)
+                    ]
+                    if ("**Symptom:**" in body and "**Proposed:**" in body
+                            and "root-cause" in labels):
+                        pr_conforming += 1
+                    else:
+                        pr_non_conformers.append(pr.get("number"))
+                pr_records_part = f"pr-records: {pr_conforming}/{pr_total}"
+                if pr_non_conformers:
+                    pr_records_part += (
+                        " | pr-non-conformers: #"
+                        + ", #".join(str(n) for n in pr_non_conformers)
+                    )
+                pr_leg_ok = not pr_non_conformers
+
     parts = []
     if total_rc == 0:
         parts.append("no root-cause-labeled issues found (bind-forward ADR-0063 D1)")
@@ -3758,8 +3851,9 @@ def check_capture_shape() -> dict:
         parts.append(f"evidence-presence: {evid_str}{evid_pct}")
     if unlabeled_candidates:
         parts.append(f"unlabeled-candidates (surfaced only): #{', #'.join(str(n) for n in unlabeled_candidates)}")
+    parts.append(pr_records_part)
 
-    result = "PASS" if (not non_conformers and total_rc > 0) else "WARN"
+    result = "PASS" if (not non_conformers and total_rc > 0 and pr_leg_ok) else "WARN"
     return {
         "id": "CAPTURE-SHAPE",
         "result": result,
@@ -3769,6 +3863,7 @@ def check_capture_shape() -> dict:
         "evidence_count": evidence_present,
         "non_conformers": non_conformers,
         "unlabeled_candidates": unlabeled_candidates,
+        "pr_non_conformers": pr_non_conformers,
     }
 
 
@@ -4912,7 +5007,7 @@ def check_test_ordering() -> dict:
         "pr", "list",
         "--state", "merged",
         "--limit", "30",
-        "--json", "number,headRefName,mergeCommit,closingIssuesReferences",
+        "--json", "number,headRefName,mergeCommit,closingIssuesReferences,labels",
     ])
     if prs is None:
         return {
@@ -4925,7 +5020,20 @@ def check_test_ordering() -> dict:
             "api_available": False,
         }
 
-    fix_prs = [p for p in prs if classify_branch(p.get("headRefName")).kind == "fix"]
+    def _has_root_cause_label(pr: dict) -> bool:
+        # ADR-0090 D5: a merged PR labeled `root-cause` counts as fix-type
+        # even off a non-`fix/*` branch — the record rides the fixing PR.
+        names = [
+            l.get("name", "") for l in (pr.get("labels") or [])
+            if isinstance(l, dict)
+        ]
+        return "root-cause" in names
+
+    fix_prs = [
+        p for p in prs
+        if classify_branch(p.get("headRefName")).kind == "fix"
+        or _has_root_cause_label(p)
+    ]
 
     grandfathered_count = 0
     ordered = 0
