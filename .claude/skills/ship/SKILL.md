@@ -69,7 +69,7 @@ hook activation belong to later slices. Never advertise full-PRD readiness here.
 2. **Repair**: fix environment state (kill stray servers, run `bash tools/worktree-guard.sh branch-restore` to restore a drifted worktree, clean stale lock files) and retry.
 3. **Re-decompose**: if the blocked path is a design dead-end, re-run the slicer on the affected PRD with updated context.
 
-In all three cases, capture the root cause per rule #13 (symptom + root cause + proposed workflow change as a `captured`-labeled issue) before continuing. Stopping without rerouting is a last resort, not a first response.
+In all three cases, capture the root cause per rule #13 (symptom + root cause + proposed workflow change, riding the body of the fixing PR when a fix lands here, or a `captured`+`root-cause` issue only when it does not — ADR-0090 D5) before continuing. Stopping without rerouting is a last resort, not a first response.
 
 ## Queue-drain entry mode
 
@@ -84,7 +84,7 @@ Enter this mode on the normative trigger set — **"drain the queue"**, **"/ship
 
 Absent either qualifier, the drain is unbounded and runs to queue exhaustion or a park.
 
-A third, **release**, sub-form — **`/ship release <version>`**, or **`/ship release <version> lanes <N>`** bounded to N lanes — enters **QD11** instead: a version-scoped drain over one milestone's bugs, file-lane dispatched, never the plain per-item lane model above (ADR-0090 D2).
+A third, **release**, sub-form — **`/ship release <version>`**, or **`/ship release <version> lanes <N>`** bounded to N lanes — enters **QD11** instead: a version-scoped drain over one milestone's bugs and admitted features, bugs file-lane dispatched and features routed through the PRD → slicer flow, never the plain per-item lane model above (ADR-0090 D2).
 
 ### QD2. Queue assembly
 
@@ -129,7 +129,7 @@ A **release** run (QD11) counts differently: concurrency is **distinct file lane
 
 A discovery made mid-run whose remedy fits the trivial lane is **appended to this run's queue**, not filed and forgotten. This protocol changes only **where** a trivial fix lands, never **what** qualifies as one: I3's definition is untouched.
 
-**1 — Qualify.** Apply I3's own test to the **remedy**, not to the discovery: a two-line grep fix found while reading a 200-line defect still qualifies. Uncertain → it does not qualify. Non-qualifying discoveries capture as before (rule #11), and a workflow mistake owes its root-cause capture (rule #13) whether or not a code remedy lands here — fix-in-run covers the remedy, never the capture obligation.
+**1 — Qualify.** Apply I3's own test to the **remedy**, not to the discovery: a two-line grep fix found while reading a 200-line defect still qualifies. Uncertain → it does not qualify. Non-qualifying discoveries capture as before (rule #11), and a workflow mistake still owes its root-cause record (rule #13) whether or not a code remedy lands here — the record rides the fixing PR's own body when one lands, and becomes a `captured`+`root-cause` issue only when the mistake is unfixable in this run (ADR-0090 D5).
 
 **2 — Record at discovery**, before starting the work: append `fix_queued`. A fix discovered but unrecorded is exactly the loss this protocol exists to prevent. Its `item` is the fix's own handle for the whole run — there is no issue number yet and may never be one — and **every later record about that fix repeats that handle verbatim**: the DRAIN-LEDGER parity assertion matches on it, so a renamed handle reads as an unlanded fix. Form the handle as `fix:<kebab-slug>` `(advisory — the row matches handles, it does not parse their shape; a colliding or unreadable handle in a real run is the evidence trigger to mechanize the form)`.
 
@@ -184,7 +184,7 @@ No triage verdict relaxes any of these: the drain **never** creates `.claude/PRO
 
 ### QD11. Release mode
 
-Per [ADR-0090](../../../decisions/0090-release-mode.md) D1–D4. `/ship release <version> [lanes <N>]` is a queue-drain sub-form whose work set is one milestone's bugs and admitted features — never the plain per-item lane model QD6 describes. Unbounded, `/ship release <version>` runs every lane of the plan and then the terminal (step 12); `lanes <N>` stops after the first N lanes in plan order and skips the terminal.
+Per [ADR-0090](../../../decisions/0090-release-mode.md) D1–D5. `/ship release <version> [lanes <N>]` is a queue-drain sub-form whose work set is one milestone's bugs and admitted features — never the plain per-item lane model QD6 describes. Unbounded, `/ship release <version>` runs every lane of the plan and then the terminal (step 12); `lanes <N>` stops after the first N lanes in plan order and skips the terminal.
 
 **Interim, until #1529's mechanical fix lands:** only orchestrator-supervised lanes run. The orchestrator watches every builder and reviewer round of a lane itself; no lane runs unattended, because until then `pr-merge` cannot tell a builder's self-posted verdict or self-opened dispatch window from the real ones. (#1529 was first routed to slice #1507, which shipped without it; the interim holds until #1529 itself closes.)
 
@@ -203,6 +203,8 @@ Per [ADR-0090](../../../decisions/0090-release-mode.md) D1–D4. `/ship release 
     1. Re-run `tools/release.py freeze <V> --next <W> --features <list>` with the **same** `--features` list as at release start. It sweeps this run's own new captures, slices posted since, and any class the owner flipped (ADR-0090 D1). A refusal here names an unclassified issue: classify it, then re-run.
     2. Run `tools/release.py verify --reopen <n>…` over every bug the run closed. Any bug it reopens, and any bug the re-freeze admitted, goes back through steps 3–11.
     3. Read `python3 dashboard/health.py --check RELEASE-GATE`. `PASS: RELEASE-GATE <V>` is the success terminal: report it to the owner, who alone promotes and tags. `WARN: RELEASE-GATE <V> … hold` names what still holds the version: a bug escalated to the owner holds it and ends the run as a hold; any other holding issue is autonomous work, so go back to step 3. `unconfirmed` proves nothing either way: re-read it, never report it as PASS.
+
+**Mid-run find (ADR-0090 D5).** A bug found while working a lane is fixed in the run whatever its size — never filed and left for the next version. Trivial-lane size takes QD7's hotfix protocol unchanged. Otherwise, file it first: the tools key on `Closes #<n>` end to end (`dispatch --lane` needs issue numbers to build a packet; `pr-merge`, R-CLOSES, and `release.py verify` all key on a `bug` issue's number), so a find with no issue number cannot be dispatched, merged, or verified — open a `bug` issue in milestone `<V>` for it before routing it. Then route it by size: if the lane that owns its files has not yet merged, list the new bug's number alongside that lane's remaining bugs in its next fresh-round `dispatch --lane` packet; otherwise give it its own lane, branch-numbered for the bug whose work surfaced it — not the new bug's own number (`fix/<surfacing-bug's-number>-lane-<slug>`). Either way the bug closes in-run via the fixing PR's own `Closes #<n>`, and the fix is recorded `fix_queued`, then `fixed_in_run`, under QD7's same parity rule; if the find is a workflow mistake, its root-cause record rides that same PR (rule #13, ADR-0090 D5). Only a mistake unfixable in this run becomes a `captured`+`root-cause` issue, which holds the version through its `bug` class (D1) rather than draining silently into the next one.
 
 ## Whole-repo macro audit — session-scoped background spawn (ADR-0051 D1–D4)
 
@@ -503,7 +505,7 @@ evidence for this run; note it explicitly in the step 7 final report.
 - [ADR-0002](../../../decisions/0002-autonomous-merge-policy.md) — reviewer auto-merge on APPROVE; the handoff target after implementer SUCCESS.
 - [ADR-0076](../../../decisions/0076-guarded-verb-pipeline-engine.md) — D1 (verbs are the sole sanctioned path for mechanical pipeline transitions); step 5b/5c's `python tools/pipe/dispatch <slice>` / `--end` calls are the walking-skeleton repoint (slice #1129).
 - [ADR-0085](../../../decisions/0085-queue-drain-mode.md) — D1 (queue-drain is an entry mode on `/ship`, never a second orchestrator; plan-only and bounded sub-forms — superseded in part by [ADR-0090](../../../decisions/0090-release-mode.md) D2's release work-set/routing), D2 (reasonable-engineer triage litmus; label-and-continue escalation on `needs-human-check`), D4 (a durable per-run drain ledger, separate from trace-v3), D5 (fix-in-run: trivial-lane discoveries land inside the drain run — superseded in part by [ADR-0090](../../../decisions/0090-release-mode.md) D5's in-run-fix rider, slice 4).
-- [ADR-0090](../../../decisions/0090-release-mode.md) — D1 (a version is a frozen milestone of every open bug plus the owner's named features; `freeze`; the `RELEASE-GATE` finish line), D2 (`/ship release <version>` is a queue-drain sub-form; QD11), D3 (disjoint file lanes, script-built packets, ≤15 lanes in flight), D4 (a lane PR is gated like a slice PR, reviewed by a strong model, verified by script).
+- [ADR-0090](../../../decisions/0090-release-mode.md) — D1 (a version is a frozen milestone of every open bug plus the owner's named features; `freeze`; the `RELEASE-GATE` finish line), D2 (`/ship release <version>` is a queue-drain sub-form; QD11), D3 (disjoint file lanes, script-built packets, ≤15 lanes in flight), D4 (a lane PR is gated like a slice PR, reviewed by a strong model, verified by script), D5 (a defect found in a run is fixed in that run, and its root-cause record rides the fixing PR).
 - [ADR-0051](../../../decisions/0051-whole-repo-macro-audit-cadence.md) — D1 (whole-repo macro-audit cadence: auto-launches at `/ship` start, once per session, non-blocking), D2 (mechanism is `codebase-critic` whole-repo mode — no new critic), D3 (background dispatch + harvest-on-completion), D4 (once-per-session marker guard).
 - Sibling skills the chain calls: [`.claude/skills/to-prd/SKILL.md`](../to-prd/SKILL.md), [`.claude/skills/to-issues/SKILL.md`](../to-issues/SKILL.md). Subagent dispatched at stage 4: [`.claude/agents/implementer.md`](../../agents/implementer.md). Subagent dispatched at step 6: [`.claude/agents/qa-tester.md`](../../agents/qa-tester.md) in production-verify mode.
 

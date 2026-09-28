@@ -342,17 +342,25 @@ _RULE_STATEMENTS: dict[str, str] = {
     ),
     # ADR-0024: root-cause discipline
     "CAP-005": (
-        "Every workflow mistake MUST produce a `captured`-labeled root-cause "
-        "capture (rule #13): symptom + root cause + proposed fix."
+        "Every workflow mistake MUST produce a root-cause record (rule #13): "
+        "symptom + root cause + proposed fix; as amended by ADR-0090 D5: the "
+        "record rides the body of the fixing PR (label `root-cause`) in the "
+        "same run, and becomes a `captured`+`root-cause` issue only when the "
+        "mistake is unfixable in the run."
     ),
     "CAP-006": (
-        "Root-cause captures use the 3-section shape: Symptom observed / "
-        "Root cause analyzed / Proposed workflow change."
+        "Root-cause records use the 3-section shape: Symptom observed / "
+        "Root cause analyzed / Proposed workflow change; as amended by "
+        "ADR-0090 D5: the same shape (ADR-0063 D2 headings) applies whether "
+        "the record rides a fixing PR's body or a `captured` issue."
     ),
     # ADR-0063: capture-shape contract
     "CAP-007": (
         "Root-cause captures carry a `root-cause` label alongside `captured` "
-        "to make the class mechanically queryable."
+        "to make the class mechanically queryable; as amended by ADR-0090 "
+        "D5: on a fixing PR the `root-cause` label stands alone, with no "
+        "`captured` label, since a record that lands in a PR never becomes "
+        "an issue."
     ),
     "CAP-008": (
         "Root-cause section headings are regex-detectable: `**Symptom:**` / "
@@ -572,8 +580,13 @@ _RULE_STATEMENTS: dict[str, str] = {
         "`hotfix/*` PRs recorded `fixed_in_run`; a drain run may not reach its "
         "terminal record with a `fix_queued` item that lacks a `fixed_in_run`, "
         "a `captured_ref`, or (on a park) a place in the remaining-items list; "
-        "I3's definition, rule #13 root-cause captures, and the ADR-0067 "
-        "regression rider are unchanged (ADR-0085 D5)."
+        "I3's definition and the ADR-0067 regression rider are unchanged "
+        "(ADR-0085 D5); as amended by ADR-0090 D5: in a release run, a "
+        "non-trivial bug found mid-run is appended to the lane that owns its "
+        "files, or given a new lane if that lane has already merged, and "
+        "recorded `fix_queued` then `fixed_in_run` the same way — only a "
+        "mistake unfixable in the run still produces a `captured`+"
+        "`root-cause` issue."
     ),
     # ADR-0089: per-repo pipeline identity — configured branch roles (D1/D3)
     # + repo-agnostic history anchors (D4)

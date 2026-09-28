@@ -79,9 +79,14 @@ class TestBranchGates(unittest.TestCase):
 
     def test_label_free_codex_fix_enters_health_ordering(self):
         from dashboard import health
-        for branch, total in (("fix/1440-example", 1), ("codex/fix/1440-example", 1),
-                              ("codex/feat/1440-example", 0), ("codex/fix/bad", 0)):
+        # ADR-0090 D5 / PRD #1501 §2 criterion 40: a merged PR labeled
+        # `root-cause` counts as fix-type even off a non-fix/* branch, so
+        # the expected total now also depends on the label, not the branch
+        # alone.
+        for branch, is_fix in (("fix/1440-example", True), ("codex/fix/1440-example", True),
+                               ("codex/feat/1440-example", False), ("codex/fix/bad", False)):
             for labels in ([], [{"name": "root-cause"}]):
+                total = 1 if (is_fix or labels) else 0
                 prs = [{"number": 1500, "headRefName": branch, "labels": labels,
                         "closingIssuesReferences": [{"number": 1440}], "mergeCommit": {}}]
                 with self.subTest(branch=branch, labels=labels), patch.object(

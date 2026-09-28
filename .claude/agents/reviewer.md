@@ -384,7 +384,7 @@ gh pr view <PR> --json body -q .body | grep -cE 'ADR-[0-9]{4} D[0-9]+|\b[A-Z]{3}
 
 ### R-PROVE — fix-type PRs must show test-commit-precedes-fix-commit ordering
 
-**Mechanic:** Fires when `tools/workflow_branch.py` reports `requires_regression`: normalized kind `fix` OR the linked slice issue carries the `root-cause` label. This includes label-free `codex/fix/<issue>-<slug>`; classification does not waive branch legality. For such PRs:
+**Mechanic:** Fires when `tools/workflow_branch.py` reports `requires_regression`: normalized kind `fix` OR the linked slice issue carries the `root-cause` label OR the PR itself carries the `root-cause` label (ADR-0090 D5 — a fix-in-run's root-cause record now rides the fixing PR's own label, not only a linked slice's). This includes label-free `codex/fix/<issue>-<slug>`; classification does not waive branch legality. For such PRs:
 1. The branch history MUST contain a commit that touches `tests/` files, AND that commit MUST precede (be an ancestor of) the commit that makes the fix.
 2. The PR body MUST include a `fails-before` output excerpt — the test output showing the test failing before the fix.
 3. **Non-code fixes** (docs-only, prompt-wording-only changes — no `.py`, `.sh`, or `.js` lines changed) are exempt and MUST say so in the PR body: `R-PROVE: non-code fix — exempt`.
@@ -394,6 +394,8 @@ gh pr view <PR> --json body -q .body | grep -cE 'ADR-[0-9]{4} D[0-9]+|\b[A-Z]{3}
 python tools/workflow_branch.py "<headRefName>"
 # Or check slice label
 gh issue view <slice-number> --json labels --jq '.labels[].name' | grep root-cause
+# Or check the PR's own root-cause label (ADR-0090 D5)
+gh pr view <PR> --json labels --jq '.labels[].name' | grep root-cause
 
 # Check commit ordering: find commits touching tests/
 INTEGRATION=$(python3 tools/pipeline_config.py integration)
